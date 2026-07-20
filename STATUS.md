@@ -14,8 +14,7 @@
 
 **Wave 2 — 部署與 live 驗收**
 
-執行順序為 V3 live → `scripts/deploy/` 與 B4 部署驗收 → Chrome gate；先跑 live 以便真來源與真 Agent 契約的產品問題早於部署工作暴露。V3 live 已於本機（真 Yourator、已授權 claude/codex CLI）13/13 PASS 並上版。
+執行順序為 V3 live → `scripts/deploy/` 與 B4 部署驗收 → Chrome gate；先跑 live 以便真來源與真 Agent 契約的產品問題早於部署工作暴露。V3 live 已於本機（真 Yourator、已授權 claude/codex CLI）13/13 PASS 並上版；`scripts/deploy/` 三入口與 B4 部署驗收已於本機通過（fetch 148 → filter 144 unfit → score 4）並開 PR #3 待審。
 
-- [ ] **（已實作、待 `/ship` 上版）** `scripts/deploy/`（`install.sh`／`update.sh`／`rollback.sh`＋`lib.sh`，另有 `mise run deploy-*`）已建立，與 verify harness 分離、不由 `e2e-*` 呼叫；驗證打在生效面（`/proc/<pid>/exe`＋啟動時間）。B4 正式部署驗收已於本機通過：install 完整安裝並 enable、API 生效且僅 loopback、token 驗證正確、run one-shot 實際抓回 148 筆真 Yourator 職缺並經常駐 worker 篩選（144 unfit）／評分（4 → not_recommended，僅 4 次真 LLM 呼叫）；update 的 unit drift 告警＋`try-restart` 生效面驗證、rollback 還原前一版皆通過。**任務待上版後刪除**。
 - [ ] crawler 對 Yourator 的 HTTP 請求無 per-request timeout（`http.DefaultClient` fallback），真來源若真的 stall 會無限 hang。目前以 `jobfinder-run.service` 的 `TimeoutStartSec=1800` 作部署層 backstop；產品層應補 crawler HTTP client timeout（`internal/crawler/yourator.go`／`cmd/jobfinder/cli/runtime.go`），尚未實作。
 - [ ] 完成日常 Chrome compatibility gate 與同一 artifact 的 evidence 附加機制；自動隔離 Chromium 不得視為實際 Chrome 驗收（詳見 `docs/verify.md` §4 V4、§9）。本機無 Chrome 且 `DISPLAY=none`，實際載入須由使用者在桌機執行。
