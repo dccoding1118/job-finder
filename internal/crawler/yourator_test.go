@@ -116,6 +116,28 @@ func TestYouratorStopsForRobotsAndChallenge(t *testing.T) {
 	}
 }
 
+func TestYouratorBoundsStalledRequestWithClientTimeout(t *testing.T) {
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		<-release // stall until the test releases the handler
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte("{}"))
+	}))
+	defer server.Close()
+	defer close(release)
+
+	y := Yourator{BaseURL: server.URL, Client: &http.Client{Timeout: 100 * time.Millisecond}}
+	start := time.Now()
+	_, err := y.Fetch(context.Background(), oneQuerySpec())
+	elapsed := time.Since(start)
+	if err == nil || !strings.Contains(err.Error(), "request Yourator") {
+		t.Fatalf("stalled fetch error = %v", err)
+	}
+	if elapsed > 2*time.Second {
+		t.Fatalf("client timeout did not bound the stalled request: %v", elapsed)
+	}
+}
+
 func TestSearchSpecRejectsMoreThanThreeQueriesBeforeRequest(t *testing.T) {
 	spec := threeQuerySpec()
 	spec.Queries = append(spec.Queries, SearchQuery{Direction: "P4", Keywords: []string{"extra"}})
