@@ -1,0 +1,57 @@
+summary: "Experienced backend and cloud engineering professional."
+years_of_experience: 8
+education:
+  degree: master
+  field: computer science
+experiences:
+  - role: backend engineer
+    org_type: technology services provider
+    years: 4
+    summary: "Designed and delivered backend services."
+    achievements:
+      - "Improved deployment reliability."
+    skills:
+      - Go
+      - SQL
+skills:
+  expert:
+    - Java
+  proficient:
+    - Go
+  familiar:
+    - Kubernetes
+certifications:
+  - name: cloud certification
+    status: active
+preferences:
+  salary_min: 0
+  salary_target: 0
+  locations:
+    - Taipei
+  remote: preferred
+  directions:
+    - key: P1
+      title: cloud architecture
+      keywords:
+        - cloud
+        - platform
+    - key: P2
+      title: backend engineering
+      keywords:
+        - backend
+        - Go
+    - key: P3
+      title: platform reliability
+      keywords:
+        - Kubernetes
+        - reliability
+  industry_avoid:
+    - gambling
+  screening:
+    exclude_title_keywords:
+      - intern
+    exclude_description_keywords: []
+    require_any_keywords: []
+    exclude_companies: []
+honesty_bounds:
+  - "Kubernetes experience is configuration focused."

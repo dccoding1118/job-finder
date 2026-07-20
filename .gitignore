@@ -1,0 +1,8 @@
+.local-dev/
+bin/
+node_modules/
+config.yaml
+profile.yaml
+*.db
+*.db-shm
+*.db-wal

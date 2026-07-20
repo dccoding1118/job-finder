@@ -1,0 +1,84 @@
+# 測試規格 — agents（`internal/agents`）
+
+對應 [agents 模組設計](../designs/design-agents.md)、PRD R4、R5、R8.2。B2 實作 Runner 與 Scorer；B3 擴充 Drafter、Reviewer 與求職信防線。本文件是 L1 模組測試規格：以 fake Runner、合成 Profile 與合成 JD 驗證結構化輸出、重試策略與防線，不呼叫實際 claude 或 codex CLI。
+
+## 1. 程式面閘門
+
+| 閘門 | 指令 | 通過條件 |
+|---|---|---|
+| 格式化 | `mise run fmt` | gofumpt 無待格式化檔案 |
+| 靜態檢查 | `mise run lint` | golangci-lint 無 error |
+| 單元測試 | `mise run test` | 本文件已實作批次的 AT-* 案例通過 |
+
+## 2. 測試資料與共通條件
+
+| 項目 | 規格 |
+|---|---|
+| Profile 與 Job | 使用合成角色、技能、經歷、量化成果與 JD；不含姓名、聯絡方式、學校、公司或真實職缺內容 |
+| Runner | 角色邏輯由 fake Runner 注入；CLI subprocess 以測試用假 executable 驗證 argv、cwd、timeout 與輸出，不呼叫真 CLI |
+| JSON | 各成功回覆只含設計定義的 JSON 物件；另以合成的前後說明、型別錯誤與缺欄位覆蓋解析失敗 |
+| 時間與稽核 | 注入 clock；每次 Runner 嘗試均檢查送往 store 的稽核資料，但不以 SQLite 行為作為本模組測試目標 |
+| PII | Email、電話與身分證字號 pattern 在測試執行時動態組成；不得寫入 fixture、log 或版控檔案 |
+
+## 3. B2 單元測試案例：Runner 與 Scorer
+
+### 3.1 Runner 與輸出契約
+
+| 編號 | 測試情境 | 預期結果 |
+|---|---|---|
+| AT-01 | ClaudeRunner 或 CodexRunner 的底層程序成功回傳模型文字 | `Invoke` 回傳模型文字；工作目錄、逾時與標準輸出解析依 Runner 設定處理 |
+| AT-02 | 底層程序非零退出、逾時或無法啟動 | `Invoke` 回傳可辨識的錯誤，不將失敗輸出當成成功回覆 |
+| AT-03 | 回覆含一個合法 JSON 區塊與前後說明文字 | 取出首個 JSON 物件並完成解析 |
+| AT-04 | 回覆沒有 JSON、JSON 不完整，或含多個無法判定的物件 | 視為輸出驗證失敗，不產生結果 |
+| AT-05 | Scorer 回傳五維 0–100 整數與 50 字內理由 | 解析為合法 `ScoreResult`，五維與理由完整保留 |
+| AT-06 | Scorer 缺少任一維度、分數超出範圍、分數非整數或理由過長 | 拒絕輸出，回傳契約錯誤 |
+
+### 3.2 呼叫策略與稽核
+
+| 編號 | 測試情境 | 預期結果 |
+|---|---|---|
+| AT-10 | primary Runner 第一次失敗、第二次成功 | 使用同一 primary 重試一次後成功；不呼叫 fallback |
+| AT-11 | primary Runner 兩次皆失敗，fallback 成功 | 依序呼叫 primary 兩次與 fallback 一次，回傳 fallback 的合法結果 |
+| AT-12 | primary 與 fallback 均失敗，或均回傳非法 JSON | 回傳失敗；不回傳部分 `ScoreResult` |
+| AT-13 | 成功、程序失敗與 JSON 驗證失敗的各次呼叫 | 每次均建立正確 role、runner、input、raw output、ok、duration 的稽核資料；輸入與輸出不含 PII |
+| AT-14 | 以合成 Profile 與 Job 產生 Scorer prompt | prompt 含五個評分維度、Profile、JD 與僅輸出 JSON 的約束；不要求 Agent 自算總分 |
+| AT-15 | 三個角色各自指定合法的 primary 與 fallback endpoint | 載入 `llm.roles` 後，評分、信件起草與信件審查各使用自己的 agent/model；agent 只接受 `claude` 或 `codex` |
+| AT-16 | 每個 role endpoint 指定 agent 與 model | subprocess argv 精確包含該角色對應的 `--model`；同一 agent 在不同角色可使用不同 model；缺漏、空白或未知設定在外部呼叫前失敗 |
+| AT-17 | Runner 執行正常、非零或逾時 | 每次使用新的空暫存 cwd；正常回傳 stdout，非零與 timeout 回安全錯誤並清理 cwd |
+| AT-16 | 任一角色缺少路由、runner 名稱不合法，或設定在兩輪執行間變更 | 拒絕不完整設定；下一輪建立的 Pipeline 使用新路由，既有執行不改變 |
+
+## 4. B3 單元測試案例：Drafter、Reviewer 與防線
+
+### 4.1 Draft 與 review 契約
+
+| 編號 | 測試情境 | 預期結果 |
+|---|---|---|
+| AT-20 | Drafter 回傳含兩個指定落款佔位符的合法 `letter` | 解析成功；信件文字可送入防線與 Reviewer |
+| AT-21 | Drafter 缺少 `letter`、`letter` 非字串或回傳無法解析 JSON | 拒絕輸出，依呼叫策略重試或 fallback |
+| AT-22 | Reviewer 回傳 `approve`，未提供 `edited_letter` | 採用原草稿為最終稿 |
+| AT-23 | Reviewer 回傳 `approve` 與合法 `edited_letter` | 採用編輯後版本為最終稿，並重新通過全部防線 |
+| AT-24 | Reviewer 回傳 `revise` 與具體 `issues` | 將 issues 放入下一次 Drafter prompt，產生新草稿後重新審查 |
+| AT-25 | Reviewer 的 verdict 非法、`revise` 未附 issues，或 `edited_letter` 型別錯誤 | 拒絕輸出，依呼叫策略重試或 fallback |
+| AT-26 | Reviewer 以 `revise` 回覆非空 `edited_letter`，或 `issues` 含空白項目 | 拒絕不符合契約的回覆；不得把未核准版本當成下一輪草稿或最終稿 |
+
+### 4.2 生成迴圈與防幻覺防線
+
+| 編號 | 測試情境 | 預期結果 |
+|---|---|---|
+| AT-30 | 初稿通過防線且 Reviewer 首輪 `approve` | 產生 approved 結果，記錄一輪審查、draft/review runner 與可供 store 保存的 review log |
+| AT-31 | 初稿兩次被 `revise`，第三份草稿被 `approve` | 最多兩次重寫後成功；每次 issues 均只影響下一次草稿，review log 完整保留 |
+| AT-32 | 初稿與兩次重寫後仍被 `revise` | 回傳 failed 結果；不產出 approved 信件，供 pipeline 轉為 `letter_failed` |
+| AT-33 | 信件缺少任一指定佔位符，或含額外未解析的 `[…]` 佔位符 | 程式防線拒絕信件，不送出或不接受 Reviewer 的核准結果 |
+| AT-34 | 信件含 Profile 技能集與 JD 皆未出現的技術詞 | 程式防線以幻覺技術詞拒絕信件 |
+| AT-35 | 信件含 denylist 禁詞、內建 PII pattern，或超過設定的字數上限 | 程式防線拒絕信件，錯誤指出觸發的規則，不輸出完整敏感內容 |
+| AT-36 | 信件僅使用 Profile 或 JD 可支持的技術詞，含正確佔位符，且長度與 PII 檢核均合法 | 程式防線通過 |
+| AT-37 | 以合成 Profile、Job 與 Reviewer issues 產生 Drafter／Reviewer prompt | Drafter prompt 限制可用事實、語言、字數與佔位符；Reviewer prompt 要求檢查幻覺、誇大與空泛詞 |
+| AT-38 | 初稿或 Reviewer `edited_letter` 未通過防線 | 不呼叫 Reviewer，或不接受其 `approve`；以具體防線問題要求 Drafter 重寫，並計入兩次重寫上限 |
+| AT-39 | Drafter 或 Reviewer 的 primary、重試與 fallback 呼叫交錯發生 | 每次嘗試都以正確 role 和 runner 寫稽核資料；成功結果只採用通過契約驗證者 |
+
+## 5. 模組驗收
+
+- `mise run fmt`、`mise run lint` 與 `mise run test` 全數通過。
+- B2 能以合法結構化回覆取得五維分數與理由，並正確處理 Runner 重試、fallback 與稽核資料。
+- B3 能在初稿後最多重寫兩次；只有通過佔位符、技術詞、PII 與字數防線且 Reviewer 核准的信件才能成為 approved 結果。
+- 真實 claude / codex CLI、真實職缺與可供使用者檢閱的求職信，僅依 [verify](../verify.md) 的 B2、B3 手動驗收案例檢查，不進 L1 或例行 CI。

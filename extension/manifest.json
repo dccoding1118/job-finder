@@ -1,0 +1,24 @@
+{
+  "manifest_version": 3,
+  "name": "jobfinder",
+  "version": "0.1.0",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAuBckCOzqt+ZcDxb3nT/3trLZ0RET6ZKpN6t9Kok+qg7hVARh/CWSo4mXU/+BBy0Robp7sg5sUFJmxMlflR+nHub+qDl/pXXj1srATn7U2ncr05gwmLeO7qrp8pUYPZXXwXciyg2Y9DcV+sEVDeQKtG/eusHR3VA2tknPtbHJ2Z+BmuTovKRtP3tMURN6ltehrm5oes5OzM9zRfESncohLGsP42XoepbIuiQxoHXQi3QamQ3ONzs8Pd+E4UFAiAEHlvoTuG0LeYuQfNTbPSAQ2UR3os647CHO90DjvU/VwrMdQKYA0wcbS7EOupuomXr6n0hXi9j9ZOW/d5m7GXXYkwIDAQAB",
+  "description": "Local jobfinder dashboard",
+  "options_page": "options/index.html",
+  "background": { "service_worker": "service-worker.js" },
+  "permissions": ["storage", "clipboardRead", "clipboardWrite"],
+  "host_permissions": ["http://127.0.0.1/*", "http://[::1]/*"],
+  "content_scripts": [
+    {
+      "matches": ["https://www.104.com.tw/jobs/search/*", "https://pda.104.com.tw/work/mate/list/*"],
+      "js": ["content/list.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://www.104.com.tw/job/*"],
+      "js": ["content/job.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": { "default_title": "jobfinder", "default_popup": "dashboard/index.html" }
+}

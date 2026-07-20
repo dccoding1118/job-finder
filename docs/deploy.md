@@ -1,0 +1,66 @@
+# 部署 — job-finder
+
+本文件定義開發驗收與 MVP 單機正式部署的邊界。開發驗收只寫入隔離目錄；正式部署只在明確執行安裝流程時寫入使用者環境。MVP 僅供單人使用，所有服務皆為 systemd user unit，資料與設定不進版控。
+
+## 1. 開發階段驗收部署
+
+開發 checkout 與測試部署區分離：`.local-dev/verify/` 是本機、gitignored 的受測安裝根目錄。開發完成一個批次後，先以 `scripts/verify/harness/deploy.sh` 物化目前 binary、驗收設定、匿名 Profile、資源與證據目錄，再從該目錄執行 [verify](verify.md) 指定的 runbook。browser E2E 程式與設定位於 `scripts/verify/browser/`。
+
+此部署不安裝 systemd unit、不覆蓋日常使用資料，也不讀取日常使用目錄。部署產物 manifest 必須記錄來源 revision、建置時間及 binary checksum，使驗收可證明執行的是物化的 binary。驗收會將 `deploy/production/systemd/` 的模板渲染到隔離目錄，並以 transient user unit 驗證 service、one-shot 與 timer；不得複製 unit 到正式 user unit 目錄或啟用正式 unit。
+
+## 2. MVP 執行環境與檔案配置
+
+| 項目 | 位置／設定 | 規則 |
+|---|---|---|
+| binary | `~/.local/lib/jobfinder/jobfinder` | 由已驗證 build 複製而來；systemd 以絕對路徑執行 |
+| 設定 | `~/.config/jobfinder/config.yaml` | 由 `configs/config.example.yaml` 建立；檔案權限為 owner-only，所有引用路徑均為絕對路徑 |
+| Profile／denylist | `~/.config/jobfinder/profile.yaml`、`~/.config/jobfinder/pii-denylist.txt` | 不入版控；Profile 與 denylist 由設定檔引用 |
+| SQLite 與 lock | `~/.local/share/jobfinder/jobs.db` 及同目錄 lock | 資料目錄僅使用者可讀寫；服務與手動 CLI 共用同一檔案 |
+| 備份 | `~/.local/share/jobfinder/backups/` | 在 pipeline 完整結束後複製 SQLite；保留數量由設定的維運程序管理 |
+| user units | `~/.config/systemd/user/jobfinder-api.service`、`jobfinder-run.service`、`jobfinder-run.timer` | unit 定義入版控的 `deploy/production/systemd/`，正式安裝時複製至 user unit 目錄 |
+
+`config.yaml` 的 `db.path`、`profile.path`、`profile.denylist` 必須指向上表位置；`api.addr` 固定為 loopback 位址。設定檔不得記錄 CLI 憑證或任何 PII；`api.token` 與 `api.extension_origin` 只存於 owner-only 的實際設定檔，不進版控。
+
+## 3. systemd user units
+
+| unit | 類型與生命週期 | ExecStart／必要設定 |
+|---|---|---|
+| `jobfinder-api.service` | 長駐服務；`Restart=on-failure` | `<binary> serve --config <config>`；僅監聽 `api.addr`；`WorkingDirectory` 為資料根。**同時承載 pipeline 常駐 worker**（初篩／評分／求職信的唯一消化者），因此此服務停止時處理即停止，僅抓取仍會依 timer 進行 |
+| `jobfinder-run.service` | `Type=oneshot` | `<binary> run --config <config>`；只執行抓取，抓完即退出，不等待 LLM 階段 |
+| `jobfinder-run.timer` | 每日觸發 | `OnCalendar=*-*-* 08:30:00 Asia/Taipei`、`Persistent=true`、`Unit=jobfinder-run.service` |
+
+所有 unit 的 `Environment=PATH=` 必須是完整白名單，至少包含 `~/.local/bin`、`~/.local/share/mise/shims`、`/usr/local/bin`、`/usr/bin`、`/bin`，使 headless `claude`／`codex` 與其相依可被執行。不得依賴 interactive shell 的 `mise activate` 或 `bash -lc`。
+
+服務以登入使用者執行，須先啟用 linger，確保登出後 web service 與 timer 持續可用。服務 stdout／stderr 由 journald 收集；Agent 稽核資料保留在 SQLite 的 `agent_calls`。
+
+## 4. 安裝、更新與回滾
+
+| 步驟 | 動作 | 驗證 |
+|---|---|---|
+| 1. preflight | 執行 `mise run fmt`、`mise run lint`、`mise run test`，再執行適用的 [verify](verify.md) runbook | 程式面閘門與 B4 驗收案例通過 |
+| 2. 安裝設定與資料目錄 | 建立 §2 目錄、寫入 owner-only 設定／Profile／denylist，確認設定使用絕對路徑、loopback `api.addr`、非空 token 與精確 extension origin | `<binary> profile --profile <profile> --denylist <denylist> lint` 成功；目錄與檔案權限正確 |
+| 3. 安裝 binary 與 unit | 複製受測 binary 與 `deploy/production/systemd/` unit，執行 `systemctl --user daemon-reload`，啟用 API service 與 timer | `systemctl --user status jobfinder-api.service jobfinder-run.timer` 正常 |
+| 4. 啟動與 smoke | `systemctl --user try-restart jobfinder-api.service`，以帶 token 與 origin 的 `curl` 從 loopback 讀取 Job API，手動執行一次 run service | API 僅有 loopback listener；Run 紀錄 trigger 與 journald 輸出可查 |
+| 5. 更新 | 重複 preflight 後替換 binary 與 unit；`daemon-reload` 後對 API service 使用 `try-restart` | process 啟動時間、binary checksum 與 unit 生效內容一致 |
+| 6. 回滾 | 停止 API service、還原前一份 binary 與 unit，`daemon-reload` 後 `try-restart`；SQLite 只在資料毀損時由最近完整備份還原 | loopback smoke、資料庫完整性檢查與 Run 歷史正常 |
+
+`systemctl --user enable --now` 不會重啟已在執行的舊 process；更新後一律使用 `try-restart`。不得將驗收部署的 binary、設定或 state 直接覆蓋日常使用目錄。
+
+## 5. 遠端存取與維運
+
+API 不公開網路埠。從工作站使用 SSH local forward，例如將本機埠轉送到 VM 的 `127.0.0.1:8686`，再在 extension Options 設定該本機 endpoint；不得將 service 改綁 `0.0.0.0` 作為替代。
+
+日常診斷使用 `journalctl --user -u jobfinder-api.service`、`journalctl --user -u jobfinder-run.service` 與 extension page 的 Run 歷史。驗證 systemd 環境時，以 `systemd-run --user --wait --pipe` 執行相同 binary／設定組合，API 使用 transient service，timer 使用 transient timer 實際觸發 one-shot；互動 shell 成功不構成 service 環境成功的證據。user bus 不可用時，開發驗收回 `ENVIRONMENT_BLOCKED`，不誤判為產品失敗。
+
+## 6. 產品化雛型（S2 → S3 方向，暫不實作）
+
+| 面向 | S2（單租戶 Alpha） | S3（多租戶 SaaS） |
+|---|---|---|
+| 打包 | 容器化（單一 image：web ＋ pipeline 子命令） | 同左，web / worker / crawler 拆分部署單元 |
+| 運算 | Cloud Run service（UI）＋ Cloud Run job（run，每租戶一組） | Cloud Run 多實例；集中抓取池獨立 worker |
+| 排程 | Cloud Scheduler → Cloud Run job | Cloud Scheduler ＋任務佇列（per-tenant 派工） |
+| 資料庫 | SQLite（掛 volume，每租戶一檔）或直接上 Cloud SQL | Cloud SQL（PostgreSQL）多租戶 schema |
+| LLM | 直串 API；金鑰入 Secret Manager | 同左＋成本工程（批次、模型分級、用量計量） |
+| 身分 | Google OAuth | OAuth ＋計費身分（Stripe 等） |
+| CI/CD | GitHub Actions → Artifact Registry → Cloud Run | 同左＋環境分層（staging/prod） |
+| 觀測 | Cloud Logging | ＋指標告警、per-tenant 用量儀表板 |

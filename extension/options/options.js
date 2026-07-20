@@ -1,0 +1,3 @@
+const endpoint = document.querySelector("#endpoint"), token = document.querySelector("#token"), status = document.querySelector("#status");
+chrome.storage.local.get({ endpoint: "http://127.0.0.1:8686", token: "" }, (v) => { endpoint.value = v.endpoint; token.value = v.token; });
+document.querySelector("#save").addEventListener("click", () => { try { const url = new URL(endpoint.value); if (url.protocol !== "http:" || !["127.0.0.1", "::1", "localhost"].includes(url.hostname) || !token.value.trim()) throw new Error(); chrome.storage.local.set({ endpoint: url.origin, token: token.value.trim() }, () => { status.textContent = "已儲存"; token.value = ""; }); } catch { status.textContent = "請輸入 loopback HTTP endpoint 與 token。"; } });

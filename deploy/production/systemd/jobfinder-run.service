@@ -1,0 +1,8 @@
+[Unit]
+Description=jobfinder scheduled fetch
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/.local/share/jobfinder
+Environment=PATH=%h/.local/bin:%h/.local/share/mise/shims:/usr/local/bin:/usr/bin:/bin
+ExecStart=%h/.local/lib/jobfinder/jobfinder run --config %h/.config/jobfinder/config.yaml

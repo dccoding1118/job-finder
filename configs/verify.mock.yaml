@@ -1,0 +1,56 @@
+db:
+  path: __VERIFY_ROOT__/runtime/mock.db
+profile:
+  path: __VERIFY_ROOT__/runtime/profile.yaml
+  denylist: __VERIFY_ROOT__/runtime/pii-denylist.txt
+sources:
+  yourator:
+    enabled: true
+    base_url: http://127.0.0.1:18787
+    max_pages: 1
+    request_delay_min: 0s
+    request_delay_max: 0s
+    retry_max: 2
+    retry_backoff: 0s
+    check_robots: true
+scoring:
+  hard_skill_weight: 0.30
+  domain_weight: 0.15
+  seniority_weight: 0.15
+  condition_weight: 0.20
+  direction_weight: 0.20
+  threshold: 75
+llm:
+  roles:
+    scorer:
+      primary:
+        agent: claude
+        model: claude-sonnet-5
+      fallback:
+        agent: codex
+        model: gpt-5.6-terra
+    drafter:
+      primary:
+        agent: claude
+        model: claude-sonnet-5
+      fallback:
+        agent: codex
+        model: gpt-5.6-terra
+    reviewer:
+      primary:
+        agent: codex
+        model: gpt-5.6-terra
+      fallback:
+        agent: claude
+        model: claude-sonnet-5
+  max_score_per_day: 3
+  max_letter_per_day: 2
+  max_letter_length: 600
+  min_interval: 0s
+  timeout: 30s
+worker:
+  scan_interval: 200ms
+api:
+  addr: 127.0.0.1:18786
+  token: verify-only-token
+  extension_origin: chrome-extension://oddnhajjhmgogefocnljofeahniodiei
