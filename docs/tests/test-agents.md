@@ -26,10 +26,13 @@
 
 | 編號 | 測試情境 | 預期結果 |
 |---|---|---|
-| AT-01 | ClaudeRunner 或 CodexRunner 的底層程序成功回傳模型文字 | `Invoke` 回傳模型文字；工作目錄、逾時與標準輸出解析依 Runner 設定處理 |
-| AT-02 | 底層程序非零退出、逾時或無法啟動 | `Invoke` 回傳可辨識的錯誤，不將失敗輸出當成成功回覆 |
-| AT-03 | 回覆含一個合法 JSON 區塊與前後說明文字 | 取出首個 JSON 物件並完成解析 |
+| AT-01 | ClaudeRunner 或 CodexRunner 的底層程序成功回傳模型文字 | `Invoke` 回傳模型文字；工作目錄、逾時與輸出取得方式依 Runner 設定處理 |
+| AT-02 | 底層程序非零退出、逾時或無法啟動 | `Invoke` 回傳可辨識的錯誤並保留底層原因，不將失敗輸出當成成功回覆 |
+| AT-03 | 回覆含一個合法 JSON 區塊與前後說明文字 | 取出最後一個括號平衡的頂層 JSON 物件並完成解析 |
 | AT-04 | 回覆沒有 JSON、JSON 不完整，或含多個無法判定的物件 | 視為輸出驗證失敗，不產生結果 |
+| AT-18 | prompt 經 stdin 傳入，stdout 為 JSON envelope | 取 envelope 的 `result` 欄位為回覆；`is_error` 為真或 `subtype` 非 `success` 時視為 Invoke 失敗 |
+| AT-19 | CLI 將最終訊息寫入 `-o` 指定的暫存檔，stdout 另含 transcript | 以該檔內容為回覆，不受 stdout transcript 影響；暫存檔隨 invocation 暫存目錄清除 |
+| AT-20 | CLI 在 transcript 中回音 prompt，並將同一答案輸出兩次 | 解析取最後一個完整物件，不把兩份答案之間的雜訊併入 |
 | AT-05 | Scorer 回傳五維 0–100 整數與 50 字內理由 | 解析為合法 `ScoreResult`，五維與理由完整保留 |
 | AT-06 | Scorer 缺少任一維度、分數超出範圍、分數非整數或理由過長 | 拒絕輸出，回傳契約錯誤 |
 

@@ -68,7 +68,12 @@ if (mode === "live-snapshot") {
     assert.ok(["approved", "failed"].includes(lettered[0].letter.status));
     assert.ok(data.agent_calls.some(({ role, ok }) => role === "scorer" && ok));
     assert.ok(data.agent_calls.some(({ role, ok }) => role === "drafter" && ok));
-    assert.ok(data.agent_calls.some(({ role, ok }) => role === "reviewer" && ok));
+    // A draft that fails the anti-hallucination guard never reaches the reviewer,
+    // so "failed" is a legal terminal state without a reviewer call; only an
+    // approved letter proves the reviewer ran.
+    if (lettered[0].letter.status === "approved") {
+      assert.ok(data.agent_calls.some(({ role, ok }) => role === "reviewer" && ok));
+    }
   }
   process.stdout.write(JSON.stringify({ jobs: data.jobs.length, ids_sha256: sha256([...ids].sort().join("\n")), scored: scored.length, lettered: lettered.length }));
   process.exit(0);

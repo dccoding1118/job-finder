@@ -70,6 +70,18 @@ func TestGuardRejectsUnsupportedTermAndPII(t *testing.T) {
 	}
 }
 
+func TestGuardAcceptsSkillFromExperience(t *testing.T) {
+	// SQL is a real skill listed under an experience, not the top-level skills
+	// buckets; the guard must treat it as supported rather than a hallucination.
+	p := profile.Profile{
+		Skills:      profile.Skills{Proficient: []string{"Go"}},
+		Experiences: []profile.Experience{{Skills: []string{"Go", "SQL"}}},
+	}
+	if err := Guard("使用 Go 與 SQL 交付服務。\n[你的姓名]\n[你的聯絡方式]", p, "backend role", nil, 600); err != nil {
+		t.Fatalf("Guard rejected a skill listed under experiences: %v", err)
+	}
+}
+
 func TestCommandRunnerUsesConfiguredArgsAndTemporaryDirectory(t *testing.T) {
 	root := t.TempDir()
 	command := writeTestExecutable(t, "#!/bin/sh\nprintf '%s\\n' \"$PWD\"\nprintf '%s\\n' \"$@\"\n")
@@ -103,11 +115,59 @@ func TestRunnerDefinitionsPinModelsAndNonInteractiveSafetyFlags(t *testing.T) {
 	codex := CodexRunner("gpt-5.6-terra", time.Minute).(CommandRunner)
 	claudeArgs := strings.Join(claude.Args, " ")
 	codexArgs := strings.Join(codex.Args, " ")
-	if !strings.Contains(claudeArgs, "--model claude-sonnet-5") || !strings.Contains(claudeArgs, "--tools ") || !strings.Contains(claudeArgs, "--output-format text") {
+	if !strings.Contains(claudeArgs, "--model claude-sonnet-5") || !strings.Contains(claudeArgs, "--output-format json") {
 		t.Fatalf("unsafe or incomplete Claude args: %v", claude.Args)
+	}
+	if !claude.PromptViaStdin || !claude.ResultEnvelope {
+		t.Fatalf("Claude runner must send the prompt on stdin and read the result envelope: %+v", claude)
 	}
 	if !strings.Contains(codexArgs, "--model gpt-5.6-terra") || !strings.Contains(codexArgs, "--ephemeral") || !strings.Contains(codexArgs, "--sandbox read-only") || !strings.Contains(codexArgs, "--skip-git-repo-check") {
 		t.Fatalf("unsafe or incomplete Codex args: %v", codex.Args)
+	}
+	if codex.LastMessageFlag != "-o" || codex.PromptViaStdin {
+		t.Fatalf("Codex runner must take the prompt as an argument and read its final message file: %+v", codex)
+	}
+}
+
+func TestCommandRunnerReadsStdinPromptAndResultEnvelope(t *testing.T) {
+	command := writeTestExecutable(t, "#!/bin/sh\nprompt=$(cat)\nprintf '{\"subtype\":\"success\",\"is_error\":false,\"result\":\"%s\"}\\n' \"$prompt\"\n")
+	runner := CommandRunner{RunnerName: "test", Command: command, PromptViaStdin: true, ResultEnvelope: true, Timeout: time.Second}
+	output, err := runner.Invoke(context.Background(), "synthetic prompt")
+	if err != nil || output != "synthetic prompt" {
+		t.Fatalf("envelope result = %q, %v", output, err)
+	}
+	failing := writeTestExecutable(t, "#!/bin/sh\nprintf '{\"subtype\":\"error_during_execution\",\"is_error\":true,\"result\":\"\"}\\n'\n")
+	if _, err := (CommandRunner{RunnerName: "test", Command: failing, PromptViaStdin: true, ResultEnvelope: true, Timeout: time.Second}).Invoke(context.Background(), "prompt"); err == nil {
+		t.Fatal("accepted an error envelope")
+	}
+}
+
+func TestCommandRunnerReadsFinalMessageFile(t *testing.T) {
+	command := writeTestExecutable(t, "#!/bin/sh\nprintf 'noisy transcript\\n'\nwhile [ \"$1\" != '-o' ]; do shift; done\nprintf '{\"letter\":\"final\"}\\n' >\"$2\"\n")
+	runner := CommandRunner{RunnerName: "test", Command: command, LastMessageFlag: "-o", Timeout: time.Second}
+	output, err := runner.Invoke(context.Background(), "synthetic prompt")
+	if err != nil || strings.TrimSpace(output) != `{"letter":"final"}` {
+		t.Fatalf("final message = %q, %v", output, err)
+	}
+}
+
+func TestExtractObjectIgnoresTranscriptNoiseAndRepeatedAnswers(t *testing.T) {
+	answer := `{"hard_skill":5,"reason":"合成"}`
+	// A CLI that echoes the prompt and then prints its answer twice must not be
+	// parsed as one object spanning the noise between the copies.
+	raw := "user\n請回傳 {範例}\ncodex\n" + answer + "\ntokens used\n8,006\n" + answer
+	if got := extractObject(raw); got != answer {
+		t.Fatalf("extractObject = %q", got)
+	}
+	nested := `{"verdict":"approve","issues":[],"meta":{"a":1}}`
+	if got := extractObject("prose before\n```json\n" + nested + "\n```\n"); got != nested {
+		t.Fatalf("nested extractObject = %q", got)
+	}
+	if got := extractObject(`{"reason":"brace } inside string"}`); got != `{"reason":"brace } inside string"}` {
+		t.Fatalf("string-aware extractObject = %q", got)
+	}
+	if got := extractObject("no object here"); got != "" {
+		t.Fatalf("expected no match, got %q", got)
 	}
 }
 

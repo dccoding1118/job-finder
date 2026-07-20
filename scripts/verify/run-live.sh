@@ -128,6 +128,16 @@ record '- user systemd manager 以 claude-sonnet-5 完成一筆 scorer 呼叫。
 pass_step
 
 begin_step '06' '真 Drafter 與 Reviewer，最多一筆信件'
+"${binary}" verify snapshot --db "${LIVE_DB}" >"${snapshot}" || fail 'pre-request snapshot failed'
+if grep -Eq '"role": "(drafter|reviewer)"' "${snapshot}"; then
+  fail 'letters were generated before an explicit request'
+fi
+mapfile -t shortlisted_ids < <("${binary}" jobs --db "${LIVE_DB}" --process-state shortlisted | awk '{print $1}')
+[[ "${#shortlisted_ids[@]}" -ge 1 ]] || fail 'live scoring produced no shortlisted Job to request a letter for'
+letter_job="${shortlisted_ids[0]}"
+[[ "${letter_job}" =~ ^[0-9]+$ ]] || fail 'shortlisted Job ID is invalid'
+"${binary}" letter request --config "${config}" --job "${letter_job}" >"${output_file}" 2>&1 || fail 'live letter request was not accepted'
+grep -Eqx "requested: ${letter_job}" "${output_file}" || fail 'live letter request did not confirm'
 letter_unit="jobfinder-live-letter-${unit_suffix}"
 if ! systemd-run --user --wait --pipe --collect --quiet \
   --unit="${letter_unit}" --property=Type=oneshot --property="WorkingDirectory=${RUNTIME_ROOT}" \
@@ -137,6 +147,7 @@ fi
 grep -Fqx 'lettered: 1' "${output_file}" || fail 'live letter stage did not process exactly one Job'
 "${binary}" verify snapshot --db "${LIVE_DB}" >"${snapshot}" || fail 'live completed snapshot failed'
 complete_summary="$(mise exec -- node "${PROJECT_ROOT}/scripts/verify/oracle/assert-positive.mjs" live-snapshot "${snapshot}" complete 2>"${output_file}")" || fail 'live Agent output violates score, letter, or audit contracts'
+record "- 要求前 Drafter／Reviewer 呼叫為零；對一筆 shortlisted Job 明確要求後，user systemd manager 完成一輪信件生成。"
 record "- 安全摘要：${complete_summary}；Agent 原始輸出與信件內容未寫入 evidence。"
 pass_step
 
@@ -144,7 +155,7 @@ begin_step '07' 'live fetch 重跑冪等'
 if ! "${binary}" run --config "${config}" --stage fetch --limit 1 >"${output_file}" 2>&1; then
   external_failure 'repeated live Yourator fetch did not complete'
 fi
-grep -Fqx 'fetched: 0' "${output_file}" || fail 'repeated live fetch inserted duplicate Jobs'
+grep -Fqx 'new: 0' "${output_file}" || fail 'repeated live fetch inserted duplicate Jobs'
 "${binary}" verify snapshot --db "${LIVE_DB}" >"${snapshot}" || fail 'repeated live snapshot failed'
 repeat_summary="$(mise exec -- node "${PROJECT_ROOT}/scripts/verify/oracle/assert-positive.mjs" live-snapshot "${snapshot}" complete 2>"${output_file}")" || fail 'repeated live snapshot violates contracts'
 [[ "${repeat_summary}" == "${complete_summary}" ]] || fail 'live rerun changed Job identity or Agent counts'
