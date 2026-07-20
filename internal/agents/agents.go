@@ -2,11 +2,13 @@
 package agents
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -22,8 +24,14 @@ type (
 	CommandRunner struct {
 		RunnerName, Command string
 		Args                []string
-		TempRoot            string
-		Timeout             time.Duration
+		// PromptViaStdin writes the prompt to stdin instead of appending it as the final argument.
+		PromptViaStdin bool
+		// ResultEnvelope reads stdout as a JSON envelope whose "result" field carries the response.
+		ResultEnvelope bool
+		// LastMessageFlag, when set, receives a temporary file that the CLI writes its final message to.
+		LastMessageFlag string
+		TempRoot        string
+		Timeout         time.Duration
 	}
 )
 
@@ -42,25 +50,77 @@ func (r CommandRunner) Invoke(ctx context.Context, prompt string) (string, error
 		ctx, cancel = context.WithTimeout(ctx, r.Timeout)
 		defer cancel()
 	}
-	// #nosec G204 -- Command and flags are fixed runner definitions; prompt is one CLI argument.
-	c := exec.CommandContext(ctx, r.Command, append(r.Args, prompt)...)
-	c.Dir = dir
-	out, err := c.CombinedOutput()
-	if err != nil {
-		if ctx.Err() != nil {
-			return string(out), fmt.Errorf("agents: %s: %w", r.RunnerName, ctx.Err())
-		}
-		return string(out), fmt.Errorf("agents: %s: %w", r.RunnerName, err)
+	args := append([]string(nil), r.Args...)
+	lastMessage := filepath.Join(dir, "last-message.txt")
+	if r.LastMessageFlag != "" {
+		args = append(args, r.LastMessageFlag, lastMessage)
 	}
-	return string(out), nil
+	if !r.PromptViaStdin {
+		args = append(args, prompt)
+	}
+	// #nosec G204 -- Command and flags are fixed runner definitions; prompt is one CLI argument.
+	c := exec.CommandContext(ctx, r.Command, args...)
+	c.Dir = dir
+	if r.PromptViaStdin {
+		c.Stdin = strings.NewReader(prompt)
+	}
+	var stdout, stderr bytes.Buffer
+	c.Stdout, c.Stderr = &stdout, &stderr
+	if err := c.Run(); err != nil {
+		detail := strings.TrimSpace(stderr.String() + "\n" + stdout.String())
+		if ctx.Err() != nil {
+			return detail, fmt.Errorf("agents: %s: %w", r.RunnerName, ctx.Err())
+		}
+		return detail, fmt.Errorf("agents: %s: %w: %s", r.RunnerName, err, detail)
+	}
+	if r.LastMessageFlag != "" {
+		message, err := os.ReadFile(lastMessage) // #nosec G304 -- path is created inside the per-invocation temporary directory.
+		if err != nil {
+			return stdout.String(), fmt.Errorf("agents: %s: read final message: %w", r.RunnerName, err)
+		}
+		return string(message), nil
+	}
+	if r.ResultEnvelope {
+		return envelopeResult(r.RunnerName, stdout.String())
+	}
+	return stdout.String(), nil
+}
+
+// envelopeResult unwraps the JSON envelope that a CLI prints in structured output mode.
+func envelopeResult(runner, raw string) (string, error) {
+	var envelope struct {
+		Subtype string `json:"subtype"`
+		IsError bool   `json:"is_error"`
+		Result  string `json:"result"`
+	}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(raw)), &envelope); err != nil {
+		return raw, fmt.Errorf("agents: %s: invalid result envelope: %w", runner, err)
+	}
+	if envelope.IsError || envelope.Subtype != "success" {
+		return raw, fmt.Errorf("agents: %s: reported %q", runner, envelope.Subtype)
+	}
+	return envelope.Result, nil
 }
 
 func ClaudeRunner(model string, timeout time.Duration) Runner {
-	return CommandRunner{RunnerName: "claude", Command: "claude", Args: []string{"-p", "--model", model, "--output-format", "text", "--tools", ""}, Timeout: timeout}
+	return CommandRunner{
+		RunnerName:     "claude",
+		Command:        "claude",
+		Args:           []string{"-p", "--model", model, "--output-format", "json"},
+		PromptViaStdin: true,
+		ResultEnvelope: true,
+		Timeout:        timeout,
+	}
 }
 
 func CodexRunner(model string, timeout time.Duration) Runner {
-	return CommandRunner{RunnerName: "codex", Command: "codex", Args: []string{"exec", "--model", model, "--ephemeral", "--skip-git-repo-check", "--sandbox", "read-only", "--color", "never"}, Timeout: timeout}
+	return CommandRunner{
+		RunnerName:      "codex",
+		Command:         "codex",
+		Args:            []string{"exec", "--model", model, "--ephemeral", "--skip-git-repo-check", "--sandbox", "read-only", "--color", "never"},
+		LastMessageFlag: "-o",
+		Timeout:         timeout,
+	}
 }
 
 type (
@@ -82,6 +142,7 @@ type (
 
 func (s Scorer) Score(ctx context.Context, profileYAML string, job Job) (ScoreResult, error) {
 	prompt := scorePrompt(profileYAML, job)
+	var lastErr error
 	for _, runner := range []Runner{s.Primary, s.Primary, s.Fallback} {
 		if runner == nil {
 			continue
@@ -90,6 +151,9 @@ func (s Scorer) Score(ctx context.Context, profileYAML string, job Job) (ScoreRe
 		raw, err := runner.Invoke(ctx, prompt)
 		result, parseErr := parseScore(raw)
 		ok := err == nil && parseErr == nil
+		if !ok {
+			lastErr = invocationError(err, parseErr)
+		}
 		if s.Audit != nil {
 			if auditErr := s.Audit("scorer", runner.Name(), prompt, raw, ok, time.Since(start)); auditErr != nil {
 				return ScoreResult{}, fmt.Errorf("agents: audit scorer call: %w", auditErr)
@@ -100,7 +164,7 @@ func (s Scorer) Score(ctx context.Context, profileYAML string, job Job) (ScoreRe
 			return result, nil
 		}
 	}
-	return ScoreResult{}, fmt.Errorf("agents: all scorer runners failed")
+	return ScoreResult{}, runnersFailed("scorer", lastErr)
 }
 
 type Job struct {
@@ -138,6 +202,7 @@ type LetterResult struct {
 
 func (d Drafter) Draft(ctx context.Context, profileYAML string, job Job, issues []string) (DraftResult, error) {
 	prompt := draftPrompt(profileYAML, job, issues)
+	var lastErr error
 	for _, runner := range []Runner{d.Primary, d.Primary, d.Fallback} {
 		if runner == nil {
 			continue
@@ -146,6 +211,9 @@ func (d Drafter) Draft(ctx context.Context, profileYAML string, job Job, issues 
 		raw, err := runner.Invoke(ctx, prompt)
 		result, parseErr := parseDraft(raw)
 		ok := err == nil && parseErr == nil
+		if !ok {
+			lastErr = invocationError(err, parseErr)
+		}
 		if d.Audit != nil {
 			if auditErr := d.Audit("drafter", runner.Name(), prompt, raw, ok, time.Since(start)); auditErr != nil {
 				return DraftResult{}, fmt.Errorf("agents: audit drafter call: %w", auditErr)
@@ -156,11 +224,12 @@ func (d Drafter) Draft(ctx context.Context, profileYAML string, job Job, issues 
 			return result, nil
 		}
 	}
-	return DraftResult{}, fmt.Errorf("agents: all drafter runners failed")
+	return DraftResult{}, runnersFailed("drafter", lastErr)
 }
 
 func (r Reviewer) Review(ctx context.Context, profileYAML string, job Job, letter string) (ReviewResult, error) {
 	prompt := reviewPrompt(profileYAML, job, letter)
+	var lastErr error
 	for _, runner := range []Runner{r.Primary, r.Primary, r.Fallback} {
 		if runner == nil {
 			continue
@@ -169,6 +238,9 @@ func (r Reviewer) Review(ctx context.Context, profileYAML string, job Job, lette
 		raw, err := runner.Invoke(ctx, prompt)
 		result, parseErr := parseReview(raw)
 		ok := err == nil && parseErr == nil
+		if !ok {
+			lastErr = invocationError(err, parseErr)
+		}
 		if r.Audit != nil {
 			if auditErr := r.Audit("reviewer", runner.Name(), prompt, raw, ok, time.Since(start)); auditErr != nil {
 				return ReviewResult{}, fmt.Errorf("agents: audit reviewer call: %w", auditErr)
@@ -179,7 +251,7 @@ func (r Reviewer) Review(ctx context.Context, profileYAML string, job Job, lette
 			return result, nil
 		}
 	}
-	return ReviewResult{}, fmt.Errorf("agents: all reviewer runners failed")
+	return ReviewResult{}, runnersFailed("reviewer", lastErr)
 }
 
 func GenerateLetter(ctx context.Context, drafter Drafter, reviewer Reviewer, profileYAML string, p profile.Profile, job Job, denylist []string, maxLength int) (LetterResult, error) {
@@ -243,6 +315,9 @@ func Guard(letter string, p profile.Profile, description string, denylist []stri
 	for _, skills := range [][]string{p.Skills.Expert, p.Skills.Proficient, p.Skills.Familiar} {
 		allowed += " " + strings.ToLower(strings.Join(skills, " "))
 	}
+	for _, experience := range p.Experiences {
+		allowed += " " + strings.ToLower(strings.Join(experience.Skills, " "))
+	}
 	for _, term := range regexp.MustCompile(`(?i)\b(?:java|go|golang|python|rust|kubernetes|docker|terraform|aws|gcp|azure|sql|react|typescript)\b`).FindAllString(letter, -1) {
 		if !strings.Contains(allowed, strings.ToLower(term)) {
 			return fmt.Errorf("guard: unsupported technical term")
@@ -260,7 +335,7 @@ func reviewPrompt(profileText string, j Job, letter string) string {
 }
 
 func parseDraft(raw string) (DraftResult, error) {
-	match := objectPattern.FindString(raw)
+	match := extractObject(raw)
 	if match == "" {
 		return DraftResult{}, fmt.Errorf("agents: response has no JSON object")
 	}
@@ -275,7 +350,7 @@ func parseDraft(raw string) (DraftResult, error) {
 }
 
 func parseReview(raw string) (ReviewResult, error) {
-	match := objectPattern.FindString(raw)
+	match := extractObject(raw)
 	if match == "" {
 		return ReviewResult{}, fmt.Errorf("agents: response has no JSON object")
 	}
@@ -303,10 +378,47 @@ func scorePrompt(profile string, j Job) string {
 	return "你是求職媒合評分器。僅輸出單一 JSON 物件，不要說明。\nProfile YAML:\n" + profile + "\nJob:\ntitle: " + j.Title + "\ncompany: " + j.CompanyName + "\ndescription: " + j.Description + "\nlocation: " + j.Location + "\n請回傳 hard_skill、domain、seniority、condition、direction（皆為 0-100 整數）與 reason（最多50字）。不要計算 total。"
 }
 
-var objectPattern = regexp.MustCompile(`(?s)\{.*\}`)
+// extractObject returns the last balanced top-level JSON object in raw, ignoring
+// braces inside strings. A CLI may print its answer more than once or wrap it in
+// prose or code fences; taking the last complete object keeps those intact.
+func extractObject(raw string) string {
+	var last string
+	depth, start := 0, 0
+	inString, escaped := false, false
+	for i, ch := range raw {
+		if inString {
+			switch {
+			case escaped:
+				escaped = false
+			case ch == '\\':
+				escaped = true
+			case ch == '"':
+				inString = false
+			}
+			continue
+		}
+		switch ch {
+		case '"':
+			inString = true
+		case '{':
+			if depth == 0 {
+				start = i
+			}
+			depth++
+		case '}':
+			if depth > 0 {
+				depth--
+				if depth == 0 {
+					last = raw[start : i+len("}")]
+				}
+			}
+		}
+	}
+	return last
+}
 
 func parseScore(raw string) (ScoreResult, error) {
-	match := objectPattern.FindString(raw)
+	match := extractObject(raw)
 	if match == "" {
 		return ScoreResult{}, fmt.Errorf("agents: response has no JSON object")
 	}
@@ -323,4 +435,22 @@ func parseScore(raw string) (ScoreResult, error) {
 		return r, fmt.Errorf("agents: invalid reason")
 	}
 	return r, nil
+}
+
+// invocationError reports why one runner attempt was rejected: the process error
+// when the CLI itself failed, otherwise the response validation error.
+func invocationError(invokeErr, parseErr error) error {
+	if invokeErr != nil {
+		return invokeErr
+	}
+	return parseErr
+}
+
+// runnersFailed reports that every runner for a role was exhausted, keeping the
+// last underlying cause so failures are diagnosable without reading the audit table.
+func runnersFailed(role string, cause error) error {
+	if cause == nil {
+		return fmt.Errorf("agents: all %s runners failed", role)
+	}
+	return fmt.Errorf("agents: all %s runners failed: %w", role, cause)
 }

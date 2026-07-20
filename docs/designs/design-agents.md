@@ -14,12 +14,19 @@
 | 型別 | 定義 |
 |---|---|
 | `Runner`（介面） | `Name() string`；`Invoke(ctx, prompt string) (raw string, error)` |
-| `ClaudeRunner` | 呼叫 `claude` CLI 非互動模式，明確傳入設定的 model；工作目錄設為空的暫存目錄、不授予工具權限 |
+| `ClaudeRunner` | 呼叫 `claude` CLI 非互動模式，明確傳入設定的 model；工作目錄設為空的暫存目錄 |
 | `CodexRunner` | 呼叫 `codex` CLI 非互動模式，明確傳入設定的 model；使用 ephemeral、read-only 與非 git 目錄允許旗標 |
 
-- ClaudeRunner 使用 `claude -p --model <model> --output-format text --tools "" <prompt>`；`-p` 進入非互動模式，空工具清單限制為純文字推理。
-- CodexRunner 使用 `codex exec --model <model> --ephemeral --skip-git-repo-check --sandbox read-only --color never <prompt>`；不保留 session，且 subprocess 僅有唯讀 sandbox。
-- 錯誤面：非零退出、逾時（pipeline 設定）、輸出非預期格式，皆視為 Invoke 失敗。
+兩個 Runner 都以 CLI 的結構化輸出取回結果，不從自由文字刮取；prompt 的傳入方式依各 CLI 介面而定。
+
+| Runner | argv | prompt 傳入 | 回應取得 |
+|---|---|---|---|
+| ClaudeRunner | `claude -p --model <model> --output-format json` | stdin | stdout 的 JSON envelope，取 `result` 欄位；`is_error` 為真或 `subtype` 非 `success` 即失敗 |
+| CodexRunner | `codex exec --model <model> --ephemeral --skip-git-repo-check --sandbox read-only --color never -o <暫存檔> <prompt>` | 最後一個位置參數 | `-o` 指定的暫存檔，其內容為 agent 的最終訊息，不含 transcript |
+
+- `-p` 使 claude 進入非互動模式；codex 不保留 session，且 subprocess 僅有唯讀 sandbox。暫存檔位於該次 invocation 的暫存目錄內，隨目錄一併清除。
+- 回應解析取**最後一個括號平衡的頂層 JSON 物件**，並忽略字串內的大括號，使 CLI 重複輸出答案或夾帶說明文字時仍能正確取值。
+- 錯誤面：非零退出、逾時（pipeline 設定）、envelope 回報失敗、輸出非預期格式，皆視為 Invoke 失敗。三次嘗試（primary 兩次、fallback 一次）全失敗時，回傳的錯誤保留最後一次的底層原因。
 
 ### 呼叫策略（設定檔 `llm.roles`）
 
@@ -94,7 +101,7 @@ return failed(review_log)   # → letter_failed
 | 檢查 | 規則 |
 |---|---|
 | 佔位符 | 必含 `[你的姓名]`、`[你的聯絡方式]`；不得出現其他 `[…]` 未解析佔位 |
-| 技術詞白名單 | 從 letter 抽出技術詞（與 Profile.skills 全集＋JD 內文比對）；出現兩者皆無的技術詞 ⇒ 失敗 |
+| 技術詞白名單 | 從 letter 抽出技術詞，與白名單比對；出現白名單外的技術詞 ⇒ 失敗。白名單＝Profile 技能全集（`skills` 的 expert／proficient／familiar 加上各 `experiences[].skills`）＋JD 內文 |
 | PII | 重用 profile 模組的 denylist＋pattern 檢核 |
 | 長度 | 超出上限（設定，預設 600 字）⇒ 失敗 |
 
