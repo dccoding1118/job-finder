@@ -1,0 +1,10 @@
+[Unit]
+Description=Fetch jobs daily
+
+[Timer]
+OnCalendar=*-*-* 08:30:00 Asia/Taipei
+Persistent=true
+Unit=jobfinder-run.service
+
+[Install]
+WantedBy=timers.target

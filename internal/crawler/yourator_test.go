@@ -1,0 +1,140 @@
+package crawler
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"html"
+	"net/http"
+	"net/http/httptest"
+	"sort"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+)
+
+func TestYouratorGroupsDirectionQueriesAndDeduplicatesDetails(t *testing.T) {
+	var mu sync.Mutex
+	listQueries := []string{}
+	details := map[string]int{}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/robots.txt", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		_, _ = w.Write([]byte("User-agent: *\nDisallow: /r/\n"))
+	})
+	mux.HandleFunc("/api/v4/jobs", func(w http.ResponseWriter, r *http.Request) {
+		terms := append([]string(nil), r.URL.Query()["term[]"]...)
+		sort.Strings(terms)
+		key := strings.Join(terms, ",")
+		mu.Lock()
+		listQueries = append(listQueries, key)
+		mu.Unlock()
+		ids := map[string][]int64{
+			"cloud,platform":         {1, 2},
+			"Go,backend":             {2, 3},
+			"Kubernetes,reliability": {3, 4},
+		}[key]
+		jobs := make([]map[string]any, 0, len(ids))
+		for _, id := range ids {
+			jobs = append(jobs, map[string]any{"id": id, "name": fmt.Sprintf("Synthetic %d", id), "path": fmt.Sprintf("/jobs/%d", id), "salary": "NT$ 10,000 - 20,000", "location": "Taipei", "company": map[string]string{"brand": "Synthetic Org"}})
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"payload": map[string]any{"hasMore": false, "jobs": jobs}})
+	})
+	mux.HandleFunc("/jobs/", func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		details[r.URL.Path]++
+		mu.Unlock()
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = fmt.Fprintf(w, `<section class="job-description">Synthetic description %s</section>`, html.EscapeString(r.URL.Path))
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	jobs, err := (Yourator{BaseURL: server.URL, CheckRobots: true}).Fetch(context.Background(), threeQuerySpec())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(jobs) != 4 || strings.Join(listQueries, "|") != "cloud,platform|Go,backend|Kubernetes,reliability" {
+		t.Fatalf("jobs/queries = %d/%v", len(jobs), listQueries)
+	}
+	for id := 1; id <= 4; id++ {
+		if details[fmt.Sprintf("/jobs/%d", id)] != 1 {
+			t.Fatalf("detail counts = %v", details)
+		}
+	}
+}
+
+func TestYouratorRetriesAndUsesInjectedDelay(t *testing.T) {
+	attempts := 0
+	delays := []time.Duration{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		if attempts == 1 {
+			http.Error(w, "temporary", http.StatusServiceUnavailable)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"payload": map[string]any{"hasMore": false, "jobs": []any{}}})
+	}))
+	defer server.Close()
+	y := Yourator{
+		BaseURL: server.URL, RetryMax: 2, RetryBackoff: 20 * time.Millisecond,
+		RequestDelayMin: 10 * time.Millisecond, RequestDelayMax: 20 * time.Millisecond,
+		RandomFloat: func() float64 { return .5 },
+		Sleep:       func(_ context.Context, delay time.Duration) error { delays = append(delays, delay); return nil },
+	}
+	jobs, err := y.Fetch(context.Background(), SearchSpec{Queries: []SearchQuery{{Direction: "P1", Keywords: []string{"cloud"}}}, MaxPages: 1})
+	if err != nil || len(jobs) != 0 || attempts != 2 {
+		t.Fatalf("jobs/attempts/error = %d/%d/%v", len(jobs), attempts, err)
+	}
+	if len(delays) != 2 || delays[0] != 20*time.Millisecond || delays[1] != 15*time.Millisecond {
+		t.Fatalf("delays = %v", delays)
+	}
+}
+
+func TestYouratorStopsForRobotsAndChallenge(t *testing.T) {
+	requests := 0
+	robotsServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests++
+		w.Header().Set("Content-Type", "text/plain")
+		_, _ = w.Write([]byte("User-agent: *\nDisallow: /api/\n"))
+	}))
+	defer robotsServer.Close()
+	if _, err := (Yourator{BaseURL: robotsServer.URL, CheckRobots: true}).Fetch(context.Background(), oneQuerySpec()); err == nil || !strings.Contains(err.Error(), "disallows") || requests != 1 {
+		t.Fatalf("robots error/requests = %v/%d", err, requests)
+	}
+
+	challengeServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte("<title>Verify you are human</title>"))
+	}))
+	defer challengeServer.Close()
+	if _, err := (Yourator{BaseURL: challengeServer.URL}).Fetch(context.Background(), oneQuerySpec()); err == nil || !strings.Contains(err.Error(), "verification challenge") {
+		t.Fatalf("challenge error = %v", err)
+	}
+}
+
+func TestSearchSpecRejectsMoreThanThreeQueriesBeforeRequest(t *testing.T) {
+	spec := threeQuerySpec()
+	spec.Queries = append(spec.Queries, SearchQuery{Direction: "P4", Keywords: []string{"extra"}})
+	if err := spec.Validate(); err == nil {
+		t.Fatal("accepted four direction queries")
+	}
+	if err := (SearchSpec{Queries: []SearchQuery{{Direction: "P1", Keywords: []string{""}}}, MaxPages: 1}).Validate(); err == nil {
+		t.Fatal("accepted empty keyword")
+	}
+}
+
+func oneQuerySpec() SearchSpec {
+	return SearchSpec{Queries: []SearchQuery{{Direction: "P1", Keywords: []string{"cloud"}}}, MaxPages: 1}
+}
+
+func threeQuerySpec() SearchSpec {
+	return SearchSpec{Queries: []SearchQuery{
+		{Direction: "P1", Keywords: []string{"cloud", "platform"}},
+		{Direction: "P2", Keywords: []string{"backend", "Go"}},
+		{Direction: "P3", Keywords: []string{"Kubernetes", "reliability"}},
+	}, Area: []string{"Taipei"}, MaxPages: 1}
+}

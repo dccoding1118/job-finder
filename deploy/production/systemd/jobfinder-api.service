@@ -1,0 +1,12 @@
+[Unit]
+Description=jobfinder localhost API and resident pipeline worker
+
+[Service]
+Type=simple
+WorkingDirectory=%h/.local/share/jobfinder
+Environment=PATH=%h/.local/bin:%h/.local/share/mise/shims:/usr/local/bin:/usr/bin:/bin
+ExecStart=%h/.local/lib/jobfinder/jobfinder serve --config %h/.config/jobfinder/config.yaml
+Restart=on-failure
+
+[Install]
+WantedBy=default.target

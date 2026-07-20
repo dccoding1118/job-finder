@@ -1,0 +1,36 @@
+# 測試規格 — extension（`extension/`）
+
+對應 [extension 模組設計](../designs/design-extension.md)、PRD R6、R9。extension page、Options 與 service worker 以 mock Chrome API 與 mock API response 測試；104 content script 的最終驗收由 B5 Chrome 實機 gate 完成。
+
+## 1. 自動化案例
+
+| 編號 | 批次 | 測試情境 | 預期結果 |
+|---|---|---|---|
+| ET-01 | B4 | Options 儲存 loopback endpoint 與 token | 僅接受 loopback HTTP URL；token 存入 `chrome.storage.local`，不回顯於 dashboard |
+| ET-02 | B4 | service worker 收到 extension page 的 API 請求 | 加入 Bearer token，回傳已標準化成功或錯誤結果 |
+| ET-03 | B4 | Job 清單、判定篩選、五維對照、待看清單與 Run 歷史 | 正確轉譯 API response；判定直接取用 `verdict`，不自行從 `process_state` 推導；Run stats 顯示 `key=value`；空值顯示「—」，錯誤有可理解訊息 |
+| ET-04 | B4 | 複製求職信成功與失敗 | 成功有文字確認且 clipboard 等於核准信件；失敗時信件仍可選取並顯示說明 |
+| ET-05 | B4 | 投遞狀態與手動 run | 對應正確 API 路由與 payload；`already_running` 不重複送出 |
+| ET-06 | B4 | 對照區依 `letter_state` 呈現求職信入口 | `none` 顯示產生按鈕、`requested` 顯示處理中且按鈕停用、`ready` 顯示信件與複製、`failed` 顯示未過審與再次產生 |
+| ET-07 | B4 | 按下「產生求職信」 | 送出 `POST /jobs/{id}/letter` 一次並立即轉為處理中；連點不重複送出；失敗顯示可理解錯誤與可重送，不背景輪詢 |
+| ET-10 | B5 | list／job content script 送訊息 | 僅把目前已載入頁面的擷取素材交給 service worker；不直接讀取 token |
+| ET-11 | B5 | 列表回應的就地標記 | 依 `verdict` 掛上對應標記：`unfit` 紅底＋圖示＋命中條件、`recommended`／`not_recommended` 顯示總分、`pending_detail` 標記待看；標記不只以顏色表達 |
+| ET-12 | B5 | 列表回應含既有 Job 與新職缺混合 | 兩者以同一組 verdict 標記呈現；插件不因既有 Job 而重送 capture 或發起額外請求 |
+| ET-13 | B5 | 內頁 sidebar 的判定、五維分數與快取結果 | 依 API 回應呈現；`unfit` 於 capture 同步回應即顯示命中條件且不輪詢；快取結果標示為快取；sidebar 不提供求職信生成入口 |
+| ET-14 | B5 | capture API 失敗或離線 | 顯示可理解錯誤與使用者觸發的重送；不自動高頻重試、不暫存 JD |
+| ET-15 | B5 | 內頁 capture 回 `pending_score` | 顯示評分中並以 3 秒間隔輪詢 `GET /jobs/{id}`；verdict 轉終態後停止輪詢並呈現結果 |
+| ET-16 | B5 | `pending_score` 持續達 5 分鐘上限 | 停止輪詢並顯示「仍在處理，請至 extension page 查看」；不無限輪詢 |
+| ET-17 | B5 | 內頁 capture 回 `pending_score` 且 `budget_exhausted` | 顯示「已達今日評分上限」而非處理中；不進入輪詢 |
+| ET-18 | B5 | 搜尋頁虛擬捲動回收與載入新項目 | MutationObserver 收割新出現的項目；已收割項目不重送 capture；捲離回收不影響已送出的標記狀態 |
+| ET-19 | B5 | 搜尋頁第一筆廣告職缺（`jobsource` 前綴 `hotjob`） | 不收割、不送 capture、不標記 |
+| ET-20 | B5 | 搜尋頁與通知頁的同一職缺 | 兩套 selector 正規化為同一組 capture 項目（external_id、url、職稱、公司、地區、薪資一致） |
+
+測資不得含真實 JD、Profile、token 或 104 頁面內容。
+
+## 2. Chrome 實機 gate
+
+- B4 由驗收者以與自動驗收相同的 unpacked extension artifact 載入實際 Chrome，完成 Options 設定、API 連線、清單、對照、產生求職信、copy、apply、manual run 與 Run history；自動隔離 Chromium 結果不得替代。
+- 在使用者自行開啟的 104 搜尋頁與通知頁確認列表收割與就地標記：不適合者當場可辨識、既有職缺直接顯示既有判定；不由插件開分頁或觸發背景導覽。
+- 在使用者自行點開的 104 職缺頁確認內頁擷取、sidebar 判定／五維分數／快取與待看下一筆導覽。
+- 在 extension page 確認清單、判定、對照、求職信生成與複製、投遞狀態、手動 run、Run 歷史與待看清單。
+- 將人工檢查結果與不含敏感內容的證據記入 `.local-dev/verify/`。

@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="zh-Hant">
+<!--
+  結構仿真、內容合成的 104 搜尋結果頁 fixture。
+  對應 design-extension.md §4.0（URL pattern https://www.104.com.tw/jobs/search/*，
+  項目容器 .job-summary，Vue 虛擬捲動 .vue-recycle-scroller）與 design-crawler.md §2.1。
+  content script 讀取邏輯見 extension/content/list.js 的 searchPage.read。
+  所有職稱、公司、產業、JD 摘要均為虛構，不含真實資料（Zero-PII）。
+-->
+<head>
+  <meta charset="utf-8">
+  <title>合成搜尋結果 - 找工作</title>
+</head>
+<body>
+  <div class="job-list-tab">
+    <!-- 搜尋頁的「共 N 筆」是當下已渲染筆數，非結果總數，收割不得據以判斷完整性。 -->
+    <span class="job-list-count">共 3 筆</span>
+  </div>
+
+  <!-- 虛擬捲動容器：真站只保留可視項目，捲離即回收；fixture 以靜態 DOM 呈現同一結構。 -->
+  <div class="vue-recycle-scroller job-list__container">
+    <div class="vue-recycle-scroller__item-wrapper">
+
+      <!-- 第一筆為廣告職缺（hotjob）：連結 query 的 jobsource 前綴為 hotjob，
+           且缺 .job-summary__close 隱藏鈕、日期欄為 icon。必須排除。 -->
+      <div class="vue-recycle-scroller__item-view">
+        <article class="job-summary">
+          <div class="info-job">
+            <a class="info-job__text" href="/job/ad9001?jobsource=hotjob_chr_exp"
+               title="合成廣告 全端工程師">合成廣告 全端工程師</a>
+          </div>
+          <div class="info-company">
+            <a class="info-company__text" href="/company/adco">合成廣告雲端股份有限公司</a>
+            <span class="info-company-addon-type">軟體及網路相關業</span>
+          </div>
+          <div class="info-tags">
+            <span class="info-tags__text" data-gtm-joblist="職缺-地區-台北市">台北市中山區</span>
+            <span class="info-tags__text" data-gtm-joblist="職缺-薪資-月薪">月薪50,000~80,000元</span>
+          </div>
+          <span class="info-date"><i class="icon-hotjob" aria-label="廣告"></i></span>
+        </article>
+      </div>
+
+      <!-- 正常職缺 #1：遠端、明確月薪區間、職稱含關鍵字命中 text-highlight span。 -->
+      <div class="vue-recycle-scroller__item-view">
+        <article class="job-summary">
+          <div class="info-job">
+            <a class="info-job__text" href="/job/100001?jobsource=joblist_2019_new"
+               title="資深雲端平台工程師 (Cloud Platform / SRE)">資深<span class="text-highlight">雲端</span>平台工程師 (Cloud Platform / SRE)</a>
+          </div>
+          <div class="info-company">
+            <a class="info-company__text" href="/company/synth01">合成天際雲端股份有限公司</a>
+            <span class="info-company-addon-type">電腦系統整合服務業</span>
+          </div>
+          <div class="info-tags">
+            <span class="info-tags__text" data-gtm-joblist="職缺-地區-台北市">台北市信義區</span>
+            <span class="info-tags__text" data-gtm-joblist="職缺-經歷-5年以上">5年以上</span>
+            <span class="info-tags__text" data-gtm-joblist="職缺-學歷-大學">大學</span>
+            <span class="info-tags__text" data-gtm-joblist="職缺-薪資-月薪">月薪70,000~95,000元</span>
+          </div>
+          <div class="info-othertags">
+            <span class="info-othertags__text">遠端工作</span>
+            <span class="info-othertags__text">員工80人</span>
+          </div>
+          <!-- .info-description 為繞著關鍵字命中處拼接的摘要片段（自第 1 點跳至第 3 點、
+               結尾斷句），一律不得映射至 description（design-crawler §2.2）。 -->
+          <p class="info-description">1. 設計與維運雲原生平台… 3. 導入 IaC 與 CI/CD 流程，並</p>
+          <button class="job-summary__close" aria-label="隱藏這個職缺">隱藏</button>
+        </article>
+      </div>
+
+      <!-- 正常職缺 #2：待遇面議（薪資解析為 NULL）、非遠端。 -->
+      <div class="vue-recycle-scroller__item-view">
+        <article class="job-summary">
+          <div class="info-job">
+            <a class="info-job__text" href="/job/100002?jobsource=joblist_2019_new"
+               title="後端工程師 (Golang)">後端<span class="text-highlight">工程</span>師 (Golang)</a>
+          </div>
+          <div class="info-company">
+            <a class="info-company__text" href="/company/synth02">合成方舟資訊股份有限公司</a>
+            <span class="info-company-addon-type">軟體及網路相關業</span>
+          </div>
+          <div class="info-tags">
+            <span class="info-tags__text" data-gtm-joblist="職缺-地區-新北市">新北市板橋區</span>
+            <span class="info-tags__text" data-gtm-joblist="職缺-經歷-3年以上">3年以上</span>
+            <span class="info-tags__text" data-gtm-joblist="職缺-學歷-專科">專科</span>
+            <span class="info-tags__text" data-gtm-joblist="職缺-薪資-面議">待遇面議</span>
+          </div>
+          <div class="info-othertags">
+            <span class="info-othertags__text">員工30人</span>
+          </div>
+          <p class="info-description">2. 開發 RESTful API… 負責服務穩定性與</p>
+          <button class="job-summary__close" aria-label="隱藏這個職缺">隱藏</button>
+        </article>
+      </div>
+
+      <!-- 正常職缺 #3：明確月薪區間、非遠端。 -->
+      <div class="vue-recycle-scroller__item-view">
+        <article class="job-summary">
+          <div class="info-job">
+            <a class="info-job__text" href="/job/100003?jobsource=joblist_2019_new"
+               title="平台可靠性工程師 (Platform Reliability)">平台<span class="text-highlight">可靠性</span>工程師 (Platform Reliability)</a>
+          </div>
+          <div class="info-company">
+            <a class="info-company__text" href="/company/synth03">合成星軌科技股份有限公司</a>
+            <span class="info-company-addon-type">電子零組件相關業</span>
+          </div>
+          <div class="info-tags">
+            <span class="info-tags__text" data-gtm-joblist="職缺-地區-台北市">台北市內湖區</span>
+            <span class="info-tags__text" data-gtm-joblist="職缺-經歷-4年以上">4年以上</span>
+            <span class="info-tags__text" data-gtm-joblist="職缺-學歷-大學">大學</span>
+            <span class="info-tags__text" data-gtm-joblist="職缺-薪資-月薪">月薪60,000~85,000元</span>
+          </div>
+          <div class="info-othertags">
+            <span class="info-othertags__text">員工200人</span>
+          </div>
+          <p class="info-description">1. 維運監控與告警系統… 5. 參與 on-call 輪值並</p>
+          <button class="job-summary__close" aria-label="隱藏這個職缺">隱藏</button>
+        </article>
+      </div>
+
+    </div>
+  </div>
+</body>
+</html>

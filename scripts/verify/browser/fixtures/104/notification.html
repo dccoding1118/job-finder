@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="zh-Hant">
+<!--
+  結構仿真、內容合成的 104 職缺通知頁 fixture。
+  對應 design-extension.md §4.0（URL pattern https://pda.104.com.tw/work/mate/list/*，
+  項目容器 .job-list-container[pagenumber]，實 DOM 全留）與 design-crawler.md §2.1。
+  content script 讀取邏輯見 extension/content/list.js 的 notificationPage.read。
+  通知頁 .info-tags__text 不帶 data-gtm-joblist，依序為地區、經歷、學歷；
+  薪資與其他資訊混在 .info-othertags__text，須依格式辨識而非位置。
+  所有內容均為虛構，不含真實資料（Zero-PII）。
+-->
+<head>
+  <meta charset="utf-8">
+  <title>合成職缺通知 - 找工作</title>
+</head>
+<body>
+  <div class="mate-list-header">
+    <!-- 通知頁頂列的「共 N 筆」為真實總數。 -->
+    <span class="mate-list-count">共 3 筆</span>
+  </div>
+
+  <div class="job-list">
+
+    <!-- 通知 #1：明確月薪區間 + 員工人數，非遠端。 -->
+    <div class="job-list-container" pagenumber="1">
+      <div class="info-job">
+        <a class="info-job__text" href="https://pda.104.com.tw/job/200001?jobsource=n104bank1"
+           title="雲端架構師 (Cloud Architect)">雲端<span class="text-highlight">架構</span>師 (Cloud Architect)</a>
+      </div>
+      <div class="info-company">
+        <a class="info-company__text" href="/company/synth11">合成瀚宇雲端股份有限公司</a>
+        <span class="info-company-addon-type">電腦系統整合服務業</span>
+      </div>
+      <div class="info-tags">
+        <span class="info-tags__text">台北市大安區</span>
+        <span class="info-tags__text">6年以上</span>
+        <span class="info-tags__text">大學</span>
+      </div>
+      <div class="info-othertags">
+        <span class="info-othertags__text">月薪80,000~120,000元</span>
+        <span class="info-othertags__text">員工150人</span>
+      </div>
+      <!-- 通知頁 .info-description 雖較完整，但僅涵蓋「工作內容」，缺相關/其他條件與福利，仍非全文。 -->
+      <p class="info-description">負責設計多雲環境架構、制定 IaC 標準並帶領平台團隊。</p>
+    </div>
+
+    <!-- 通知 #2：待遇面議（薪資解析為 NULL），非遠端。 -->
+    <div class="job-list-container" pagenumber="1">
+      <div class="info-job">
+        <a class="info-job__text" href="https://pda.104.com.tw/job/200002?jobsource=n104bank1"
+           title="DevOps 工程師">DevOps <span class="text-highlight">工程</span>師</a>
+      </div>
+      <div class="info-company">
+        <a class="info-company__text" href="/company/synth12">合成聯星資訊股份有限公司</a>
+        <span class="info-company-addon-type">軟體及網路相關業</span>
+      </div>
+      <div class="info-tags">
+        <span class="info-tags__text">台中市西屯區</span>
+        <span class="info-tags__text">3年以上</span>
+        <span class="info-tags__text">專科</span>
+      </div>
+      <div class="info-othertags">
+        <span class="info-othertags__text">待遇面議</span>
+        <span class="info-othertags__text">員工60人</span>
+      </div>
+      <p class="info-description">維運 CI/CD 管線、容器化部署與監控告警。</p>
+    </div>
+
+    <!-- 通知 #3：遠端工作 + 明確月薪區間；最後一筆帶 ispagelastitem。 -->
+    <div class="job-list-container" pagenumber="1" ispagelastitem="true">
+      <div class="info-job">
+        <a class="info-job__text" href="https://pda.104.com.tw/job/200003?jobsource=n104bank1"
+           title="網站可靠性工程師 (SRE)">網站<span class="text-highlight">可靠性</span>工程師 (SRE)</a>
+      </div>
+      <div class="info-company">
+        <a class="info-company__text" href="/company/synth13">合成極光網路股份有限公司</a>
+        <span class="info-company-addon-type">軟體及網路相關業</span>
+      </div>
+      <div class="info-tags">
+        <span class="info-tags__text">台北市松山區</span>
+        <span class="info-tags__text">4年以上</span>
+        <span class="info-tags__text">大學</span>
+      </div>
+      <div class="info-othertags">
+        <span class="info-othertags__text">月薪75,000~100,000元</span>
+        <span class="info-othertags__text">遠端工作</span>
+        <span class="info-othertags__text">員工40人</span>
+      </div>
+      <p class="info-description">負責服務等級目標(SLO)、事故應變與自動化維運。</p>
+    </div>
+
+  </div>
+</body>
+</html>

@@ -1,0 +1,40 @@
+[tools]
+go = "1.23.12"
+gofumpt = "0.10.0"
+golangci-lint = "2.12.2"
+node = "22"
+
+[tasks.build]
+description = "Build the jobfinder CLI"
+run = "go build -o bin/jobfinder ./cmd/jobfinder"
+
+[tasks.test]
+description = "Run unit tests"
+run = "go test ./..."
+
+[tasks.lint]
+description = "Run static analysis"
+run = "golangci-lint run ./..."
+
+[tasks.fmt]
+description = "Format Go source files"
+run = "gofumpt -l -w ."
+
+[tasks.e2e-install]
+description = "Install locked E2E dependencies and the Playwright Chromium binary"
+run = """
+npm ci
+npm exec -- playwright install chromium
+"""
+
+[tasks.e2e-install-deps]
+description = "Install Linux dependencies required by Playwright Chromium"
+run = "npm exec -- playwright install-deps chromium"
+
+[tasks.e2e-mock]
+description = "Run repeatable mock E2E verification without external services or LLMs"
+run = "scripts/verify/run-mock.sh"
+
+[tasks.e2e-live]
+description = "Run opt-in live E2E verification with an external source and LLMs"
+run = "scripts/verify/run-live.sh"

@@ -1,0 +1,103 @@
+package cli
+
+import (
+	"fmt"
+	"os"
+	"time"
+
+	"github.com/dccoding1118/job-finder/internal/crawler"
+	"github.com/dccoding1118/job-finder/internal/pipeline"
+	"github.com/dccoding1118/job-finder/internal/profile"
+	"github.com/dccoding1118/job-finder/internal/store"
+)
+
+// runtime is the configured store, pipeline, and fetch source every command
+// works from, so `run` and `serve` cannot drift in how they read config.yaml.
+type runtime struct {
+	cfg          fileConfig
+	store        *store.Store
+	pipeline     pipeline.Pipeline
+	profile      profile.Profile
+	scanInterval time.Duration
+}
+
+func loadRuntime(path string) (*runtime, error) {
+	data, err := os.ReadFile(path) // #nosec G304 -- explicit local configuration path from CLI.
+	if err != nil {
+		return nil, fmt.Errorf("read config: %w", err)
+	}
+	cfg, err := parseFileConfig(data)
+	if err != nil {
+		return nil, err
+	}
+	loadedProfile, profileYAML, err := profile.Load(cfg.Profile.Path)
+	if err != nil {
+		return nil, err
+	}
+	denylist, err := profile.LoadDenylist(cfg.Profile.Denylist)
+	if err != nil {
+		return nil, err
+	}
+	interval, err := time.ParseDuration(cfg.LLM.MinInterval)
+	if err != nil {
+		return nil, fmt.Errorf("config: llm.min_interval: %w", err)
+	}
+	timeout, err := time.ParseDuration(cfg.LLM.Timeout)
+	if err != nil || timeout <= 0 {
+		return nil, fmt.Errorf("config: llm.timeout must be a positive duration")
+	}
+	scanInterval := pipeline.DefaultScanInterval
+	if cfg.Worker.ScanInterval != "" {
+		if scanInterval, err = time.ParseDuration(cfg.Worker.ScanInterval); err != nil || scanInterval <= 0 {
+			return nil, fmt.Errorf("config: worker.scan_interval must be a positive duration")
+		}
+	}
+	db, err := store.Open(cfg.DB.Path)
+	if err != nil {
+		return nil, err
+	}
+	p := pipeline.Pipeline{
+		Store: db, Filter: pipeline.FilterFromProfile(loadedProfile), ProfileYAML: profileYAML, Profile: loadedProfile,
+		Denylist: denylist, Weights: [5]float64{cfg.Scoring.HardSkillWeight, cfg.Scoring.DomainWeight, cfg.Scoring.SeniorityWeight, cfg.Scoring.ConditionWeight, cfg.Scoring.DirectionWeight},
+		MaxScorePerDay: cfg.LLM.MaxScorePerDay, MaxLetterPerDay: cfg.LLM.MaxLetterPerDay, MaxLetterLength: cfg.LLM.MaxLetterLength, MinInterval: interval,
+	}
+	if cfg.Scoring.Threshold == nil {
+		p.Threshold = 75
+	} else {
+		p.Threshold = *cfg.Scoring.Threshold
+	}
+	if p.Weights == [5]float64{} {
+		p.Weights = defaultScoringWeights()
+	}
+	if p.Scorer, p.Drafter, p.Reviewer, err = routedAgents(cfg.LLM.Roles, timeout); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	return &runtime{cfg: cfg, store: db, pipeline: p, profile: loadedProfile, scanInterval: scanInterval}, nil
+}
+
+func (r *runtime) close() { _ = r.store.Close() }
+
+// fetchSource builds the Yourator adapter and the search spec derived from the
+// Profile directions.
+func (r *runtime) fetchSource() (crawler.Source, crawler.SearchSpec, error) {
+	source := r.cfg.Sources.Yourator
+	if !source.Enabled {
+		return nil, crawler.SearchSpec{}, fmt.Errorf("config: sources.yourator is disabled")
+	}
+	requestDelayMin, err := time.ParseDuration(source.RequestDelayMin)
+	if err != nil || requestDelayMin < 0 {
+		return nil, crawler.SearchSpec{}, fmt.Errorf("config: sources.yourator.request_delay_min must be a non-negative duration")
+	}
+	requestDelayMax, err := time.ParseDuration(source.RequestDelayMax)
+	if err != nil || requestDelayMax < requestDelayMin {
+		return nil, crawler.SearchSpec{}, fmt.Errorf("config: sources.yourator.request_delay_max must be at least request_delay_min")
+	}
+	retryBackoff, err := time.ParseDuration(source.RetryBackoff)
+	if err != nil || retryBackoff < 0 || source.RetryMax < 0 {
+		return nil, crawler.SearchSpec{}, fmt.Errorf("config: invalid Yourator retry settings")
+	}
+	adapter := crawler.Yourator{BaseURL: source.BaseURL, RequestDelayMin: requestDelayMin, RequestDelayMax: requestDelayMax, RetryMax: source.RetryMax, RetryBackoff: retryBackoff, CheckRobots: source.CheckRobots}
+	spec := crawler.SearchSpec{Queries: directionQueries(r.profile), Area: r.profile.Preferences.Locations, MaxPages: source.MaxPages}
+	return adapter, spec, nil
+}

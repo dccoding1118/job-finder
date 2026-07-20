@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="zh-Hant">
+<!--
+  結構仿真、內容合成的 104 職缺內頁 fixture。
+  對應 design-extension.md §4.0（URL pattern https://www.104.com.tw/job/*，
+  script[type="application/ld+json"] 內的 JobPosting）與 design-crawler.md §2.3。
+  content script 讀取邏輯見 extension/content/job.js（jsonLD 優先、domFallback 備援）；
+  JSON-LD 解析見 internal/crawler/parse104.go 的 ParseJobCapture。
+  涵蓋的解析情境：
+    - description 兩層跳脫（&lt;br&gt; → <br>、&amp;amp; → &amp; → &）後含全部區段。
+    - baseSalary 明確月薪區間 → salary_min/max 解析為 60000/90000。
+    - jobLocationType=TELECOMMUTE ＋內文「每月 10 天」→ remote_type=hybrid。
+    - skills / educationRequirements 恆為空陣列 → 不映射。
+    - 語文條件 104 自身渲染錯誤「英文--[object Object]」原樣保留。
+  所有內容均為虛構，不含真實資料（Zero-PII）。
+-->
+<head>
+  <meta charset="utf-8">
+  <title>資深雲端平台工程師 - 合成天穹雲端股份有限公司 - 找工作</title>
+
+  <script type="application/ld+json">
+  [
+    {
+      "@context": "https://schema.org",
+      "@type": "WebPage",
+      "name": "資深雲端平台工程師 (Cloud Platform / SRE)"
+    },
+    {
+      "@context": "https://schema.org",
+      "@type": "BreadcrumbList",
+      "itemListElement": []
+    },
+    {
+      "@context": "https://schema.org",
+      "@type": "JobPosting",
+      "identifier": { "@type": "PropertyValue", "name": "104", "value": 300001 },
+      "mainEntityOfPage": { "@id": "https://www.104.com.tw/job/300001" },
+      "title": "資深雲端平台工程師 (Cloud Platform / SRE)",
+      "hiringOrganization": { "@type": "Organization", "name": "合成天穹雲端股份有限公司" },
+      "industry": "電腦系統整合服務業",
+      "description": "【工作內容】&lt;br&gt;・設計與維運雲原生平台，導入 IaC 與 CI/CD。&lt;br&gt;・以 C++ &amp;amp; Go 開發高併發服務。&lt;br&gt;&lt;br&gt;【相關條件】&lt;br&gt;・熟悉 Kubernetes、Terraform 與 GCP。&lt;br&gt;・語文條件：英文--[object Object]&lt;br&gt;&lt;br&gt;【其他條件】&lt;br&gt;・具跨團隊溝通與 on-call 輪值意願。&lt;br&gt;&lt;br&gt;【公司福利】&lt;br&gt;・年終獎金、每月 10 天遠端工作、教育訓練補助。",
+      "jobLocation": { "@type": "Place", "address": { "@type": "PostalAddress", "addressLocality": "台北市", "addressRegion": "信義區" } },
+      "baseSalary": { "@type": "MonetaryAmount", "currency": "TWD", "value": { "@type": "QuantitativeValue", "minValue": "60000", "maxValue": "90000", "unitText": "MONTH" } },
+      "jobLocationType": "TELECOMMUTE",
+      "skills": [],
+      "educationRequirements": []
+    }
+  ]
+  </script>
+</head>
+<body>
+  <!-- DOM 備援素材：僅在 JSON-LD 缺失時由 job.js domFallback 使用。 -->
+  <main>
+    <h1 class="job-header__title">資深雲端平台工程師 (Cloud Platform / SRE)</h1>
+    <a class="company-name" href="/company/synth-tianqiong">合成天穹雲端股份有限公司</a>
+    <div class="job-meta">
+      <span data-gtm-jobpage="職缺內頁-地區">台北市信義區</span>
+      <span data-gtm-jobpage="職缺內頁-待遇">月薪60,000~90,000元</span>
+    </div>
+    <section class="job-description">
+      設計與維運雲原生平台，導入 IaC 與 CI/CD；熟悉 Kubernetes、Terraform 與 GCP；每月 10 天遠端工作。
+    </section>
+  </main>
+</body>
+</html>
