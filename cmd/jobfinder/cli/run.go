@@ -31,6 +31,7 @@ type fileConfig struct {
 			RequestDelayMax string `yaml:"request_delay_max"`
 			RetryMax        int    `yaml:"retry_max"`
 			RetryBackoff    string `yaml:"retry_backoff"`
+			RequestTimeout  string `yaml:"request_timeout"`
 			CheckRobots     bool   `yaml:"check_robots"`
 		} `yaml:"yourator"`
 	} `yaml:"sources"`

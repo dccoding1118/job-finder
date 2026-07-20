@@ -17,6 +17,11 @@ import (
 
 const defaultYouratorBaseURL = "https://www.yourator.co"
 
+// defaultRequestTimeout bounds a single HTTP request (connection, redirects and
+// body read) when the caller does not supply its own Client, so a stalled real
+// source cannot hang the fetch indefinitely.
+const defaultRequestTimeout = 30 * time.Second
+
 var (
 	tagPattern        = regexp.MustCompile(`(?s)<[^>]*>`)
 	jobSectionPattern = regexp.MustCompile(`(?is)<section[^>]*job-description[^>]*>(.*?)</section>`)
@@ -48,7 +53,7 @@ func (y Yourator) Fetch(ctx context.Context, spec SearchSpec) ([]RawJob, error) 
 	}
 	client := y.Client
 	if client == nil {
-		client = http.DefaultClient
+		client = &http.Client{Timeout: defaultRequestTimeout}
 	}
 	state := &requestState{}
 	if y.CheckRobots {

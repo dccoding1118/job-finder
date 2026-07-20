@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"net/http"
 	"os"
 	"time"
 
@@ -97,7 +98,13 @@ func (r *runtime) fetchSource() (crawler.Source, crawler.SearchSpec, error) {
 	if err != nil || retryBackoff < 0 || source.RetryMax < 0 {
 		return nil, crawler.SearchSpec{}, fmt.Errorf("config: invalid Yourator retry settings")
 	}
-	adapter := crawler.Yourator{BaseURL: source.BaseURL, RequestDelayMin: requestDelayMin, RequestDelayMax: requestDelayMax, RetryMax: source.RetryMax, RetryBackoff: retryBackoff, CheckRobots: source.CheckRobots}
+	requestTimeout := 30 * time.Second
+	if source.RequestTimeout != "" {
+		if requestTimeout, err = time.ParseDuration(source.RequestTimeout); err != nil || requestTimeout <= 0 {
+			return nil, crawler.SearchSpec{}, fmt.Errorf("config: sources.yourator.request_timeout must be a positive duration")
+		}
+	}
+	adapter := crawler.Yourator{BaseURL: source.BaseURL, Client: &http.Client{Timeout: requestTimeout}, RequestDelayMin: requestDelayMin, RequestDelayMax: requestDelayMax, RetryMax: source.RetryMax, RetryBackoff: retryBackoff, CheckRobots: source.CheckRobots}
 	spec := crawler.SearchSpec{Queries: directionQueries(r.profile), Area: r.profile.Preferences.Locations, MaxPages: source.MaxPages}
 	return adapter, spec, nil
 }
