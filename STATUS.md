@@ -6,7 +6,7 @@
 
 - e2e 驗證運作模式（題目卷↔答案卷）規則已蒸餾進 `_inbox` 捕捉 `20260720-1000-general-verify-doc-atomic-literal-oracle-format`（topic `verify-doc-exam-answersheet-model`）；**待 curate 進 `project-docs-workflow` skill**（目前該 skill 對 verify 只給「看 agent-manager 當範例」，本質未落文字）。job-finder 端的 `docs/verify.md`＋`run-mock.sh` 已依此模式落地。
 
-- 檔案配置維持 XDG 三分（設定 `~/.config/jobfinder/`、資料 `~/.local/share/jobfinder/`、binary `~/.local/lib/jobfinder/`），不改為單一 `~/.job-finder/`；`docs/deploy.md` §2 已載明。若要補「單一入口好找」，改以 `jobfinder paths` 子命令印出三個位置，於 W2-2 部署腳本階段再定，尚無 docs 落點。
+- 檔案配置維持 XDG 三分（設定 `~/.config/jobfinder/`、資料 `~/.local/share/jobfinder/`、binary `~/.local/lib/jobfinder/`），不改為單一 `~/.job-finder/`；`docs/deploy.md` §2 已載明。「單一入口好找」已由 `scripts/deploy/install.sh` 收尾時印出三個位置解決，不新增 `jobfinder paths` 子命令。
 
 ## §2 未完成任務
 
@@ -14,7 +14,7 @@
 
 **Wave 2 — 部署與 live 驗收**
 
-執行順序為 V3 live → `scripts/deploy/` 與 B4 部署驗收 → Chrome gate；先跑 live 以便真來源與真 Agent 契約的產品問題早於部署工作暴露。V3 live 已於本機（真 Yourator、已授權 claude/codex CLI）13/13 PASS 並上版。
+執行順序為 V3 live → `scripts/deploy/` 與 B4 部署驗收 → Chrome gate；先跑 live 以便真來源與真 Agent 契約的產品問題早於部署工作暴露。V3 live 已於本機（真 Yourator、已授權 claude/codex CLI）13/13 PASS 並上版；`scripts/deploy/` 三入口與 B4 部署驗收已於本機通過（fetch 148 → filter 144 unfit → score 4）並開 PR #3 待審。
 
-- [ ] 建立 `scripts/deploy/` 的明確安裝、更新與回滾入口；不得由 `e2e-*` 任務呼叫。完成後執行 B4 正式部署驗收。實際安裝已獲授權可在本機執行。
+- [ ] crawler 對 Yourator 的 HTTP 請求無 per-request timeout（`http.DefaultClient` fallback），真來源若真的 stall 會無限 hang。目前以 `jobfinder-run.service` 的 `TimeoutStartSec=1800` 作部署層 backstop；產品層應補 crawler HTTP client timeout（`internal/crawler/yourator.go`／`cmd/jobfinder/cli/runtime.go`），尚未實作。
 - [ ] 完成日常 Chrome compatibility gate 與同一 artifact 的 evidence 附加機制；自動隔離 Chromium 不得視為實際 Chrome 驗收（詳見 `docs/verify.md` §4 V4、§9）。本機無 Chrome 且 `DISPLAY=none`，實際載入須由使用者在桌機執行。

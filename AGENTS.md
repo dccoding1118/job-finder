@@ -84,7 +84,9 @@ mise run lint         # 執行 golangci-lint
 
 ## 6. 怎麼部署
 
-MVP 以 `jobfinder run` 作為 one-shot pipeline，由 systemd user timer 每日觸發；API service 只綁定 localhost，extension page 透過其設定的 localhost endpoint 存取。遠端 VM 使用時，先建立 SSH local forward，再將 extension 設定指向本機轉送埠。完整部署步驟會在 B4 完善於 `docs/deploy.md`。
+MVP 以 `jobfinder run` 作為 one-shot pipeline，由 systemd user timer 每日觸發；API service 只綁定 localhost，extension page 透過其設定的 localhost endpoint 存取。遠端 VM 使用時，先建立 SSH local forward，再將 extension 設定指向本機轉送埠。
+
+正式部署的唯一入口是 `scripts/deploy/` 的三個腳本（`install.sh`／`update.sh`／`rollback.sh`，共用 `lib.sh`；亦有 `mise run deploy-install`／`deploy-update`／`deploy-rollback`）。它們寫入 XDG 三分位置與 systemd user unit，與 `scripts/verify/` 的驗收 harness 分離、**不由任何 `e2e-*` 任務呼叫**、不碰 `.local-dev/`。驗證一律打在生效面（執行中 process 的 `/proc/<pid>/exe` 與啟動時間），非安裝面。完整步驟與各腳本契約見 `docs/deploy.md` §4。
 
 ### 已知雷
 

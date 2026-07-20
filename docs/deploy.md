@@ -35,16 +35,17 @@
 
 ## 4. 安裝、更新與回滾
 
-| 步驟 | 動作 | 驗證 |
-|---|---|---|
-| 1. preflight | 執行 `mise run fmt`、`mise run lint`、`mise run test`，再執行適用的 [verify](verify.md) runbook | 程式面閘門與 B4 驗收案例通過 |
-| 2. 安裝設定與資料目錄 | 建立 §2 目錄、寫入 owner-only 設定／Profile／denylist，確認設定使用絕對路徑、loopback `api.addr`、非空 token 與精確 extension origin | `<binary> profile --profile <profile> --denylist <denylist> lint` 成功；目錄與檔案權限正確 |
-| 3. 安裝 binary 與 unit | 複製受測 binary 與 `deploy/production/systemd/` unit，執行 `systemctl --user daemon-reload`，啟用 API service 與 timer | `systemctl --user status jobfinder-api.service jobfinder-run.timer` 正常 |
-| 4. 啟動與 smoke | `systemctl --user try-restart jobfinder-api.service`，以帶 token 與 origin 的 `curl` 從 loopback 讀取 Job API，手動執行一次 run service | API 僅有 loopback listener；Run 紀錄 trigger 與 journald 輸出可查 |
-| 5. 更新 | 重複 preflight 後替換 binary 與 unit；`daemon-reload` 後對 API service 使用 `try-restart` | process 啟動時間、binary checksum 與 unit 生效內容一致 |
-| 6. 回滾 | 停止 API service、還原前一份 binary 與 unit，`daemon-reload` 後 `try-restart`；SQLite 只在資料毀損時由最近完整備份還原 | loopback smoke、資料庫完整性檢查與 Run 歷史正常 |
+三個入口腳本位於 `scripts/deploy/`（共用 `lib.sh`），是正式部署的唯一入口；它們與 `scripts/verify/` 的驗收 harness 分離，**不由任何 `e2e-*` 任務呼叫**，也不寫入 `.local-dev/`。所有驗證打在**生效面**（執行中的 process），而非安裝面：`/proc/<pid>/exe` 必須指向剛安裝的 binary、更新後啟動時間須晚於替換點，光看 `is-active` 或 unit 檔內容不算通過。
 
-`systemctl --user enable --now` 不會重啟已在執行的舊 process；更新後一律使用 `try-restart`。不得將驗收部署的 binary、設定或 state 直接覆蓋日常使用目錄。
+| 腳本 | 動作 | 生效面驗證 |
+|---|---|---|
+| `install.sh` | preflight（`fmt`／`lint`／`test`＋`build`）→ 建立 §2 目錄與 owner-only 設定／Profile／denylist（既有者不覆寫）→ `profile lint` 閘門 → 安裝 binary 與渲染後 unit → `daemon-reload`、enable 並啟動 API service 與 timer | API service `MainPID` 的 `/proc/<pid>/exe` 指向安裝的 binary；只有 loopback listener；帶 token 的 Job API 回 200、未帶回 401；`run` one-shot `Result=success` |
+| `update.sh` | 重跑 preflight 與 build → 保留現行 binary 至 `jobfinder.prev`、替換 binary 與 unit → `daemon-reload` 後對 API service `try-restart` | 執行中 process 為新 binary 且啟動時間晚於替換點；loopback-only；API smoke 通過 |
+| `rollback.sh` | 由 `jobfinder.prev` 與 `units.prev/` 還原前一版 binary 與 unit → `daemon-reload` 後 `try-restart`；SQLite **不自動更動**，僅在確認毀損時由 `~/.local/share/jobfinder/backups/` 手動還原 | 執行中 process 為還原版；loopback-only；API smoke 通過 |
+
+第一次安裝時若無設定檔，`install.sh` 由 `configs/config.example.yaml` 渲染出絕對路徑與隨機 token 的 `config.yaml`；`api.extension_origin` 仍為佔位，須在載入 extension 前替換為實際 `chrome-extension://` id。既有設定檔一律不覆寫；unit 為渲染後的靜態副本，安裝前會比對並將差異吵出（template 改版或人工修改都不靜默吞掉）。
+
+`systemctl --user enable --now` 不會重啟已在執行的舊 process；更新與回滾一律使用 `try-restart`。不得將驗收部署（`.local-dev/verify/`）的 binary、設定或 state 直接覆蓋日常使用目錄。
 
 ## 5. 遠端存取與維運
 

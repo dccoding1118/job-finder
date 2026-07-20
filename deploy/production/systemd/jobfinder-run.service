@@ -3,6 +3,11 @@ Description=jobfinder scheduled fetch
 
 [Service]
 Type=oneshot
+# oneshot defaults to an infinite start timeout; a full fetch walks every job
+# detail page under polite request delays and runs for several minutes, so this
+# is generous, but it still bounds a stalled source so a wedged fetch cannot
+# hold the daily schedule open indefinitely.
+TimeoutStartSec=1800
 WorkingDirectory=%h/.local/share/jobfinder
 Environment=PATH=%h/.local/bin:%h/.local/share/mise/shims:/usr/local/bin:/usr/bin:/bin
 ExecStart=%h/.local/lib/jobfinder/jobfinder run --config %h/.config/jobfinder/config.yaml
