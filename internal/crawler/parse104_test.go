@@ -68,6 +68,32 @@ func TestParseJobCaptureNegotiableSalaryIsNil(t *testing.T) {
 	}
 }
 
+func TestParseJobCaptureReadsSingleValueRange(t *testing.T) {
+	// Live 104 sometimes carries an explicit range in a single `value` string
+	// instead of minValue/maxValue; a clear low~high pair there is trusted.
+	posting := `{"@type":"JobPosting","title":"Engineer","hiringOrganization":{"name":"Example"},"industry":"software","description":"Go 平台開發","jobLocation":{"address":{"addressLocality":"台北市"}},"mainEntityOfPage":{"@id":"https://www.104.com.tw/job/val1"},"baseSalary":{"value":{"value":"50000~70000","unitText":"MONTH"}}}`
+	job, err := ParseJobCapture(JobCapture{URL: "https://www.104.com.tw/job/val1", JSONLD: []string{posting}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.SalaryMin == nil || *job.SalaryMin != 50000 || job.SalaryMax == nil || *job.SalaryMax != 70000 {
+		t.Fatalf("salary = %+v, want 50000~70000 from value.value", job)
+	}
+}
+
+func TestParseJobCaptureSingleValueFloorIsNil(t *testing.T) {
+	// A lone floor figure in `value` (negotiable placeholder) is left unknown,
+	// like the list-tag rule; only an explicit range is trusted.
+	posting := `{"@type":"JobPosting","title":"Engineer","hiringOrganization":{"name":"Example"},"industry":"software","description":"待遇面議","jobLocation":{"address":{"addressLocality":"台北市"}},"mainEntityOfPage":{"@id":"https://www.104.com.tw/job/val2"},"baseSalary":{"value":{"value":"40000元以上","unitText":"MONTH"}}}`
+	job, err := ParseJobCapture(JobCapture{URL: "https://www.104.com.tw/job/val2", JSONLD: []string{posting}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.SalaryMin != nil || job.SalaryMax != nil {
+		t.Fatalf("single floor value parsed to %+v", job)
+	}
+}
+
 func TestParseJobCapturePartialRemoteIsHybrid(t *testing.T) {
 	posting := `{"@type":"JobPosting","title":"Engineer","hiringOrganization":{"name":"Example"},"industry":"software","description":"每月 10 天居家辦公","jobLocation":{"address":{"addressLocality":"台北市"}},"mainEntityOfPage":{"@id":"https://www.104.com.tw/job/hy1"},"jobLocationType":"TELECOMMUTE"}`
 	job, err := ParseJobCapture(JobCapture{URL: "https://www.104.com.tw/job/hy1", JSONLD: []string{posting}})

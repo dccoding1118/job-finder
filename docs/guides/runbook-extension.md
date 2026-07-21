@@ -80,9 +80,11 @@
 
 判定：每項行為符合 `verify.md` §4 的字面預期即 `PASS`；不符為 `FAIL`；若因通道／環境不可用而無法操作，記 `ENVIRONMENT_BLOCKED`，不誤判為產品失敗。
 
-## 7. Evidence
+## 7. 驗收與記錄
 
-依 `docs/verify.md` §7–§8 附到**同一份答案卷**（`evidence/<timestamp>-*.md`）：dashboard 截圖、不含 token/body 的 request 摘要、觀察到的狀態轉換與 Run 摘要，並註明是**實際 Chrome**（非隔離 Chromium 自動模擬）。**禁止記錄**：Profile、職缺全文、求職信全文、token、Agent 原始輸入輸出、日常 SQLite 資料。
+Chrome gate 是**使用者本人自行核對驗收**——與自動 e2e（`mise run e2e-mock`／`e2e-live` 產出答案卷供你核對）性質相同，只是這裡由你在真 Chrome 上逐項對照 §6 與 `verify.md §4` 的字面預期，符合即 `PASS`。**不另建 evidence 記錄機制**：人工核對本身即驗收結論，記錄只聚焦自動化驗證的答案卷。
+
+若自行留截圖或筆記供個人參考，仍守 Zero-PII——不外流 `token`、不把真職缺全文／求職信全文／日常 SQLite 資料進版控。
 
 ## 8. 疑難排解
 

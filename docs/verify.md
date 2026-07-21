@@ -108,7 +108,7 @@ mock 一趟用固定合成測資；下表即「標準答案」，逐值由 `asse
 | S20 | dashboard 判定篩選、copy、apply | filters_verified、detail_verified、clipboard==核准合成信、`#1002` apply pending→applied 並寫回 SQLite | V4·R6 | ✅ |
 | S21 | dashboard 求職信生成入口 | 對 `#1001`（letter_failed）再次產生→受理轉 `letter_requested`；狀態事件永久記錄第 2 次 `letter_requested`，worker 隨後取件 | V4·R6 | ✅ |
 | S22 | dashboard 手動抓取與 Run history | manual fetch 完成；API `runs` 出現 `trigger=manual-extension`；Run history 呈現 fetch stats 與 verdict 分布；存 screenshot | V4·R7 | ✅ |
-| S23 | extension mock browser L1 | 專案鎖定 Playwright 3 tests 全 pass（Options／service worker／dashboard 的 mock Chrome API 互動） | V4·R6 | ✅ |
+| S23 | extension mock browser L1 | 專案鎖定 Playwright 6 tests 全 pass：dashboard／Options／service worker 的 mock Chrome API 互動，及 content script 於 104 search／notification／detail fixture 上的標記與 sidebar（搜尋頁 `.jobfinder-mark` 依 verdict 標記、跳過 hotjob 廣告、title／data-gtm 地區薪資照 live selector 讀取；通知頁無 data-gtm 依位置與格式讀取；內頁 sidebar 由 JobPosting JSON-LD 顯示 verdict 與五維） | V4·R6／R9 | ✅ |
 | S24 | 104 清單就地判定且列表路徑零 Agent | v5intern→`unfit/filtered_out`、v5senior→`discovered/pending_detail`；列表路徑 Agent 呼叫數不變 | V5·R2/R3/R9 | ✅ |
 | S25 | 104 既有職缺回判定、內頁 capture 非同步 | 重複 list 對既有職缺 `created=false` 回現行判定；v5senior 進待看 queue；`capture/job`→`queued/pending_score`、score=null | V5·R9 | ✅ |
 
@@ -169,7 +169,7 @@ mise run e2e-live
 ## 9. 後續累加順序
 
 1. 在具備正式來源連線與已授權 CLI 的環境跑通 **V3**：真來源至少一筆、真 Agent score／letter 與安全格式 evidence 缺一不可。
-2. 完成實際 **Chrome compatibility gate**；自動隔離 Chromium 不得替代人工結論。人工操作步驟見 `docs/runbook-extension.md`。
+2. 完成實際 **Chrome compatibility gate**；自動隔離 Chromium 不得替代人工結論。人工操作步驟見 `docs/guides/runbook-extension.md`。
 3. 完成 **V5** 的真 104 頁人工 Chrome gate；真頁面只驗證使用者已載入的內容，確認清單就地標記與既有職缺判定一致。
 4. 完成 **V6** 的 Cake adapter 與校準 diff，再將 V1–V6 彙整為完整日常求職迴圈。
 5. 依 §5 骨架累加負向案例 N，沿用相同需求對照與 evidence 格式。

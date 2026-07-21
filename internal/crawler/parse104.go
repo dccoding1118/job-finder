@@ -52,6 +52,7 @@ type JobCapture struct {
 var (
 	jobIDPattern     = regexp.MustCompile(`/job/([A-Za-z0-9]+)`)
 	monthlyRange     = regexp.MustCompile(`月薪\s*([\d,]+)\s*[~～\-–—至]\s*([\d,]+)\s*元`)
+	amountRange      = regexp.MustCompile(`([\d,]+)\s*[~～\-–—至]\s*([\d,]+)`)
 	monthlyFloor     = regexp.MustCompile(`月薪\s*([\d,]+)\s*元(以上)?`)
 	lineBreakTags    = regexp.MustCompile(`(?i)<br\s*/?>|</(p|div|li|tr|h[1-6])>`)
 	htmlTagPattern   = regexp.MustCompile(`<[^>]*>`)
@@ -202,6 +203,9 @@ type jobPosting struct {
 	} `json:"jobLocation"`
 	BaseSalary struct {
 		Value struct {
+			// Value carries the figure when 104 renders a single scalar instead
+			// of a min/max pair; only an explicit range in it is trusted.
+			Value    looseString `json:"value"`
 			MinValue looseString `json:"minValue"`
 			MaxValue looseString `json:"maxValue"`
 			UnitText string      `json:"unitText"`
@@ -293,8 +297,28 @@ func postingSalary(posting jobPosting) (*int, *int) {
 	if !strings.EqualFold(posting.BaseSalary.Value.UnitText, "MONTH") {
 		return nil, nil
 	}
+	// Standard schema.org shape: an explicit min/max pair.
 	min, minOK := amount(string(posting.BaseSalary.Value.MinValue))
 	max, maxOK := amount(string(posting.BaseSalary.Value.MaxValue))
+	if minOK && maxOK && max >= min {
+		return &min, &max
+	}
+	// 104's live detail pages sometimes carry the figure in a single `value`
+	// string (e.g. "50000~70000" or "40000元以上") rather than min/max. Only an
+	// explicit range there is trusted; a lone figure or a negotiable floor stays
+	// unknown rather than being guessed into a salary screening hit.
+	return salaryRange(string(posting.BaseSalary.Value.Value))
+}
+
+// salaryRange reads an explicit low~high pair out of a free-form salary string,
+// returning unknown for anything that is not a clear range.
+func salaryRange(value string) (*int, *int) {
+	m := amountRange.FindStringSubmatch(strings.ReplaceAll(text(value), " ", ""))
+	if len(m) != 3 {
+		return nil, nil
+	}
+	min, minOK := amount(m[1])
+	max, maxOK := amount(m[2])
 	if !minOK || !maxOK || max < min {
 		return nil, nil
 	}

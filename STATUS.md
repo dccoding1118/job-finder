@@ -16,11 +16,11 @@
 
 執行順序為 V3 live → `scripts/deploy/` 與 B4 部署驗收 → Chrome gate；先跑 live 以便真來源與真 Agent 契約的產品問題早於部署工作暴露。V3 live 已於本機（真 Yourator、已授權 claude/codex CLI）13/13 PASS 並上版；`scripts/deploy/` 三入口與 B4 部署驗收已於本機通過（fetch 148 → filter 144 unfit → score 4），PR #3 已合併進 `main`。crawler per-request timeout（`sources.yourator.request_timeout`，預設 30s）已補上，剩 Chrome gate 需人工在桌機執行。
 
-- [ ] 完成日常 Chrome compatibility gate 與同一 artifact 的 evidence 附加機制；自動隔離 Chromium 不得視為實際 Chrome 驗收（詳見 `docs/verify.md` §4 V4、§9）。本機無 Chrome 且 `DISPLAY=none`，實際載入須由使用者在桌機執行。人工操作手冊見 `docs/runbook-extension.md`（Windows Chrome ↔ GCP VM API 走 SSH loopback forward）。
+- Chrome compatibility gate 定調為**使用者本人在桌機自行核對驗收**（同自動 e2e 答案卷由使用者核對），**不另建 evidence 附加機制**——人工核對即結論，記錄只聚焦自動化驗證的答案卷。自動隔離 Chromium 不得視為實際 Chrome 驗收。本機無 Chrome 且 `DISPLAY=none`，屬桌機常態人工步驟，非待建項；操作手冊見 `docs/runbook-extension.md`（已載明此定調，§7）。
 
-- [ ] 補上 content script 的 e2e 自動化覆蓋：`search/notification/job.html` fixture 存在但無 spec 載入並斷言標記／sidebar，故 live selector 漏洩（搜尋頁 `data-gtm-joblist` 掛 `.info-tags__text` 內層 `<a>`、內頁 `JobPosting` JSON-LD 由 Vue 於 document_idle 後才注入）未被 CI 擋下。需載入 fixture＋mock API，斷言搜尋頁 `.jobfinder-mark` 出現、內頁 sidebar 顯示 verdict。
+- [ ] （已實作，待上版）content script 的 e2e 自動化覆蓋：`scripts/verify/browser/content-script.spec.js` 載入 `search/notification/job.html` fixture＋mock API，斷言搜尋頁 `.jobfinder-mark` 依 verdict 標記並跳過 hotjob 廣告、title／`data-gtm-joblist` 地區薪資照 live selector 讀取、通知頁無 gtm 依位置與格式讀取、內頁 sidebar 由 `JobPosting` JSON-LD 顯示 verdict 與五維。併入 S23（Playwright 由 3→6 tests）。
 
-- [ ] 內頁 `baseSalary` 解析形狀待校：live 104 用 `baseSalary.value.value`（單一字串，如 `"40000元以上"`）而非 `minValue`／`maxValue`；目前 `parse104.go` 的 `jobPosting.BaseSalary.Value` 只讀 `minValue`/`maxValue`。此 `面議` 樓地板依設計本就該忽略（結果正確），但**明確薪資區間**的 live 形狀未取樣，parser 的 min/max 路徑恐在正式環境永不觸發。需一筆有明確月薪區間的內頁 JSON-LD 樣本才能定案是否改讀 `value.value`。
+- [ ] （已實作，待上版）內頁 `baseSalary` 單一 `value.value` 形狀：`postingSalary` 現於 `minValue`/`maxValue` 缺席時改讀 `value.value`，只信明確 `低~高` 區間，`面議` 樓地板（如 `"40000元以上"`）仍留 nil。兩形狀皆有 parse104 測試。**殘留**：仍未取樣一筆真有明確月薪區間的 live 內頁確認其實際 JSON 形狀走哪條路徑——屬 live 觀察，非阻擋交付。
 
 **Roadmap — 部署標準化（暫不實作）**
 
