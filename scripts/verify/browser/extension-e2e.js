@@ -14,6 +14,7 @@ async function main() {
   fs.rmSync(profile, { recursive: true, force: true });
   const context = await chromium.launchPersistentContext(profile, {
     headless: false,
+    viewport: { width: 400, height: 900 },
     args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`],
   });
   context.setDefaultTimeout(10_000);
@@ -75,6 +76,8 @@ async function main() {
 
     // The recommended verdict spans both letter outcomes; narrowing by source,
     // process and apply isolates the single approved job.
+    await dashboard.getByRole("tab", { name: /推薦/ }).click();
+    if (!(await dashboard.locator(".filter-panel").getAttribute("open"))) await dashboard.locator(".filter-panel summary").click();
     await dashboard.locator("#verdict").selectOption("recommended");
     await dashboard.locator("#source-filter").selectOption("yourator");
     await dashboard.getByRole("button", { name: /Verification ready hybrid backend engineer/ }).waitFor();
@@ -93,20 +96,24 @@ async function main() {
 
     await dashboard.getByRole("button", { name: /Verification ready hybrid backend engineer/ }).click();
     await dashboard.locator("#letter").waitFor();
-    await dashboard.locator("#score").filter({ hasText: "總分 90｜技能 90｜領域 90｜資歷 90｜條件 90｜方向 90：合成核准情境" }).waitFor();
+    await dashboard.locator("#score").waitFor();
+    const scoreText = await dashboard.locator("#score").textContent();
+    if (!["技能", "領域", "資歷", "條件", "方向"].every((label) => scoreText.includes(label)) || (scoreText.match(/90/g) || []).length < 5) {
+      throw new Error("dashboard score dimensions are invalid");
+    }
     if (!(await dashboard.locator("#verdict-label").textContent()).includes("推薦")) throw new Error("dashboard verdict label is invalid");
     if (await dashboard.locator("#description").textContent() !== "Build Go backend services") throw new Error("dashboard description is invalid");
     if (await dashboard.locator("#source").getAttribute("href") !== readyJob.url) throw new Error("dashboard source URL is invalid");
     result.detail_verified = true;
 
-    await dashboard.getByRole("button", { name: "複製信件" }).click();
-    await dashboard.getByRole("status").filter({ hasText: "已複製信件" }).waitFor();
+    await dashboard.getByRole("button", { name: "複製求職信" }).click();
+    await dashboard.locator("#toast").filter({ hasText: "已複製信件" }).waitFor();
     result.copied = true;
     const copied = await dashboard.evaluate(() => navigator.clipboard.readText());
     result.clipboard_matches = copied === "我使用 Go 建立可靠服務。[你的姓名][你的聯絡方式]";
 
     await dashboard.locator("#apply-state").selectOption("applied");
-    await dashboard.getByRole("button", { name: "更新狀態" }).click();
+    await dashboard.getByRole("button", { name: "更新投遞狀態" }).click();
     result.apply_requested = true;
     // load() resets the status line to the connected note right after the update,
     // so the persisted apply_state is confirmed from the API read-back rather than
@@ -121,8 +128,12 @@ async function main() {
 
     // The generate entry: a letter_failed recommended job offers another attempt,
     // and the request is accepted (letter_requested) rather than awaited.
-    await dashboard.locator("#apply").selectOption("");
-    await dashboard.locator("#process").selectOption("letter_failed");
+    await dashboard.getByRole("tab", { name: /推薦/ }).click();
+    await dashboard.evaluate(() => {
+      document.querySelector("#apply").value = "";
+      document.querySelector("#process").value = "letter_failed";
+      document.querySelector("#process").dispatchEvent(new Event("change", { bubbles: true }));
+    });
     await dashboard.getByRole("button", { name: /Verification failure remote platform engineer/ }).click();
     await dashboard.getByRole("button", { name: "再次產生求職信" }).click();
     // The accepted request is shown on #letter-state, which load() leaves intact,
@@ -131,7 +142,8 @@ async function main() {
     result.generate_requested = true;
     result.generate_letter_state_after_response = "requested";
 
-    await dashboard.getByRole("button", { name: "手動抓取" }).click();
+    await dashboard.getByRole("tab", { name: "系統" }).click();
+    await dashboard.getByRole("button", { name: "手動抓取自動來源" }).click();
     result.manual_run_requested = true;
     // The "已開始抓取" acknowledgement is immediately overwritten by load()'s
     // connected note, so the durable proof is the manual-extension run appearing

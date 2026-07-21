@@ -1,1 +1,23 @@
-<!doctype html><html lang="zh-Hant"><meta charset="utf-8"><title>jobfinder Options</title><body><main><h1>jobfinder 設定</h1><label>API endpoint <input id="endpoint" type="url" required></label><label>API token <input id="token" type="password" required></label><button id="save">儲存</button><p id="status" role="status"></p></main><script src="options.js"></script></body></html>
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <title>jobfinder 設定</title>
+    <link rel="stylesheet" href="options.css" />
+  </head>
+  <body>
+    <main>
+      <div class="brand"><span class="brand-mark" aria-hidden="true">⌕</span><span>jobfinder</span></div>
+      <section class="card">
+        <div><h1>連線設定</h1><p>Side Panel 只會連線至本機 loopback API。</p></div>
+        <label>API endpoint<input id="endpoint" type="url" required autocomplete="url" /></label>
+        <label>API token<input id="token" type="password" required autocomplete="off" /></label>
+        <button id="save" type="button">儲存</button>
+        <p id="status" role="status" aria-live="polite"></p>
+      </section>
+    </main>
+    <script src="options.js"></script>
+  </body>
+</html>

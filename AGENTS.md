@@ -15,9 +15,9 @@
 - 累加式整合與驗收：`docs/verify.md`
 - 開發交接：`STATUS.md`
 
-B0–B5 的核心程式已完成並通過 `mise run fmt/lint/test`：schema/store、profile、crawler（Yourator adapter 與 104 列表／內頁解析）、pipeline（排程抓取編排、常駐 worker、條件篩選、每日預算）、agents（Scorer／Drafter／Reviewer 與 `llm.roles` primary／fallback 路由）、localhost API、extension page 與 systemd unit。求職信按需生成（`letter_requested` 取件）、verdict 導出與 104 清單就地標記均已落地。執行模型為「排程只驅動 fetch，filter／score／letter 由 API service 內常駐 worker 非同步消化」，`runs` 只記抓取事實、判定分布於檢視時即時查詢。
+B0–B5 的核心程式已完成並通過 `mise run fmt/lint/test`：schema/store、profile、crawler（Yourator adapter 與 104 列表／內頁解析）、pipeline（排程抓取編排、常駐 worker、條件篩選、每日預算）、agents（Scorer／Drafter／Reviewer 與 `llm.roles` primary／fallback 路由）、localhost API、Chrome 原生 Side Panel 與 systemd unit。求職信按需生成（`letter_requested` 取件）、verdict 導出與 104 清單就地標記均已落地。執行模型為「排程只驅動 fetch，filter／score／letter 由 API service 內常駐 worker 非同步消化」，`runs` 只記抓取事實、判定分布於檢視時即時查詢。
 
-e2e 驗收 harness（`scripts/verify/`、`assert-positive.mjs`）已對齊非同步／按需模型：`run` 只 fetch、手動 `--stage` 或常駐 worker 消化 filter／score／letter、`runs.stats` 只記抓取事實、求職信「未要求不生成 → `RequestLetter` 後生成」、轉換經 `letter_requested`、`schema_version=2`，`mise run e2e-mock` 的 V1／V2／V4／V5 全綠（25 步，詳見 `docs/verify.md` §4）。尚待收尾與驗收的項目見 `STATUS.md` §2：`scripts/deploy/` 安裝·更新·回滾入口、真 Yourator live（V3）與實際 Chrome 人工 gate。第一版（B0–B5）於這些收尾完成後才首次上版。
+e2e 驗收 harness（`scripts/verify/`、`assert-positive.mjs`）已對齊非同步／按需模型：`run` 只 fetch、手動 `--stage` 或常駐 worker 消化 filter／score／letter、`runs.stats` 只記抓取事實、求職信「未要求不生成 → `RequestLetter` 後生成」、轉換經 `letter_requested`、`schema_version=2`，`mise run e2e-mock` 的 V1／V2／V4／V5 全綠（25 步，詳見 `docs/verify.md` §4）。真 Yourator live（V3）、`scripts/deploy/` 安裝／更新／回滾與實際 Chrome 人工 gate 均已通過。
 
 ## 2. 主要技術與環境
 
@@ -29,7 +29,7 @@ e2e 驗收 harness（`scripts/verify/`、`assert-positive.mjs`）已對齊非同
 | 資料庫 | SQLite，使用 `modernc.org/sqlite`，不依賴 cgo |
 | 設定與 Profile | `config.yaml` 與 `profile.yaml` 為本機檔案，均不得納入版控 |
 | 智能層 | headless CLI Runner：claude CLI 為主、codex CLI 為輔；不直接串接 LLM API |
-| API 與前端 | Go `net/http` JSON API 僅監聽 localhost；Chrome MV3 extension page 為唯一日常操作入口 |
+| API 與前端 | Go `net/http` JSON API 僅監聽 localhost；Chrome MV3 原生 Side Panel 為唯一日常操作入口 |
 | 排程 | systemd user timer 觸發一次性且冪等的 `jobfinder run` |
 | 時間 | `Asia/Taipei`，時間戳採 RFC3339 |
 
@@ -47,7 +47,7 @@ Go 不保證在裸 PATH；以 `mise run <task>` 或 `mise exec -- go <args>` 執
 | fetch/filter/score/letter 編排、Profile 條件篩選、冪等與鎖 | `docs/designs/design-pipeline.md` | `internal/pipeline/` |
 | CLI Runner、Scorer、Drafter、Reviewer 與輸出驗證 | `docs/designs/design-agents.md` | `internal/agents/` |
 | Job／Run／狀態／判定（verdict）導出／求職信要求／手動 run 與 104 capture API | `docs/designs/design-api.md` | `internal/api/` |
-| extension page 儀表板、104 列表就地標記與內頁擷取、sidebar | `docs/designs/design-extension.md` | `extension/` |
+| Side Panel 儀表板、104 列表就地標記與內頁擷取 | `docs/designs/design-extension.md` | `extension/` |
 | CLI 命令樹 | 本檔 §4 與各模組的 CLI 介面 | `cmd/jobfinder/cli/` |
 
 `docs/PRD.md` 定義需求；`docs/design.md` 定義系統邊界與模組依賴；詳細設計文件定義各模組契約。`STATUS.md` 只保留未完成任務與未歸檔結論，不承載專案設計。
@@ -84,7 +84,7 @@ mise run lint         # 執行 golangci-lint
 
 ## 6. 怎麼部署
 
-MVP 以 `jobfinder run` 作為 one-shot pipeline，由 systemd user timer 每日觸發；API service 只綁定 localhost，extension page 透過其設定的 localhost endpoint 存取。遠端 VM 使用時，先建立 SSH local forward，再將 extension 設定指向本機轉送埠。
+MVP 以 `jobfinder run` 作為 one-shot pipeline，由 systemd user timer 每日觸發；API service 只綁定 localhost，Side Panel 透過其設定的 localhost endpoint 存取。遠端 VM 使用時，先建立 SSH local forward，再將 extension 設定指向本機轉送埠。
 
 正式部署的唯一入口是 `scripts/deploy/` 的三個腳本（`install.sh`／`update.sh`／`rollback.sh`，共用 `lib.sh`；亦有 `mise run deploy-install`／`deploy-update`／`deploy-rollback`）。它們寫入 XDG 三分位置與 systemd user unit，與 `scripts/verify/` 的驗收 harness 分離、**不由任何 `e2e-*` 任務呼叫**、不碰 `.local-dev/`。驗證一律打在生效面（執行中 process 的 `/proc/<pid>/exe` 與啟動時間），非安裝面。完整步驟與各腳本契約見 `docs/deploy.md` §4。
 

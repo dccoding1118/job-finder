@@ -116,10 +116,10 @@
 | `new` | `queued` | 通過條件篩選 |
 | `queued` | `scored` | 評分完成且 total < 75 |
 | `queued` | `shortlisted` | 評分完成且 total ≥ 75 |
-| `shortlisted` | `letter_requested` | **使用者**要求生成求職信（extension page／CLI） |
+| `shortlisted` | `letter_requested` | **使用者**要求生成求職信（Side Panel／CLI） |
 | `letter_requested` | `letter_ready` | Reviewer 過審 |
 | `letter_requested` | `letter_failed` | 重寫上限仍不過審 |
-| `letter_failed` | `letter_requested` | 使用者再次要求生成（extension page／CLI） |
+| `letter_failed` | `letter_requested` | 使用者再次要求生成（Side Panel／CLI） |
 | 任一非終態 | `new` | JD 內容雜湊變更（重新走流程；既有 scores/letters 保留為歷史） |
 
 終態：`filtered_out`、`scored`、`letter_ready`（處理軸而言）。`shortlisted` 與 `letter_failed` 是**停留狀態**——系統不會自行推進，只有使用者要求才轉入 `letter_requested`（PRD R5.0）。`letter_requested` 是 letter 階段的唯一取件狀態。

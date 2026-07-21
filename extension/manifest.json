@@ -2,11 +2,12 @@
   "manifest_version": 3,
   "name": "jobfinder",
   "version": "0.1.0",
+  "minimum_chrome_version": "114",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAuBckCOzqt+ZcDxb3nT/3trLZ0RET6ZKpN6t9Kok+qg7hVARh/CWSo4mXU/+BBy0Robp7sg5sUFJmxMlflR+nHub+qDl/pXXj1srATn7U2ncr05gwmLeO7qrp8pUYPZXXwXciyg2Y9DcV+sEVDeQKtG/eusHR3VA2tknPtbHJ2Z+BmuTovKRtP3tMURN6ltehrm5oes5OzM9zRfESncohLGsP42XoepbIuiQxoHXQi3QamQ3ONzs8Pd+E4UFAiAEHlvoTuG0LeYuQfNTbPSAQ2UR3os647CHO90DjvU/VwrMdQKYA0wcbS7EOupuomXr6n0hXi9j9ZOW/d5m7GXXYkwIDAQAB",
-  "description": "Local jobfinder dashboard",
+  "description": "Local jobfinder Side Panel",
   "options_page": "options/index.html",
   "background": { "service_worker": "service-worker.js" },
-  "permissions": ["storage", "clipboardRead", "clipboardWrite"],
+  "permissions": ["storage", "sidePanel", "clipboardRead", "clipboardWrite"],
   "host_permissions": ["http://127.0.0.1/*", "http://[::1]/*"],
   "content_scripts": [
     {
@@ -20,5 +21,6 @@
       "run_at": "document_idle"
     }
   ],
-  "action": { "default_title": "jobfinder", "default_popup": "dashboard/index.html" }
+  "side_panel": { "default_path": "dashboard/index.html" },
+  "action": { "default_title": "開啟 jobfinder" }
 }

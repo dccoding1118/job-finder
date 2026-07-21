@@ -11,8 +11,8 @@
 | CLI | spf13/cobra | 入口 `./cmd/jobfinder`，每子命令一檔 |
 | 資料庫 | SQLite（`modernc.org/sqlite`，免 cgo） | 單檔、零維運；路徑由設定檔指定 |
 | 智能層 | headless CLI Runner：**claude CLI 為主、codex CLI 為輔** | subprocess 呼叫、JSON 輸出解析；不直串 LLM API（訂閱內零 API 費用） |
-| API | Go `net/http` JSON API，僅監聽 localhost | extension page 與 content script 的唯一後端介面 |
-| 前端 | Chrome MV3 extension page、service worker、content script 與 sidebar | extension page 是 MVP 唯一日常操作入口；vanilla JavaScript、無建置工具鏈 |
+| API | Go `net/http` JSON API，僅監聽 localhost | Side Panel 與 content script 的唯一後端介面 |
+| 前端 | Chrome MV3 Side Panel、service worker 與 content script | Side Panel 是 MVP 唯一日常操作入口；vanilla JavaScript、無建置工具鏈 |
 | 排程 | systemd user timer → `jobfinder run`（one-shot、冪等） | 不做常駐排程 daemon |
 | 設定 | `config.yaml` 與 `profile.yaml`（repo 內僅有去敏感 example） | config 保存執行與連線設定；Profile 保存使用者履歷與求職條件；env 不承載行為參數 |
 | 時區 | Asia/Taipei，時間戳 RFC3339 | `main.go` 設 `time.Local` |
@@ -22,7 +22,7 @@
 ```
                        ┌────────────────────────────────────────────┐
  systemd timer ──────► │  jobfinder run（pipeline，one-shot 冪等）    │
- extension page / CLI ─► │                                            │
+ Side Panel / CLI ─────► │                                            │
                        │  fetch ─► 條件篩選 ─► AI 評分 ─►（推薦）    │
                        │  求職信生成：使用者要求後才取件               │
                        │  ingest（104 半被動，由 capture API 轉入）    │
@@ -58,7 +58,7 @@
 | pipeline | `internal/pipeline` | 抓取排程編排、常駐 worker（初篩／評分／求職信）、ingest 入口（104 半被動）、條件篩選、rate limit、每日預算與冪等 | [design-pipeline](designs/design-pipeline.md) |
 | agents | `internal/agents` | Runner 抽象（CLI subprocess）、Scorer/Drafter/Reviewer、輸出驗證與防幻覺防線 | [design-agents](designs/design-agents.md) |
 | api | `internal/api` | localhost JSON API：Job／Run 查詢、狀態變更、手動 run、104 capture；驗證 extension origin 與 token | [design-api](designs/design-api.md) |
-| extension | `extension/` | Chrome MV3 插件：extension page 儀表板、service worker、104 列表收割、內頁擷取與評分 sidebar | [design-extension](designs/design-extension.md) |
+| extension | `extension/` | Chrome MV3 插件：原生 Side Panel 儀表板、service worker、104 列表收割與內頁擷取 | [design-extension](designs/design-extension.md) |
 | cli | `cmd/jobfinder/cli` | cobra 命令樹，薄殼呼叫各模組 | 各模組文件的「CLI 介面」節 |
 
 依賴方向：`cli / api → pipeline → (crawler, agents, profile) → store`；extension 僅經 api 對接；store 不依賴任何上層。**契約先行**：schema、agents JSON 輸出與 API 契約先定，其餘模組依賴之。
@@ -83,10 +83,10 @@
 | Profile 儲存 | 版控外 YAML 檔而非 DB | 人工編修頻繁、需版本化比對；含薪資期望等敏感值不入 repo/DB |
 | 加權總分 | Go 程式計算，Agent 只回各維分數 | 權重調整不需重跑 LLM；避免 LLM 算術錯誤 |
 | 求職信生成時機 | 使用者對推薦職缺按下生成才跑（`letter_requested` 取件），非評分後自動生成 | letter 是最耗 token 的階段，且系統不代投；未經使用者決定投遞的求職信不會被使用。以獨立狀態承載使用者意願，可沿用 PickForStage 的冪等取件與中斷重跑語意，不需同步長請求 |
-| 判定（verdict）的導出 | 由 API viewmodel 從 `process_state` ＋現行 score 導出，不存 DB 欄位 | 判定是既有狀態的呈現層投影；存成欄位會與狀態機產生雙真相與同步問題。清單標記、sidebar 與 dashboard 共用同一份導出結果 |
+| 判定（verdict）的導出 | 由 API viewmodel 從 `process_state` ＋現行 score 導出，不存 DB 欄位 | 判定是既有狀態的呈現層投影；存成欄位會與狀態機產生雙真相與同步問題。清單標記與 Side Panel 共用同一份導出結果 |
 | 清單頁快速判定 | 只跑欄位可用的條件篩選，不呼叫 LLM | 清單欄位不含 JD 全文，不足以支撐五維評分；使用者仍停在該頁面，回應必須即時 |
 | 防幻覺 | Reviewer Agent ＋ 程式端詞表比對雙防線 | 不把正確性全押在 LLM 自審 |
-| MVP 前端 | Chrome extension page | 日常操作與 104 瀏覽動線收斂為單一介面；避免維護兩套前端 |
+| MVP 前端 | Chrome 原生 Side Panel | 日常操作與 104 瀏覽動線收斂為可持續顯示的單一窄幅介面；避免維護 popup 與網站 overlay 兩套完整前端 |
 
 ## 6. 狀態機
 
@@ -118,8 +118,8 @@ apply_state（letter_ready 後，使用者擁有）：
 2. **B1**：crawler（介面＋Yourator）→ pipeline（fetch＋filter）→ CLI 檢視
 3. **B2**：agents（Runner＋Scorer）→ pipeline 接上 score 階段
 4. **B3**：agents（Drafter＋Reviewer）→ pipeline 接上 letter 階段
-5. **B4**：api → extension page dashboard → systemd timer 部署（[deploy](deploy.md)）
-6. **B5**：104 半被動組——`queries urls` 生成、crawler 104 解析器、pipeline ingest＋`discovered` 流程、capture API 與判定回傳、Chrome extension content script／sidebar 與清單就地標記
+5. **B4**：api → extension Side Panel dashboard → systemd timer 部署（[deploy](deploy.md)）
+6. **B5**：104 半被動組——`queries urls` 生成、crawler 104 解析器、pipeline ingest＋`discovered` 流程、capture API 與判定回傳、Chrome extension content script 與清單就地標記
 7. **B6**：crawler（Cake）→ profile 校準
 
 介面若需變動，回頭改本文件的模組邊界，不只改單一模組文件。

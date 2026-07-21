@@ -26,11 +26,12 @@ certifications:
 preferences:
   salary_min: 0
   salary_target: 0
-  # Match the source's own wording: 104 reports localities in Chinese
-  # (e.g. 台北市, 新北市) and the location filter matches by substring.
+  # Match each source's wording: 104 reports Chinese localities while other
+  # sources can report the same location in English; matching is by substring.
   locations:
     - 台北
     - 新北
+    - Taipei
   remote: preferred
   directions:
     - key: P1

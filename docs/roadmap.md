@@ -23,7 +23,7 @@ MVP 架構中為擴展預留的縫：Source adapter（加平台不動核心）�
 ### S0 — 個人 MVP（現在，對應 PRD 交付計畫 B0–B6）
 
 - **目標**：自己每天用得起來；完成「抓取→評分→生成→手動投遞→狀態追蹤」閉環。
-- **形態**：單人單機（GCP VM）、CLI ＋ localhost API ＋ Chrome extension page（含 104 半被動擷取）、SQLite、headless CLI LLM。
+- **形態**：單人單機（GCP VM）、CLI ＋ localhost API ＋ Chrome 原生 Side Panel（含 104 半被動擷取）、SQLite、headless CLI LLM。
 - **退出標準**：連續兩週日常使用；三來源皆通（Yourator/Cake 全自動、104 插件半被動）；投遞 ≥20 筆由本系統產出的求職信。
 
 ### S1 — 自用強化（求職期間持續迭代）
@@ -109,7 +109,7 @@ MVP 架構中為擴展預留的縫：Source adapter（加平台不動核心）�
 
 | MVP 模組（現在） | 產品化元件（未來） | 演進動作 |
 |---|---|---|
-| `api`（localhost JSON API）＋ extension page | Web container | 將 extension page 的 Job／Run 操作遷入 Web，並加 OAuth、Profile 表單、設定頁、通知偏好 |
+| `api`（localhost JSON API）＋ Side Panel | Web container | 將 Side Panel 的 Job／Run 操作遷入 Web，並加 OAuth、Profile 表單、設定頁、通知偏好 |
 | `pipeline`＋`crawler`＋`agents`（`jobfinder run`） | Pipeline Job container | 打包容器、改吃租戶參數；Runner 換直串 LLM API 實作 |
 | `store`（SQLite） | PostgreSQL | 介面不變、換 driver；加租戶維度 |
 | systemd timer | Cloud Scheduler | 觸發語意相同（每日 one-shot、冪等） |
@@ -136,7 +136,7 @@ MVP 架構中為擴展預留的縫：Source adapter（加平台不動核心）�
 | 爬蟲 | 本機 per-user | 單租戶實例 | 集中抓取池＋合規供給 |
 | 部署 | VM ＋ systemd timer | 容器單租戶 | 容器多租戶＋排程服務（見 [deploy](deploy.md)） |
 | 登入 | 無（localhost） | Google OAuth | OAuth＋計費身分 |
-| UI | Chrome extension page | e2e UI 第一版 | 完整 e2e＋Landing |
+| UI | Chrome 原生 Side Panel | e2e UI 第一版 | 完整 e2e＋Landing |
 
 ## 6. 市場判斷與商業化風險
 
