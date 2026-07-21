@@ -60,8 +60,10 @@
     },
   };
 
+  // The gtm marker sits on the anchor 104 wraps inside each .info-tags__text
+  // span, not on the span itself, so the whole subtree is scanned by attribute.
   function tagByPrefix(item, prefix) {
-    for (const tag of item.querySelectorAll(".info-tags__text")) {
+    for (const tag of item.querySelectorAll("[data-gtm-joblist]")) {
       if ((tag.getAttribute("data-gtm-joblist") || "").startsWith(prefix)) return tag.textContent.trim();
     }
     return "";

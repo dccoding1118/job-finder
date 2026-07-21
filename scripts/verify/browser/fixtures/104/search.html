@@ -5,6 +5,8 @@
   對應 design-extension.md §4.0（URL pattern https://www.104.com.tw/jobs/search/*，
   項目容器 .job-summary，Vue 虛擬捲動 .vue-recycle-scroller）與 design-crawler.md §2.1。
   content script 讀取邏輯見 extension/content/list.js 的 searchPage.read。
+  地區／薪資等 data-gtm-joblist 標記掛在 .info-tags__text span 內層的 <a>，
+  不在 span 本身（對齊 live DOM；tagByPrefix 以此掃子孫節點）。
   所有職稱、公司、產業、JD 摘要均為虛構，不含真實資料（Zero-PII）。
 -->
 <head>
@@ -34,8 +36,8 @@
             <span class="info-company-addon-type">軟體及網路相關業</span>
           </div>
           <div class="info-tags">
-            <span class="info-tags__text" data-gtm-joblist="職缺-地區-台北市">台北市中山區</span>
-            <span class="info-tags__text" data-gtm-joblist="職缺-薪資-月薪">月薪50,000~80,000元</span>
+            <span class="info-tags__text"><a href="/jobs/search/?area=6001001005" data-gtm-joblist="職缺-地區-台北市中山區">台北市中山區</a></span>
+            <span class="info-tags__text"><a href="/jobs/search/?sr=1" data-gtm-joblist="職缺-薪資-月薪">月薪50,000~80,000元</a></span>
           </div>
           <span class="info-date"><i class="icon-hotjob" aria-label="廣告"></i></span>
         </article>
@@ -53,10 +55,10 @@
             <span class="info-company-addon-type">電腦系統整合服務業</span>
           </div>
           <div class="info-tags">
-            <span class="info-tags__text" data-gtm-joblist="職缺-地區-台北市">台北市信義區</span>
-            <span class="info-tags__text" data-gtm-joblist="職缺-經歷-5年以上">5年以上</span>
-            <span class="info-tags__text" data-gtm-joblist="職缺-學歷-大學">大學</span>
-            <span class="info-tags__text" data-gtm-joblist="職缺-薪資-月薪">月薪70,000~95,000元</span>
+            <span class="info-tags__text"><a href="/jobs/search/?area=6001001002" data-gtm-joblist="職缺-地區-台北市信義區">台北市信義區</a></span>
+            <span class="info-tags__text"><a href="/jobs/search/?jobexp=5" data-gtm-joblist="職缺-經歷-5年以上">5年以上</a></span>
+            <span class="info-tags__text"><a href="/jobs/search/?edu=4" data-gtm-joblist="職缺-學歷-大學">大學</a></span>
+            <span class="info-tags__text"><a href="/jobs/search/?sr=1" data-gtm-joblist="職缺-薪資-月薪">月薪70,000~95,000元</a></span>
           </div>
           <div class="info-othertags">
             <span class="info-othertags__text">遠端工作</span>
@@ -81,10 +83,10 @@
             <span class="info-company-addon-type">軟體及網路相關業</span>
           </div>
           <div class="info-tags">
-            <span class="info-tags__text" data-gtm-joblist="職缺-地區-新北市">新北市板橋區</span>
-            <span class="info-tags__text" data-gtm-joblist="職缺-經歷-3年以上">3年以上</span>
-            <span class="info-tags__text" data-gtm-joblist="職缺-學歷-專科">專科</span>
-            <span class="info-tags__text" data-gtm-joblist="職缺-薪資-面議">待遇面議</span>
+            <span class="info-tags__text"><a href="/jobs/search/?area=6001002001" data-gtm-joblist="職缺-地區-新北市板橋區">新北市板橋區</a></span>
+            <span class="info-tags__text"><a href="/jobs/search/?jobexp=3" data-gtm-joblist="職缺-經歷-3年以上">3年以上</a></span>
+            <span class="info-tags__text"><a href="/jobs/search/?edu=3" data-gtm-joblist="職缺-學歷-專科">專科</a></span>
+            <span class="info-tags__text"><a href="/jobs/search/?sr=18" data-gtm-joblist="職缺-薪資-面議">待遇面議</a></span>
           </div>
           <div class="info-othertags">
             <span class="info-othertags__text">員工30人</span>
@@ -106,10 +108,10 @@
             <span class="info-company-addon-type">電子零組件相關業</span>
           </div>
           <div class="info-tags">
-            <span class="info-tags__text" data-gtm-joblist="職缺-地區-台北市">台北市內湖區</span>
-            <span class="info-tags__text" data-gtm-joblist="職缺-經歷-4年以上">4年以上</span>
-            <span class="info-tags__text" data-gtm-joblist="職缺-學歷-大學">大學</span>
-            <span class="info-tags__text" data-gtm-joblist="職缺-薪資-月薪">月薪60,000~85,000元</span>
+            <span class="info-tags__text"><a href="/jobs/search/?area=6001001010" data-gtm-joblist="職缺-地區-台北市內湖區">台北市內湖區</a></span>
+            <span class="info-tags__text"><a href="/jobs/search/?jobexp=4" data-gtm-joblist="職缺-經歷-4年以上">4年以上</a></span>
+            <span class="info-tags__text"><a href="/jobs/search/?edu=4" data-gtm-joblist="職缺-學歷-大學">大學</a></span>
+            <span class="info-tags__text"><a href="/jobs/search/?sr=1" data-gtm-joblist="職缺-薪資-月薪">月薪60,000~85,000元</a></span>
           </div>
           <div class="info-othertags">
             <span class="info-othertags__text">員工200人</span>

@@ -18,6 +18,10 @@
 
 - [ ] 完成日常 Chrome compatibility gate 與同一 artifact 的 evidence 附加機制；自動隔離 Chromium 不得視為實際 Chrome 驗收（詳見 `docs/verify.md` §4 V4、§9）。本機無 Chrome 且 `DISPLAY=none`，實際載入須由使用者在桌機執行。人工操作手冊見 `docs/runbook-extension.md`（Windows Chrome ↔ GCP VM API 走 SSH loopback forward）。
 
+- [ ] 補上 content script 的 e2e 自動化覆蓋：`search/notification/job.html` fixture 存在但無 spec 載入並斷言標記／sidebar，故 live selector 漏洩（搜尋頁 `data-gtm-joblist` 掛 `.info-tags__text` 內層 `<a>`、內頁 `JobPosting` JSON-LD 由 Vue 於 document_idle 後才注入）未被 CI 擋下。需載入 fixture＋mock API，斷言搜尋頁 `.jobfinder-mark` 出現、內頁 sidebar 顯示 verdict。
+
+- [ ] 內頁 `baseSalary` 解析形狀待校：live 104 用 `baseSalary.value.value`（單一字串，如 `"40000元以上"`）而非 `minValue`／`maxValue`；目前 `parse104.go` 的 `jobPosting.BaseSalary.Value` 只讀 `minValue`/`maxValue`。此 `面議` 樓地板依設計本就該忽略（結果正確），但**明確薪資區間**的 live 形狀未取樣，parser 的 min/max 路徑恐在正式環境永不觸發。需一筆有明確月薪區間的內頁 JSON-LD 樣本才能定案是否改讀 `value.value`。
+
 **Roadmap — 部署標準化（暫不實作）**
 
 - [ ] deploy 整合 GitHub release：建立「正式版工件」路徑——由 CI/release 產出帶版號與 checksum 的正式工件（binary），正式環境只從該工件部署，不再從開發 checkout 直接 build+install（目前 `scripts/deploy/install.sh` 走 preflight→build→install 的開發目錄直裝路徑）。一併規劃 Chrome extension 隨 release 的上版流程如何整合（打包、版號對齊、`extension_origin` 更新）。目標：收斂「開發目錄→正式環境」的直接安裝路徑。
