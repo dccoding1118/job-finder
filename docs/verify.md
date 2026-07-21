@@ -169,7 +169,7 @@ mise run e2e-live
 ## 9. 後續累加順序
 
 1. 在具備正式來源連線與已授權 CLI 的環境跑通 **V3**：真來源至少一筆、真 Agent score／letter 與安全格式 evidence 缺一不可。
-2. 完成實際 **Chrome compatibility gate**；自動隔離 Chromium 不得替代人工結論。人工操作步驟見 `docs/runbook-extension.md`。
+2. 完成實際 **Chrome compatibility gate**；自動隔離 Chromium 不得替代人工結論。人工操作步驟見 `docs/guides/runbook-extension.md`。
 3. 完成 **V5** 的真 104 頁人工 Chrome gate；真頁面只驗證使用者已載入的內容，確認清單就地標記與既有職缺判定一致。
 4. 完成 **V6** 的 Cake adapter 與校準 diff，再將 V1–V6 彙整為完整日常求職迴圈。
 5. 依 §5 骨架累加負向案例 N，沿用相同需求對照與 evidence 格式。
