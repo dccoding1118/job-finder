@@ -4,6 +4,9 @@
 (() => {
   const POLL_INTERVAL_MS = 3000;
   const POLL_LIMIT_MS = 5 * 60 * 1000;
+  // 104 renders the JobPosting JSON-LD from a Vue component, so it is often
+  // absent at document_idle; the capture waits for it to land before reading.
+  const CONTENT_WAIT_MS = 15000;
   const VERDICTS = { unfit: "不適合", recommended: "推薦", not_recommended: "不推薦", pending_score: "評分中", pending_detail: "待補全文" };
 
   const sidebar = document.createElement("div");
@@ -58,6 +61,30 @@
     return [...document.querySelectorAll('script[type="application/ld+json"]')].map((node) => node.textContent || "");
   }
 
+  // The page is ready once a JobPosting block exists or the DOM fallback has
+  // material; only then does reading it give the real content rather than the
+  // empty shell 104 serves before the Vue app mounts.
+  function contentReady() {
+    return jsonLD().some((block) => block.includes("JobPosting")) || domFallback() != null;
+  }
+
+  function waitForContent() {
+    return new Promise((resolve) => {
+      if (contentReady()) return resolve();
+      const observer = new MutationObserver(() => {
+        if (!contentReady()) return;
+        observer.disconnect();
+        clearTimeout(timer);
+        resolve();
+      });
+      observer.observe(document.documentElement, { childList: true, subtree: true });
+      const timer = setTimeout(() => {
+        observer.disconnect();
+        resolve();
+      }, CONTENT_WAIT_MS);
+    });
+  }
+
   function domFallback() {
     const description = document.querySelector(".job-description, .content")?.textContent || "";
     if (!description.trim()) return null;
@@ -91,6 +118,7 @@
   async function capture() {
     document.body.append(sidebar);
     render("<h2>jobfinder</h2><p>擷取中…</p>");
+    await waitForContent();
     const blocks = jsonLD();
     const body = { url: location.href, json_ld: blocks };
     if (blocks.length === 0) {
