@@ -105,10 +105,10 @@ mock 一趟用固定合成測資；下表即「標準答案」，逐值由 `asse
 | S17 | localhost API 正向認證 | 精確 extension Origin＋token=200；無 Origin MV3＋token=200；preflight=204 | V4·R6 | ✅ |
 | S18 | API 清單、篩選、判定與對照 | 4 筆 verdict/letter_state＝§3.2；source/process/apply/verdict filter 精確；queue 空；`#1002/#1001` 詳情五維、letter、狀態事件精確 | V2/V4·R6 | ✅ |
 | S19 | 載入固定 ID extension 模擬環境 | 固定 unpacked ID `oddnhajj…`；安全摘要 Origin=absent、Authorization present=true、token 已清空 | V4·R6 | ✅ |
-| S20 | dashboard 判定篩選、copy、apply | filters_verified、detail_verified、clipboard==核准合成信、`#1002` apply pending→applied 並寫回 SQLite | V4·R6 | ✅ |
-| S21 | dashboard 求職信生成入口 | 對 `#1001`（letter_failed）再次產生→受理轉 `letter_requested`；狀態事件永久記錄第 2 次 `letter_requested`，worker 隨後取件 | V4·R6 | ✅ |
-| S22 | dashboard 手動抓取與 Run history | manual fetch 完成；API `runs` 出現 `trigger=manual-extension`；Run history 呈現 fetch stats 與 verdict 分布；存 screenshot | V4·R7 | ✅ |
-| S23 | extension mock browser L1 | 專案鎖定 Playwright 6 tests 全 pass：dashboard／Options／service worker 的 mock Chrome API 互動，及 content script 於 104 search／notification／detail fixture 上的標記與 sidebar（搜尋頁 `.jobfinder-mark` 依 verdict 標記、跳過 hotjob 廣告、title／data-gtm 地區薪資照 live selector 讀取；通知頁無 data-gtm 依位置與格式讀取；內頁 sidebar 由 JobPosting JSON-LD 顯示 verdict 與五維） | V4·R6／R9 | ✅ |
+| S20 | Side Panel 判定篩選、copy、apply | 四頁籤與 light／dark theme 正常；filters_verified、detail_verified、clipboard==核准合成信、`#1002` apply pending→applied 並寫回 SQLite | V4·R6 | ✅ |
+| S21 | Side Panel 求職信生成入口 | 對 `#1001`（letter_failed）再次產生→受理轉 `letter_requested`；狀態事件永久記錄第 2 次 `letter_requested`，worker 隨後取件 | V4·R6 | ✅ |
+| S22 | Side Panel 手動抓取與 Run history | manual fetch 完成；API `runs` 出現 `trigger=manual-extension`；Run history 呈現 fetch stats 與 verdict 分布；存 screenshot | V4·R7 | ✅ |
+| S23 | extension mock browser L1 | 專案鎖定 Playwright 6 tests 全 pass：Side Panel／Options／service worker 的 mock Chrome API 互動，及 content script 於 104 search／notification／detail fixture 上的標記與 active-tab context（搜尋頁 `.jobfinder-mark` 依 verdict 標記、跳過 hotjob 廣告、title／data-gtm 地區薪資照 live selector 讀取；通知頁無 data-gtm 依位置與格式讀取；內頁由 JobPosting JSON-LD 擷取且不注入完整評分 overlay） | V4·R6／R9 | ✅ |
 | S24 | 104 清單就地判定且列表路徑零 Agent | v5intern→`unfit/filtered_out`、v5senior→`discovered/pending_detail`；列表路徑 Agent 呼叫數不變 | V5·R2/R3/R9 | ✅ |
 | S25 | 104 既有職缺回判定、內頁 capture 非同步 | 重複 list 對既有職缺 `created=false` 回現行判定；v5senior 進待看 queue；`capture/job`→`queued/pending_score`、score=null | V5·R9 | ✅ |
 

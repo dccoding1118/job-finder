@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <title>jobfinder Side Panel prototype</title>
+    <link rel="stylesheet" href="side-panel.css" />
+  </head>
+  <body>
+    <div class="preview-shell">
+      <aside class="app-shell" aria-label="jobfinder Side Panel prototype">
+        <header class="app-header">
+          <div class="brand-row">
+            <div class="brand-lockup">
+              <span class="brand-mark" aria-hidden="true"><span></span></span>
+              <span class="brand-name">jobfinder</span>
+            </div>
+            <div class="header-actions">
+              <span id="connection" class="connection-pill">
+                <span class="connection-dot" aria-hidden="true"></span>
+                <span>已連線</span>
+              </span>
+              <button id="theme-toggle" class="icon-button" type="button" aria-label="切換至深色模式" aria-pressed="false">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M20 15.2A8.2 8.2 0 0 1 8.8 4 8.5 8.5 0 1 0 20 15.2Z" />
+                </svg>
+              </button>
+              <button id="refresh" class="icon-button" type="button" aria-label="重新整理">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M20 7v5h-5M4 17v-5h5M6.1 8.2A7 7 0 0 1 18.4 7L20 9M4 15l1.6 2A7 7 0 0 0 18 15.8" />
+                </svg>
+              </button>
+            </div>
+          </div>
+
+          <div id="page-context" class="page-context" aria-live="polite"></div>
+
+          <nav class="tab-list" role="tablist" aria-label="主要畫面">
+            <button class="tab is-active" type="button" role="tab" aria-selected="true" aria-controls="screen-current" data-tab="current">
+              <span>目前職缺</span>
+            </button>
+            <button class="tab" type="button" role="tab" aria-selected="false" aria-controls="screen-queue" data-tab="queue">
+              <span>待看</span><span id="queue-count" class="tab-count">0</span>
+            </button>
+            <button class="tab" type="button" role="tab" aria-selected="false" aria-controls="screen-shortlist" data-tab="shortlist">
+              <span>推薦</span><span id="shortlist-count" class="tab-count">0</span>
+            </button>
+            <button class="tab" type="button" role="tab" aria-selected="false" aria-controls="screen-system" data-tab="system">
+              <span>系統</span>
+            </button>
+          </nav>
+        </header>
+
+        <main class="app-main">
+          <section id="screen-current" class="screen" role="tabpanel" data-screen="current"></section>
+          <section id="screen-queue" class="screen" role="tabpanel" data-screen="queue" hidden></section>
+          <section id="screen-shortlist" class="screen" role="tabpanel" data-screen="shortlist" hidden></section>
+          <section id="screen-system" class="screen" role="tabpanel" data-screen="system" hidden></section>
+        </main>
+
+        <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+      </aside>
+    </div>
+
+    <script src="mock-data.js"></script>
+    <script src="side-panel.js"></script>
+  </body>
+</html>

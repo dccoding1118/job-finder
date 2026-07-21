@@ -18,6 +18,12 @@
   const requested = new Set();
   let pending = new Map();
   let timer = null;
+  const pageContext = { kind: "list", source: "104", status: "captured", title: "104 職缺清單" };
+
+  chrome.runtime.onMessage.addListener((message, _sender, respond) => {
+    if (message?.type !== "get-page-context") return;
+    respond(pageContext);
+  });
 
   const searchPage = {
     itemSelector: ".job-summary",

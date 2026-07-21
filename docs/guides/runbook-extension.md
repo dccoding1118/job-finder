@@ -68,12 +68,12 @@
 
 ## 6. Chrome gate 人工驗收
 
-打開 dashboard（extension 的 action popup，或 `chrome-extension://oddnhajjhmgogefocnljofeahniodiei/dashboard/index.html`），逐項操作並對照 `docs/verify.md` §4 對應步驟的**字面預期**。標準答案以 `verify.md` 為準，此處不重抄，只列要親手走到的觀察點：
+點擊 extension toolbar action 開啟原生 Side Panel（除錯時亦可直接開啟 `chrome-extension://oddnhajjhmgogefocnljofeahniodiei/dashboard/index.html`），逐項操作並對照 `docs/verify.md` §4 對應步驟的**字面預期**。標準答案以 `verify.md` 為準，此處不重抄，只列要親手走到的觀察點：
 
 | 對照案例 | 要操作／觀察的行為 |
 |---|---|
 | S17 | localhost API 正向認證：帶精確 extension Origin＋token 與無 Origin＋token 皆通、preflight 正常 |
-| S18 | 清單載入，來源／流程／投遞／判定四種篩選精確；點入職缺詳情呈現五維、求職信、狀態事件 |
+| S18 | Side Panel 四頁籤與淺／深色切換；推薦清單的來源／流程／投遞／判定四種篩選精確；點入職缺詳情呈現五維、求職信、狀態事件 |
 | S20 | 判定篩選、複製核准求職信到剪貼簿、對某筆 `apply pending → applied` 並回寫 SQLite |
 | S21 | 對 `letter_failed` 職缺再次「生成求職信」，受理轉 `letter_requested`，worker 隨後取件 |
 | S22 | 手動抓取完成，`runs` 出現 `trigger=manual-extension`；Run history 呈現抓取統計與判定分布 |

@@ -1,38 +1,481 @@
-const status = document.querySelector("#status");
-const verdictFilter = document.querySelector("#verdict"), process = document.querySelector("#process"), apply = document.querySelector("#apply"), sourceFilter = document.querySelector("#source-filter"), detail = document.querySelector("#detail"), source = document.querySelector("#source"), verdictLabel = document.querySelector("#verdict-label"), score = document.querySelector("#score"), description = document.querySelector("#description"), letter = document.querySelector("#letter"), letterState = document.querySelector("#letter-state"), requestLetter = document.querySelector("#request-letter"), applyState = document.querySelector("#apply-state"), events = document.querySelector("#events"), run = document.querySelector("#run"), refresh = document.querySelector("#refresh"), copy = document.querySelector("#copy"), saveApply = document.querySelector("#save-apply");
-// The verdict wording comes from the API; the dashboard never derives a
-// decision from process_state or a score of its own.
-const VERDICTS = { unfit: "不適合", recommended: "推薦", not_recommended: "不推薦", pending_detail: "待補全文", pending_score: "待評分" };
-let selectedJob = null;
-function api(path, method = "GET", body) { return chrome.runtime.sendMessage({ type: "api", path, method, body }); }
-function text(value) { return value == null || value === "" ? "—" : String(value); }
-function message(value) { status.textContent = value; }
-function node(tag, value) { const el = document.createElement(tag); el.textContent = value; return el; }
-function verdictText(job) { return VERDICTS[job.verdict] || "—"; }
-function renderJobs(items) { const root = document.querySelector("#jobs"); root.replaceChildren(...items.map((job) => { const button = node("button", `${verdictText(job)}｜${text(job.title)}｜${text(job.company_name)}｜分數 ${text(job.score_total)}｜${text(job.salary_min)}-${text(job.salary_max)}｜${text(job.location)}｜${text(job.process_state)}｜${text(job.apply_state)}`); button.addEventListener("click", () => showJob(job.id)); return button; })); }
-function renderSimple(id, items, format, link) { const root = document.querySelector(id); root.replaceChildren(...items.map((item) => { const el = link ? document.createElement("a") : document.createElement("p"); el.textContent = format(item); if (link) { el.href = item.url; el.target = "_blank"; el.rel = "noreferrer"; } return el; })); }
-function pairs(value) { return Object.entries(value || {}).sort(([a], [b]) => a.localeCompare(b)).map(([key, count]) => `${key}=${count}`).join(", "); }
-function runLine(r) { return `${text(r.started_at)}｜${text(r.finished_at)}｜${text(r.trigger)}｜抓取 ${pairs(r.stats)}｜判定 ${pairs(r.verdicts)}｜${text(r.error)}`; }
-async function load() { const params = new URLSearchParams(); if (verdictFilter.value) params.set("verdict", verdictFilter.value); if (process.value) params.set("process_state", process.value); if (apply.value) params.set("apply_state", apply.value); if (sourceFilter.value) params.set("source", sourceFilter.value); const [jobs, queue, runs] = await Promise.all([api(`/api/v1/jobs?${params}`), api("/api/v1/queue"), api("/api/v1/runs")]); for (const result of [jobs, queue, runs]) if (!result.ok) message(result.error); if (jobs.ok) { renderJobs(jobs.data.items); message("已連線至 jobfinder API"); } if (queue.ok) renderSimple("#queue", queue.data.items, (j) => `${text(j.title)}｜${text(j.company_name)}｜${text(j.salary_min)}-${text(j.salary_max)}`, true); if (runs.ok) renderSimple("#runs", runs.data.items, runLine); }
-// The letter section follows letter_state: the system drafts nothing until the
-// user asks, and the request is accepted rather than awaited.
-function renderLetter(job) {
-  const state = job.letter_state;
-  letter.textContent = job.letter?.status === "approved" ? job.letter.content : "";
-  copy.hidden = job.letter?.status !== "approved";
-  requestLetter.hidden = !(state === "none" || state === "failed");
-  requestLetter.disabled = false;
-  requestLetter.textContent = state === "failed" ? "再次產生求職信" : "產生求職信";
-  if (state === "none") letterState.textContent = "尚未要求產生求職信。";
-  else if (state === "requested") letterState.textContent = "產生中，將於下一輪執行完成；重新整理即可取得結果。";
-  else if (state === "ready") letterState.textContent = "求職信已過審。";
-  else if (state === "failed") letterState.textContent = "求職信未過審。";
-  else letterState.textContent = "求職信僅對推薦職缺開放。";
-}
-async function showJob(id) { const result = await api(`/api/v1/jobs/${id}`); if (!result.ok) return message(result.error); selectedJob = result.data; detail.hidden = false; source.href = selectedJob.url; document.querySelector("#detail-title").textContent = `${text(selectedJob.title)}｜${text(selectedJob.company_name)}`; verdictLabel.textContent = `判定：${verdictText(selectedJob)}${selectedJob.filter_hits ? `（命中 ${selectedJob.filter_hits.join("、")}）` : ""}`; score.textContent = selectedJob.score ? `總分 ${text(selectedJob.score.total)}｜技能 ${text(selectedJob.score.hard_skill)}｜領域 ${text(selectedJob.score.domain)}｜資歷 ${text(selectedJob.score.seniority)}｜條件 ${text(selectedJob.score.condition)}｜方向 ${text(selectedJob.score.direction)}：${text(selectedJob.score.reason)}` : "分數：—"; description.textContent = text(selectedJob.description); renderLetter(selectedJob); applyState.value = selectedJob.apply_state || "pending"; events.replaceChildren(...(selectedJob.status_events || []).map((e) => node("p", `${e.axis}: ${e.from_state || "—"} → ${e.to_state}`))); }
-run.addEventListener("click", async () => { const result = await api("/api/v1/runs", "POST"); message(result.ok && result.data.status === "started" ? "已開始抓取" : result.ok ? "已有執行中的抓取" : result.error); await load(); });
-refresh.addEventListener("click", load); verdictFilter.addEventListener("change", load); process.addEventListener("change", load); apply.addEventListener("change", load); sourceFilter.addEventListener("change", load);
-copy.addEventListener("click", async () => { try { await navigator.clipboard.writeText(letter.textContent); message("已複製信件"); } catch (_) { message("無法使用剪貼簿，信件文字仍可選取複製。"); } });
-saveApply.addEventListener("click", async () => { if (!selectedJob) return; const result = await api(`/api/v1/jobs/${selectedJob.id}/apply`, "POST", { apply_state: applyState.value }); if (!result.ok) return message(result.error); message("投遞狀態已更新"); await showJob(selectedJob.id); load(); });
-requestLetter.addEventListener("click", async () => { if (!selectedJob) return; requestLetter.disabled = true; const result = await api(`/api/v1/jobs/${selectedJob.id}/letter`, "POST"); if (!result.ok) { requestLetter.disabled = false; return message(result.error); } message("已受理求職信生成要求"); selectedJob = result.data.job; renderLetter(selectedJob); load(); });
-load();
+(() => {
+  const POLL_INTERVAL_MS = 3000;
+  const POLL_LIMIT_MS = 5 * 60 * 1000;
+  const VERDICTS = {
+    unfit: { label: "不適合", tone: "negative", icon: "close" },
+    recommended: { label: "推薦", tone: "positive", icon: "check" },
+    not_recommended: { label: "不推薦", tone: "neutral", icon: "close" },
+    pending_detail: { label: "待補全文", tone: "warning", icon: "clock" },
+    pending_score: { label: "評分中", tone: "warning", icon: "clock" },
+  };
+  const icons = {
+    check: '<path d="m5 12 4 4L19 6" />',
+    close: '<path d="m7 7 10 10M17 7 7 17" />',
+    clock: '<circle cx="12" cy="12" r="8" /><path d="M12 8v4l3 2" />',
+    pin: '<path d="M20 10c0 5-8 11-8 11S4 15 4 10a8 8 0 1 1 16 0Z" /><circle cx="12" cy="10" r="2.5" />',
+    wallet: '<rect x="3" y="6" width="18" height="13" rx="3" /><path d="M16 10h5v5h-5a2.5 2.5 0 0 1 0-5Z" />',
+    arrow: '<path d="m9 18 6-6-6-6" />',
+    external: '<path d="M14 5h5v5M19 5l-8 8" /><path d="M18 13v5a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5" />',
+    spark: '<path d="m12 3 1.4 4.1L18 9l-4.6 1.9L12 15l-1.4-4.1L6 9l4.6-1.9L12 3Z" /><path d="m18.5 15 .7 2 1.8.8-1.8.7-.7 2-.7-2-1.8-.7 1.8-.8.7-2Z" />',
+    copy: '<rect x="8" y="8" width="11" height="11" rx="2" /><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" />',
+    info: '<circle cx="12" cy="12" r="9" /><path d="M12 11v5M12 8h.01" />',
+    cloud: '<path d="M7 18h10a4 4 0 0 0 .8-7.9A6 6 0 0 0 6.4 8.3 4.8 4.8 0 0 0 7 18Z" />',
+    play: '<path d="m9 7 8 5-8 5V7Z" />',
+    refresh: '<path d="M20 7v5h-5M4 17v-5h5M6.1 8.2A7 7 0 0 1 18.4 7L20 9M4 15l1.6 2A7 7 0 0 0 18 15.8" />',
+    moon: '<path d="M20 15.2A8.2 8.2 0 0 1 8.8 4 8.5 8.5 0 1 0 20 15.2Z" />',
+    sun: '<circle cx="12" cy="12" r="3.5" /><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" />',
+  };
+
+  const state = {
+    activeTab: "current",
+    theme: "light",
+    connected: null,
+    context: { kind: "loading", status: "loading" },
+    currentJob: null,
+    jobs: [],
+    queue: [],
+    runs: [],
+    filters: { verdict: "recommended", process: "", apply: "", source: "" },
+    filtersOpen: false,
+    collectionRequest: 0,
+    busy: new Set(),
+    toastTimer: null,
+    pollTimer: null,
+    pollUntil: 0,
+  };
+
+  const screens = [...document.querySelectorAll("[data-screen]")];
+  const tabs = [...document.querySelectorAll("[data-tab]")];
+  const contextNode = document.querySelector("#page-context");
+  const connection = document.querySelector("#connection");
+  const themeToggle = document.querySelector("#theme-toggle");
+  const refresh = document.querySelector("#refresh");
+  const status = document.querySelector("#status");
+  const toast = document.querySelector("#toast");
+  refresh.innerHTML = icon("refresh");
+
+  function icon(name, className = "") {
+    return `<svg class="${className}" viewBox="0 0 24 24" aria-hidden="true">${icons[name] || icons.info}</svg>`;
+  }
+
+  function escapeHTML(value) {
+    return String(value ?? "")
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#039;");
+  }
+
+  function text(value) {
+    return value == null || value === "" ? "—" : String(value);
+  }
+
+  function salary(job) {
+    if (job.salary_min == null && job.salary_max == null) return "薪資未提供";
+    if (job.salary_min != null && job.salary_max != null) return `${job.salary_min.toLocaleString()}–${job.salary_max.toLocaleString()}`;
+    return job.salary_min != null ? `${job.salary_min.toLocaleString()} 以上` : `${job.salary_max.toLocaleString()} 以下`;
+  }
+
+  function verdictMeta(job) {
+    return VERDICTS[job?.verdict] || { label: "等待判定", tone: "neutral", icon: "clock" };
+  }
+
+  function api(path, method = "GET", body) {
+    return chrome.runtime.sendMessage({ type: "api", path, method, body });
+  }
+
+  function extensionMessage(message) {
+    return chrome.runtime.sendMessage(message).catch(() => ({ ok: false }));
+  }
+
+  function storageGet(defaults) {
+    return new Promise((resolve) => chrome.storage.local.get(defaults, resolve));
+  }
+
+  function storageSet(values) {
+    return new Promise((resolve) => chrome.storage.local.set(values, resolve));
+  }
+
+  function setConnection(connected) {
+    state.connected = connected;
+    connection.classList.toggle("is-offline", connected === false);
+    connection.lastElementChild.textContent = connected === null ? "連線中" : connected ? "已連線" : "離線";
+  }
+
+  function announce(message) {
+    status.textContent = message;
+  }
+
+  function showToast(message) {
+    clearTimeout(state.toastTimer);
+    announce(message);
+    toast.textContent = message;
+    toast.hidden = false;
+    state.toastTimer = setTimeout(() => { toast.hidden = true; }, 2600);
+  }
+
+  function applyTheme() {
+    const dark = state.theme === "dark";
+    document.documentElement.dataset.theme = state.theme;
+    themeToggle.innerHTML = icon(dark ? "sun" : "moon");
+    themeToggle.setAttribute("aria-label", dark ? "切換至淺色模式" : "切換至深色模式");
+    themeToggle.setAttribute("aria-pressed", String(dark));
+  }
+
+  function updateHeader() {
+    const job = state.currentJob;
+    const page = state.context;
+    let source = page.source || job?.source || "—";
+    let title = job?.title || page.title || "目前分頁沒有可顯示的職缺";
+    let subtitle = job?.company_name || (page.kind === "list" ? "104 職缺清單" : "切換至支援的職缺頁，或從推薦清單選取");
+    let captureLabel = job ? (page.job_id === job.id ? "已擷取" : "已選取") : page.status === "capturing" ? "擷取中" : "無職缺";
+    let captureIcon = job ? "check" : "clock";
+    contextNode.innerHTML = `
+      <span class="source-badge">${escapeHTML(source)}</span>
+      <span class="context-copy"><strong>${escapeHTML(title)}</strong><span>${escapeHTML(subtitle)}</span></span>
+      <span class="capture-badge">${icon(captureIcon)}<span>${escapeHTML(captureLabel)}</span></span>
+    `;
+  }
+
+  function switchTab(name) {
+    state.activeTab = name;
+    tabs.forEach((tab) => {
+      const active = tab.dataset.tab === name;
+      tab.classList.toggle("is-active", active);
+      tab.setAttribute("aria-selected", String(active));
+      tab.tabIndex = active ? 0 : -1;
+    });
+    screens.forEach((screen) => { screen.hidden = screen.dataset.screen !== name; });
+    window.scrollTo({ top: 0, behavior: "auto" });
+  }
+
+  function emptyState(title, copy) {
+    return `<div class="empty-state"><span class="empty-icon">${icon("info")}</span><strong>${escapeHTML(title)}</strong><p>${escapeHTML(copy)}</p></div>`;
+  }
+
+  function scoreCard(job) {
+    if (!job.score) return "";
+    const dimensions = [
+      ["技能", job.score.hard_skill], ["領域", job.score.domain], ["資歷", job.score.seniority],
+      ["條件", job.score.condition], ["方向", job.score.direction],
+    ];
+    const rows = dimensions.map(([label, value]) => `
+      <div class="score-row">
+        <div class="score-row-label"><span>${label}</span><strong>${text(value)}</strong></div>
+        <div class="score-track" role="progressbar" aria-label="${label}評分" aria-valuenow="${Number(value) || 0}" aria-valuemin="0" aria-valuemax="100"><span style="--score: ${Number(value) || 0}%"></span></div>
+      </div>`).join("");
+    return `<section class="card" aria-labelledby="score-title"><div class="card-heading"><h2 id="score-title">五維評分</h2><span>0–100</span></div><div id="score" class="score-list" aria-label="總分 ${text(job.score.total)}">${rows}</div></section>`;
+  }
+
+  function trackingFields(job) {
+    return `
+      <div class="select-row"><label for="apply-state">投遞狀態</label><select id="apply-state">
+        ${[["pending", "待投遞"], ["applied", "已投遞"], ["interview", "面試"], ["offer", "錄取"], ["ghosted", "無回音"], ["dropped", "放棄"]].map(([value, label]) => `<option value="${value}" ${job.apply_state === value ? "selected" : ""}>${label}</option>`).join("")}
+      </select></div>
+      <button id="save-apply" class="button is-secondary is-full" type="button" ${state.connected === false || state.busy.has("apply") ? "disabled" : ""}>更新投遞狀態</button>
+      <details><summary class="helper-text">狀態記錄</summary><div id="events" class="event-list">${(job.status_events || []).map((event) => `<p>${escapeHTML(event.axis)}：${escapeHTML(event.from_state || "—")} → ${escapeHTML(event.to_state)}</p>`).join("") || "<p>尚無狀態記錄</p>"}</div></details>`;
+  }
+
+  function letterCard(job) {
+    const letterReady = job.letter_state === "ready" && job.letter?.status === "approved";
+    const requested = job.letter_state === "requested";
+    const failed = job.letter_state === "failed";
+    if (!job.letter_state) return `<section class="card"><div class="letter-heading"><h2>投遞追蹤</h2></div>${trackingFields(job)}</section>`;
+    let body = "";
+    let badge = "按需生成";
+    if (letterReady) {
+      badge = `${icon("check")}已過審`;
+      body = `<pre id="letter" class="letter-content">${escapeHTML(job.letter.content)}</pre>`;
+    } else if (requested) {
+      badge = '<span class="spinner" aria-hidden="true"></span>產生中';
+      body = '<p class="letter-copy">要求已送出。常駐 worker 完成起草與審查後，重新整理即可取得信件。</p><pre id="letter" class="visually-hidden"></pre>';
+    } else {
+      body = `<p class="letter-copy">${failed ? "上次信件未通過審查，可再次要求產生。" : "確認想投遞後才產生，避免消耗 Agent 額度。"}</p><pre id="letter" class="visually-hidden"></pre>`;
+    }
+    return `
+      <section class="card letter-card" aria-labelledby="letter-title">
+        <div class="letter-heading"><h2 id="letter-title">求職信</h2><span id="letter-state" class="letter-state ${letterReady ? "is-ready" : requested ? "is-pending" : ""}">${badge}</span></div>
+        ${body}
+        ${trackingFields(job)}
+      </section>`;
+  }
+
+  function actionDock(job) {
+    const source = `<a id="source" class="button is-secondary" href="${escapeHTML(job.url || "#")}" target="_blank" rel="noreferrer" aria-label="開啟原始職缺">${icon("external")}</a>`;
+    if (state.connected === false) return `<div class="action-dock">${source}<button class="button is-primary" type="button" disabled>${icon("cloud")}等待重新連線</button></div>`;
+    if (job.letter_state === "ready" && job.letter?.status === "approved") return `<div class="action-dock">${source}<button id="copy" class="button is-primary" type="button">${icon("copy")}複製求職信</button></div>`;
+    if (job.letter_state === "requested") return `<div class="action-dock">${source}<button id="request-letter" class="button is-primary" type="button" disabled><span class="spinner" aria-hidden="true"></span>求職信產生中</button></div>`;
+    if (job.verdict === "recommended") return `<div class="action-dock">${source}<button id="request-letter" class="button is-primary" type="button" ${state.busy.has("letter") ? "disabled" : ""}>${icon("spark")}${job.letter_state === "failed" ? "再次產生求職信" : "產生求職信"}</button></div>`;
+    if (job.verdict === "pending_score") return `<div class="action-dock">${source}<button class="button is-primary" type="button" disabled><span class="spinner" aria-hidden="true"></span>正在評分</button></div>`;
+    return `<div class="action-dock">${source}<button id="next-job" class="button is-primary" type="button">開下一筆${icon("arrow")}</button></div>`;
+  }
+
+  function renderCurrent() {
+    const root = document.querySelector("#screen-current");
+    const job = state.currentJob;
+    if (!job) {
+      const message = state.context.status === "capturing"
+        ? emptyState("正在擷取目前職缺", "完成後會在這裡顯示判定與評分。")
+        : state.context.status === "error"
+          ? `<div class="notice is-offline" role="alert"><div class="notice-title">${icon("cloud")}擷取失敗</div><p>${escapeHTML(state.context.error || "請重新整理目前職缺頁再試一次。")}</p></div>`
+          : emptyState("目前沒有職缺", "開啟支援的 104 職缺頁，或從推薦清單選取一筆。");
+      root.innerHTML = message;
+      return;
+    }
+    const verdict = verdictMeta(job);
+    const offline = state.connected === false ? `<div class="notice is-offline" role="alert"><div class="notice-title">${icon("cloud")}無法連線到 localhost API</div><p>目前內容仍可閱讀；產生信件與更新投遞狀態暫不可用。</p></div>` : "";
+    const pending = job.verdict === "pending_score" ? `<div class="notice is-warning" role="status"><div class="notice-title"><span class="spinner" aria-hidden="true"></span>條件篩選已通過</div><p>${state.context.budget_exhausted ? "今日評分額度已用盡，職缺會保留至隔日。" : "評分正在背景處理，完成後會自動更新。"}</p></div>` : "";
+    const hits = job.filter_hits?.length ? `<section class="card"><div class="card-heading"><h2>命中條件</h2><span>${job.filter_hits.length} 項</span></div><ul class="filter-hits">${job.filter_hits.map((hit) => `<li>${escapeHTML(hit)}</li>`).join("")}</ul></section>` : "";
+    const total = job.score?.total ?? job.score_total;
+    const reason = job.score?.reason || (job.verdict === "pending_score" ? "評分正在背景處理。" : job.filter_hits?.length ? "此職缺命中設定的排除條件。" : "尚無評分理由。");
+    root.innerHTML = `
+      <div class="section-stack">
+        ${offline}${pending}
+        <div class="eyebrow-row"><span id="verdict-label" class="verdict-badge is-${verdict.tone}">${icon(verdict.icon)}${verdict.label}</span><span class="updated-at">${escapeHTML(job.source || "")}</span></div>
+        <div class="job-hero"><div><h1 class="job-title">${escapeHTML(text(job.title))}</h1><p class="company-name">${escapeHTML(text(job.company_name))}</p></div>${total == null ? "" : `<div class="score-total"><strong>${escapeHTML(total)}</strong><span>總分 / 100</span></div>`}</div>
+        <p class="meta-line"><span class="meta-item">${icon("pin")}${escapeHTML(text(job.location))}</span><span class="meta-item">${icon("wallet")}${escapeHTML(salary(job))}</span></p>
+        <section class="reason-card ${job.verdict === "unfit" ? "is-negative" : ""}"><strong>${job.verdict === "unfit" ? "排除理由" : job.verdict === "pending_score" ? "目前進度" : "判定理由"}</strong><p>${escapeHTML(reason)}</p></section>
+        ${hits}${scoreCard(job)}
+        <details class="card details-card"><summary>職缺內容摘要</summary><div class="details-content"><p id="description">${escapeHTML(text(job.description))}</p></div></details>
+        ${letterCard(job)}
+      </div>
+      ${actionDock(job)}`;
+    bindCurrentActions();
+  }
+
+  function renderQueue() {
+    const root = document.querySelector("#screen-queue");
+    const rows = state.queue.map((job) => `<a class="job-row" href="${escapeHTML(job.url)}" target="_blank" rel="noreferrer"><span class="job-row-copy"><strong>${escapeHTML(text(job.title))}</strong><span>${escapeHTML(text(job.company_name))}</span><span class="row-meta"><span>${escapeHTML(text(job.source))}</span><span>${escapeHTML(text(job.location))}</span><span>${escapeHTML(salary(job))}</span></span></span>${icon("arrow", "row-arrow")}</a>`).join("");
+    root.innerHTML = `<div class="screen-heading"><div><h1>待看清單</h1><p>點開原始職缺後才能取得完整 JD 與評分。</p></div></div><div id="queue" class="job-list">${rows || emptyState("沒有待看職缺", "目前沒有需要補全文的職缺。")}</div>`;
+  }
+
+  function filterOptions() {
+    return `<details class="card filter-panel" ${state.filtersOpen ? "open" : ""}><summary>進階篩選</summary><div class="filter-grid">
+      <label>判定<select id="verdict"><option value="recommended">推薦</option><option value="not_recommended">不推薦</option><option value="pending_score">待評分</option><option value="pending_detail">待補全文</option><option value="unfit">不適合</option><option value="">全部</option></select></label>
+      <label>處理狀態<select id="process"><option value="">全部</option><option value="discovered">待看</option><option value="new">新職缺</option><option value="queued">待評分</option><option value="scored">已評分</option><option value="shortlisted">已入選</option><option value="letter_requested">信件產生中</option><option value="letter_ready">信件就緒</option><option value="letter_failed">信件未過審</option><option value="filtered_out">已排除</option></select></label>
+      <label>投遞狀態<select id="apply"><option value="">全部</option><option value="pending">待投遞</option><option value="applied">已投遞</option><option value="interview">面試</option><option value="offer">錄取</option><option value="ghosted">無回音</option><option value="dropped">放棄</option></select></label>
+      <label>來源<select id="source-filter"><option value="">全部</option><option value="yourator">Yourator</option><option value="cake">Cake</option><option value="104">104</option></select></label>
+    </div></details>`;
+  }
+
+  function renderShortlist() {
+    const root = document.querySelector("#screen-shortlist");
+    const rows = state.jobs.map((job) => `<button class="job-row" type="button" data-job-id="${job.id}"><span class="row-score" aria-label="總分 ${text(job.score_total)}">${text(job.score_total)}</span><span class="job-row-copy"><strong>${escapeHTML(text(job.title))}</strong><span>${escapeHTML(text(job.company_name))}</span><span class="row-meta"><span>${escapeHTML(text(job.source))}</span><span>${escapeHTML(verdictMeta(job).label)}</span><span>${escapeHTML(text(job.apply_state))}</span></span></span>${icon("arrow", "row-arrow")}</button>`).join("");
+    root.innerHTML = `<div class="screen-heading"><div><h1>推薦職缺</h1><p>依總分排序，逐筆決定是否產生求職信。</p></div></div>${filterOptions()}<div id="jobs" class="job-list">${rows || emptyState("沒有符合篩選的職缺", "調整進階篩選或稍後重新整理。")}</div>`;
+    document.querySelector("#verdict").value = state.filters.verdict;
+    document.querySelector("#process").value = state.filters.process;
+    document.querySelector("#apply").value = state.filters.apply;
+    document.querySelector("#source-filter").value = state.filters.source;
+    const filterPanel = root.querySelector(".filter-panel");
+    filterPanel.querySelector("summary").addEventListener("click", () => { state.filtersOpen = !filterPanel.open; });
+    for (const id of ["verdict", "process", "apply", "source-filter"]) document.querySelector(`#${id}`).addEventListener("change", filtersChanged);
+    root.querySelectorAll("[data-job-id]").forEach((button) => button.addEventListener("click", () => showJob(Number(button.dataset.jobId))));
+  }
+
+  function runStats(run) {
+    const stats = Object.entries(run.stats || {}).sort().map(([key, value]) => `${key}=${value}`);
+    const verdicts = Object.entries(run.verdicts || {}).filter(([, value]) => value).sort().map(([key, value]) => `${key}=${value}`);
+    return [...stats, ...verdicts];
+  }
+
+  function renderSystem() {
+    const root = document.querySelector("#screen-system");
+    const runs = state.runs.map((run) => `<article class="run-item"><div class="run-heading"><strong>${escapeHTML(text(run.trigger))}</strong><span>${escapeHTML(text(run.started_at))}</span></div><div class="run-stats">${runStats(run).map((value) => `<span>${escapeHTML(value)}</span>`).join("")}${run.error ? `<span>${escapeHTML(run.error)}</span>` : ""}</div></article>`).join("");
+    root.innerHTML = `<div class="section-stack"><div class="screen-heading"><div><h1>系統</h1><p>連線與最近抓取狀態。</p></div></div><section class="card system-card" aria-label="系統狀態"><div class="system-row"><span class="system-copy"><strong>localhost API</strong><span>由 Options 設定 loopback endpoint</span></span><span class="system-status ${state.connected ? "" : "is-warning"}"><span class="connection-dot"></span>${state.connected ? "正常" : "離線"}</span></div></section><button id="run" class="button is-primary is-full" type="button" ${state.connected === false || state.busy.has("run") ? "disabled" : ""}>${state.busy.has("run") ? '<span class="spinner" aria-hidden="true"></span>抓取已開始' : `${icon("play")}手動抓取自動來源`}</button><section aria-labelledby="runs-title"><div class="card-heading"><h2 id="runs-title">最近執行</h2><span>只記抓取事實</span></div><div id="runs" class="run-list">${runs || emptyState("尚無執行記錄", "手動抓取或排程執行後會顯示在這裡。")}</div></section></div>`;
+    document.querySelector("#run").addEventListener("click", startRun);
+  }
+
+  function renderAll() {
+    updateHeader();
+    document.querySelector("#queue-count").textContent = state.queue.length;
+    document.querySelector("#shortlist-count").textContent = state.jobs.length;
+    renderCurrent();
+    renderQueue();
+    renderShortlist();
+    renderSystem();
+    switchTab(state.activeTab);
+  }
+
+  function queryString() {
+    const params = new URLSearchParams();
+    if (state.filters.verdict) params.set("verdict", state.filters.verdict);
+    if (state.filters.process) params.set("process_state", state.filters.process);
+    if (state.filters.apply) params.set("apply_state", state.filters.apply);
+    if (state.filters.source) params.set("source", state.filters.source);
+    return params.toString();
+  }
+
+  async function loadCollections() {
+    const request = ++state.collectionRequest;
+    const query = queryString();
+    const [jobs, queue, runs] = await Promise.all([api(`/api/v1/jobs?${query}`), api("/api/v1/queue"), api("/api/v1/runs")]);
+    if (request !== state.collectionRequest) return false;
+    const connected = [jobs, queue, runs].some((result) => result?.ok);
+    setConnection(connected);
+    if (jobs?.ok) state.jobs = jobs.data.items || [];
+    if (queue?.ok) state.queue = queue.data.items || [];
+    if (runs?.ok) state.runs = runs.data.items || [];
+    if (!connected) announce(jobs?.error || queue?.error || runs?.error || "無法連線到 jobfinder API");
+    return true;
+  }
+
+  async function loadCurrentPage() {
+    const response = await extensionMessage({ type: "current-page" });
+    if (response?.ok && response.context) state.context = response.context;
+    else if (!state.currentJob) state.context = { kind: "unsupported", status: "unsupported" };
+    if (state.context.job_id) {
+      const job = await api(`/api/v1/jobs/${state.context.job_id}`);
+      if (job?.ok) {
+        state.currentJob = job.data;
+        setConnection(true);
+        startPollingIfNeeded();
+      } else if (job) {
+        setConnection(false);
+      }
+    }
+  }
+
+  async function load() {
+    refresh.classList.add("is-spinning");
+    await Promise.all([loadCollections(), loadCurrentPage()]);
+    renderAll();
+    refresh.classList.remove("is-spinning");
+    if (state.connected) announce("已連線至 jobfinder API");
+  }
+
+  async function showJob(id) {
+    const result = await api(`/api/v1/jobs/${id}`);
+    if (!result?.ok) return showToast(result?.error || "無法載入職缺");
+    state.currentJob = result.data;
+    state.context = { kind: "selection", source: result.data.source, status: "selected" };
+    renderAll();
+    switchTab("current");
+    startPollingIfNeeded();
+  }
+
+  function filtersChanged() {
+    state.filters.verdict = document.querySelector("#verdict").value;
+    state.filters.process = document.querySelector("#process").value;
+    state.filters.apply = document.querySelector("#apply").value;
+    state.filters.source = document.querySelector("#source-filter").value;
+    loadCollections().then(renderAll);
+  }
+
+  function bindCurrentActions() {
+    document.querySelector("#copy")?.addEventListener("click", copyLetter);
+    document.querySelector("#request-letter")?.addEventListener("click", requestLetter);
+    document.querySelector("#save-apply")?.addEventListener("click", saveApply);
+    document.querySelector("#next-job")?.addEventListener("click", () => switchTab("queue"));
+  }
+
+  async function copyLetter() {
+    try {
+      await navigator.clipboard.writeText(state.currentJob.letter.content);
+      showToast("已複製信件");
+    } catch (_) {
+      showToast("無法使用剪貼簿，信件文字仍可選取複製。");
+    }
+  }
+
+  async function requestLetter() {
+    if (!state.currentJob || state.busy.has("letter")) return;
+    state.busy.add("letter");
+    renderAll();
+    const result = await api(`/api/v1/jobs/${state.currentJob.id}/letter`, "POST");
+    state.busy.delete("letter");
+    if (!result?.ok) {
+      renderAll();
+      return showToast(result?.error || "求職信要求失敗");
+    }
+    state.currentJob = result.data.job;
+    renderAll();
+    showToast("已受理求職信生成要求");
+  }
+
+  async function saveApply() {
+    if (!state.currentJob || state.busy.has("apply")) return;
+    const value = document.querySelector("#apply-state").value;
+    state.busy.add("apply");
+    renderAll();
+    const result = await api(`/api/v1/jobs/${state.currentJob.id}/apply`, "POST", { apply_state: value });
+    state.busy.delete("apply");
+    if (!result?.ok) {
+      renderAll();
+      return showToast(result?.error || "投遞狀態更新失敗");
+    }
+    state.currentJob = result.data;
+    await loadCollections();
+    renderAll();
+    showToast("投遞狀態已更新");
+  }
+
+  async function startRun() {
+    if (state.busy.has("run")) return;
+    state.busy.add("run");
+    renderAll();
+    const result = await api("/api/v1/runs", "POST");
+    state.busy.delete("run");
+    if (!result?.ok) {
+      renderAll();
+      return showToast(result?.error || "無法開始抓取");
+    }
+    await loadCollections();
+    renderAll();
+    showToast(result.data.status === "started" ? "已開始抓取" : "已有執行中的抓取");
+  }
+
+  function startPollingIfNeeded() {
+    clearTimeout(state.pollTimer);
+    if (state.currentJob?.verdict !== "pending_score" || state.context.budget_exhausted) return;
+    state.pollUntil = Date.now() + POLL_LIMIT_MS;
+    state.pollTimer = setTimeout(pollCurrent, POLL_INTERVAL_MS);
+  }
+
+  async function pollCurrent() {
+    if (!state.currentJob || state.currentJob.verdict !== "pending_score") return;
+    if (Date.now() >= state.pollUntil) {
+      showToast("仍在處理，可稍後重新整理");
+      return;
+    }
+    const result = await api(`/api/v1/jobs/${state.currentJob.id}`);
+    if (result?.ok) {
+      state.currentJob = result.data;
+      renderAll();
+      if (state.currentJob.verdict !== "pending_score") return;
+    }
+    state.pollTimer = setTimeout(pollCurrent, POLL_INTERVAL_MS);
+  }
+
+  tabs.forEach((tab) => {
+    tab.addEventListener("click", () => switchTab(tab.dataset.tab));
+    tab.addEventListener("keydown", (event) => {
+      if (!["ArrowLeft", "ArrowRight"].includes(event.key)) return;
+      event.preventDefault();
+      const index = tabs.indexOf(tab);
+      const next = event.key === "ArrowRight" ? (index + 1) % tabs.length : (index - 1 + tabs.length) % tabs.length;
+      switchTab(tabs[next].dataset.tab);
+      tabs[next].focus();
+    });
+  });
+
+  refresh.addEventListener("click", load);
+  themeToggle.addEventListener("click", async () => {
+    state.theme = state.theme === "dark" ? "light" : "dark";
+    applyTheme();
+    await storageSet({ theme: state.theme });
+    showToast(state.theme === "dark" ? "已切換至深色模式" : "已切換至淺色模式");
+  });
+
+  chrome.runtime.onMessage?.addListener((message) => {
+    if (message?.type !== "page-context-updated") return;
+    state.context = message.context;
+    loadCurrentPage().then(renderAll);
+  });
+
+  storageGet({ theme: "light" }).then((settings) => {
+    state.theme = settings.theme === "dark" ? "dark" : "light";
+    applyTheme();
+    load();
+  });
+})();

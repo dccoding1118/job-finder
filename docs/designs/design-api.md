@@ -1,6 +1,6 @@
 # 模組設計 — api（localhost JSON API）
 
-對應需求：R6、R7、R9。`jobfinder serve` 啟動只供 Chrome extension 使用的 localhost JSON API；extension page 負責全部日常使用者介面。
+對應需求：R6、R7、R9。`jobfinder serve` 啟動只供 Chrome extension 使用的 localhost JSON API；Side Panel 負責全部日常使用者介面。
 
 ## 1. 職責與邊界
 
@@ -20,18 +20,18 @@
 | `api.extension_origin` | 已安裝插件的精確 `chrome-extension://<id>` origin。request 帶 `Origin` 時必須完全相符；Chromium MV3 privileged fetch 未帶 `Origin` 時由有效 token 驗證。 |
 | CORS | preflight 與帶 Origin 的 request 僅對精確 extension origin 回 `Access-Control-Allow-Origin`、`Authorization` 與必要方法；錯誤 Origin 即使 token 正確仍拒絕。無 Origin request 不回 CORS header。 |
 
-extension page 的 Options 儲存 API endpoint 與 token，service worker 代為發送所有 API request，避免將 API token 交給 104 頁面的 content script。遠端 VM 使用時，使用者先建立 SSH local forward，再將 endpoint 設為本機轉送位址。
+extension 的 Options 儲存 API endpoint 與 token，service worker 代為發送所有 API request，避免將 API token 交給 104 頁面的 content script。遠端 VM 使用時，使用者先建立 SSH local forward，再將 endpoint 設為本機轉送位址。
 
 驗收可啟用安全 request observer，只記錄 method、path、Origin 值或 absent、preflight/actual 與 Authorization 是否存在；不得記錄 token、body、JD、Profile 或 Agent 內容。
 
 ## 3. 共通回應與資料模型
 
 - 成功回應為 `application/json`；錯誤一律為 `{ "error": { "code": "...", "message": "..." } }`，不可含 token、設定內容、Agent 原始輸入輸出或內部堆疊。
-- Job 清單與單筆 Job 都回傳 extension page 呈現所需的 Job 欄位、`verdict`、現行 Score、核准 Letter、StatusEvent；無資料的欄位回 `null`，不得以零或猜測值替代。
+- Job 清單與單筆 Job 都回傳 Side Panel 呈現所需的 Job 欄位、`verdict`、現行 Score、核准 Letter、StatusEvent；無資料的欄位回 `null`，不得以零或猜測值替代。
 
 ### 3.1 verdict（判定）
 
-`verdict` 由 viewmodel 從 `process_state` 與現行 score 導出，**不是 DB 欄位**；Job 回應、待看清單與兩個 capture endpoint 一律附帶，讓清單標記、sidebar 與 dashboard 對同一筆 Job 顯示同一判定（PRD R9.6）。前端不得自行從 `process_state` 推導判定。
+`verdict` 由 viewmodel 從 `process_state` 與現行 score 導出，**不是 DB 欄位**；Job 回應、待看清單與兩個 capture endpoint 一律附帶，讓清單標記與 Side Panel 對同一筆 Job 顯示同一判定（PRD R9.6）。前端不得自行從 `process_state` 推導判定。
 
 | `verdict` | 導出自 | 使用者用語 | 附帶欄位 |
 |---|---|---|---|
@@ -86,7 +86,7 @@ extension page 的 Options 儲存 API endpoint 與 token，service worker 代為
 | `cmd/jobfinder/cli/serve.go` | Cobra `serve` 命令、設定載入，並隨 server 啟動／停止 pipeline 常駐 worker |
 
 - L1 案例見 [test-api](../tests/test-api.md)：以 `httptest`、暫存 SQLite、合成資料與 fake pipeline 驗證 API 契約。
-- L2 extension page 與 API 的端對端驗收見 [verify](../verify.md) B4；104 capture 與 Chrome 實機流程見 B5。
+- L2 Side Panel 與 API 的端對端驗收見 [verify](../verify.md) B4；104 capture 與 Chrome 實機流程見 B5。
 - 交付 `internal/api/`、`cmd/jobfinder/cli/serve.go`、B4 systemd 部署資源與 [deploy](../deploy.md) 的操作步驟。
 
 ## 6. 待決

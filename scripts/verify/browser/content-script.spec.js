@@ -4,7 +4,7 @@ const path = require("path");
 
 // Content-script E2E: loads the 104 search / notification / detail fixtures on
 // their real host, mocks the local API through chrome.runtime.sendMessage, and
-// asserts the marks and sidebar the content scripts draw. This is the regression
+// asserts the marks and current-page context the content scripts expose. This is the regression
 // guard for the live-DOM selectors — the title attribute over the highlight
 // spans, the data-gtm anchor nested inside .info-tags__text, and the Vue-injected
 // JobPosting JSON-LD — so a selector drift fails CI instead of only live.
@@ -28,6 +28,7 @@ async function installAPI(page, answer) {
     window.__calls = [];
     window.chrome = {
       runtime: {
+        onMessage: { addListener: (listener) => { window.__contentListener = listener; } },
         sendMessage: (request) => {
           window.__calls.push(request);
           const reply = responses[request.path];
@@ -108,7 +109,7 @@ test("notification page reads its unlabelled tags by position and format", async
   expect(remote.remote).toBe(true);
 });
 
-test("detail page shows the assessment sidebar from the JSON-LD it reads", async ({ page }) => {
+test("detail page exposes captured Job context without injecting an overlay", async ({ page }) => {
   await installAPI(page, {
     "/api/v1/capture/job": {
       ok: true,
@@ -123,11 +124,10 @@ test("detail page shows the assessment sidebar from the JSON-LD it reads", async
   await page.goto("https://www.104.com.tw/job/300001");
   await page.addScriptTag({ content: jobScript });
 
-  const panel = page.locator("#jobfinder-sidebar .panel");
-  await expect(panel).toContainText("jobfinder：推薦");
-  await expect(panel).toContainText("總分");
-  await expect(panel).toContainText("88");
-  await expect(panel).toContainText("合成評分理由");
+  await expect(page.locator("#jobfinder-sidebar")).toHaveCount(0);
+  await expect.poll(() => page.evaluate(() => window.__calls.some((call) => call.type === "page-context-updated"))).toBe(true);
+  const context = await page.evaluate(() => new Promise((resolve) => window.__contentListener({ type: "get-page-context" }, {}, resolve)));
+  expect(context).toMatchObject({ kind: "job", source: "104", status: "captured", job_id: 5, verdict: "recommended" });
 
   // The capture payload carries the page's JobPosting JSON-LD, confirming the
   // script[type="application/ld+json"] read the Vue-injected block.

@@ -13,6 +13,7 @@ async function main() {
   fs.rmSync(profile, { recursive: true, force: true });
   const context = await chromium.launchPersistentContext(profile, {
     headless: false,
+    viewport: { width: 400, height: 900 },
     args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`],
   });
   context.setDefaultTimeout(10_000);
@@ -41,6 +42,7 @@ async function main() {
     await dashboard.goto(`chrome-extension://${id}/dashboard/index.html`);
     await dashboard.getByRole("status").filter({ hasText: "已連線至 jobfinder API" }).waitFor();
     result.connected = true;
+    await dashboard.getByRole("tab", { name: /推薦/ }).click();
     const firstJob = dashboard.locator("#jobs button").first();
     await firstJob.waitFor();
     result.jobs_visible = (await dashboard.locator("#jobs button").count()) > 0;

@@ -69,7 +69,7 @@ pipeline 提供 **ingest 入口**供 API capture endpoint 呼叫（見 [design-a
 
 因此同一份篩選規則在兩個時機各跑一次並非重複判定，而是第二次補上第一次做不到的內文條件；第一次即 `filtered_out` 的職缺不會有第二次（已離開取件範圍）。
 
-`IngestJob` 通過篩選者留在 `queued` 由 worker 非同步評分，**不在 capture 路徑上等待 Scorer**（PRD R9.2）。被篩掉者的 `filtered_out` 則在同步回應中即得——插件據此立即呈現「不適合」，只有通過篩選的才需等待評分結果（sidebar 的呈現見 [design-extension](design-extension.md) §4.2）。`IngestJob` 不生成求職信——推薦職缺一律停留在 `shortlisted` 等待使用者決定（PRD R5.0）。
+`IngestJob` 通過篩選者留在 `queued` 由 worker 非同步評分，**不在 capture 路徑上等待 Scorer**（PRD R9.2）。被篩掉者的 `filtered_out` 則在同步回應中即得——插件據此立即呈現「不適合」，只有通過篩選的才需等待評分結果（Side Panel 的呈現見 [design-extension](design-extension.md) §4.2）。`IngestJob` 不生成求職信——推薦職缺一律停留在 `shortlisted` 等待使用者決定（PRD R5.0）。
 
 `IngestList` 的設計約束是**即時性**：使用者仍停在 104 清單頁，回應必須在該頁面可用的時間內完成，因此整條路徑不含任何 LLM 呼叫與網路抓取（PRD R3.4、R9.1）。
 
@@ -105,7 +105,7 @@ partial 條件篩選於 `IngestList` 入庫時同步執行（§2.3）；worker �
 
 每日預算以**台北時間日界**重置，計數依 `agent_calls` 當日該 role 的成功呼叫數導出，不另存計數器（重啟後預算不歸零）。worker 常駐後沒有「輪」可作為上限單位，而 extension capture 由使用者隨時觸發，時間窗預算是成本封頂的唯一著力點。
 
-預算用盡時 worker 停止取件，職缺停留 `queued`／`letter_requested` 至隔日；此為刻意的成本封頂，不記為錯誤。API 據此讓 sidebar 與 extension page 呈現「已達今日上限」而非「處理中」。
+預算用盡時 worker 停止取件，職缺停留 `queued`／`letter_requested` 至隔日；此為刻意的成本封頂，不記為錯誤。API 據此讓 Side Panel 呈現「已達今日上限」而非「處理中」。
 
 ## 5. 錯誤處理
 
