@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/dccoding1118/job-finder/internal/crawler"
+	"github.com/dccoding1118/job-finder/internal/profile"
 	"github.com/dccoding1118/job-finder/internal/store"
 )
 
@@ -27,7 +28,7 @@ func (s *Server) jobs(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "internal", "unable to list jobs")
 		return
 	}
-	writeJSON(w, 200, pageJobs(jobs, r))
+	writeJSON(w, 200, pageJobs(jobs, r, s.currentProfileRevision()))
 }
 
 func (s *Server) job(w http.ResponseWriter, r *http.Request) {
@@ -59,7 +60,7 @@ func (s *Server) readJob(w http.ResponseWriter, r *http.Request, id int64) {
 		writeError(w, 404, "not_found", "job was not found")
 		return
 	}
-	writeJSON(w, 200, jobView(detail))
+	writeJSON(w, 200, jobView(detail, s.currentProfileRevision()))
 }
 
 func (s *Server) applyJob(w http.ResponseWriter, r *http.Request, id int64) {
@@ -76,13 +77,16 @@ func (s *Server) applyJob(w http.ResponseWriter, r *http.Request, id int64) {
 		return
 	}
 	detail, _, _ := s.store.GetJobDetail(r.Context(), id)
-	writeJSON(w, 200, jobView(detail))
+	writeJSON(w, 200, jobView(detail, s.currentProfileRevision()))
 }
 
 // requestLetter is the only entry through which a letter is ever drafted: the
 // user expressing interest in one recommended job. It accepts the request and
 // returns; the worker picks the job up on its own.
 func (s *Server) requestLetter(w http.ResponseWriter, r *http.Request, id int64) {
+	if !s.requireProfile(w) {
+		return
+	}
 	if s.pipeline == nil {
 		writeError(w, 500, "internal", "letter requests are unavailable")
 		return
@@ -96,7 +100,7 @@ func (s *Server) requestLetter(w http.ResponseWriter, r *http.Request, id int64)
 		writeError(w, 500, "internal", "unable to read job")
 		return
 	}
-	writeJSON(w, 200, map[string]any{"status": "requested", "job": jobView(detail)})
+	writeJSON(w, 200, map[string]any{"status": "requested", "job": jobView(detail, s.currentProfileRevision())})
 }
 
 func (s *Server) queue(w http.ResponseWriter, r *http.Request) {
@@ -109,7 +113,7 @@ func (s *Server) queue(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "internal", "unable to list queue")
 		return
 	}
-	writeJSON(w, 200, pageJobs(jobs, r))
+	writeJSON(w, 200, pageJobs(jobs, r, s.currentProfileRevision()))
 }
 
 func (s *Server) runs(w http.ResponseWriter, r *http.Request) {
@@ -127,6 +131,9 @@ func (s *Server) runs(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, 200, page)
 	case http.MethodPost:
+		if !s.requireProfile(w) {
+			return
+		}
 		if s.trigger == nil {
 			writeError(w, 500, "internal", "manual run is unavailable")
 			return
@@ -158,6 +165,9 @@ type captureListRequest struct {
 func (s *Server) captureList(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeError(w, 405, "method_not_allowed", "method is not allowed")
+		return
+	}
+	if !s.requireProfile(w) {
 		return
 	}
 	if s.pipeline == nil {
@@ -219,6 +229,9 @@ func (s *Server) captureJob(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 405, "method_not_allowed", "method is not allowed")
 		return
 	}
+	if !s.requireProfile(w) {
+		return
+	}
 	if s.pipeline == nil {
 		writeError(w, 500, "internal", "capture is unavailable")
 		return
@@ -261,11 +274,125 @@ func (s *Server) captureJob(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) transitionError(w http.ResponseWriter, err error) {
-	if strings.Contains(err.Error(), "not found") {
+	if errors.Is(err, profile.ErrNotReady) {
+		writeError(w, http.StatusConflict, "profile_not_ready", "Profile must be ready before processing jobs")
+	} else if strings.Contains(err.Error(), "not found") {
 		writeError(w, 404, "not_found", "job was not found")
 	} else {
 		writeError(w, 400, "invalid_transition", "requested state transition is not allowed")
 	}
+}
+
+func (s *Server) requireProfile(w http.ResponseWriter) bool {
+	if s.profiles == nil {
+		return true
+	}
+	if _, err := s.profiles.Ready(); err != nil {
+		writeError(w, http.StatusConflict, "profile_not_ready", "Profile must be ready before processing jobs")
+		return false
+	}
+	return true
+}
+
+func (s *Server) profile(w http.ResponseWriter, r *http.Request) {
+	if s.profiles == nil {
+		writeError(w, http.StatusNotFound, "not_found", "Profile service is unavailable")
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		snapshot := s.profiles.Current()
+		w.Header().Set("ETag", snapshot.ETag)
+		estimate, err := s.store.EstimateActivation(r.Context(), snapshot.Revision)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal", "Unable to estimate Profile reprocessing")
+			return
+		}
+		var summary any
+		if snapshot.Profile != nil {
+			directions := make([]string, 0, len(snapshot.Profile.Preferences.Directions))
+			for _, direction := range snapshot.Profile.Preferences.Directions {
+				directions = append(directions, direction.Title)
+			}
+			summary = map[string]any{
+				"years_of_experience": snapshot.Profile.YearsOfExperience,
+				"skill_count":         len(snapshot.Profile.Skills.Expert) + len(snapshot.Profile.Skills.Proficient) + len(snapshot.Profile.Skills.Familiar),
+				"experience_count":    len(snapshot.Profile.Experiences), "directions": directions,
+			}
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status": snapshot.Status, "profile": snapshot.Profile, "profile_revision": nullableRevision(snapshot.Revision),
+			"summary": summary, "issues": snapshot.Issues, "reprocess_estimate": activationView(estimate),
+		})
+	case http.MethodPut:
+		expected := r.Header.Get("If-Match")
+		if expected == "" {
+			writeError(w, http.StatusPreconditionRequired, "precondition_required", "If-Match is required")
+			return
+		}
+		value, err := profile.DecodeJSON(r.Body)
+		if err != nil {
+			writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"error": map[string]any{"code": "profile_invalid", "message": "Profile is invalid", "issues": []profile.Issue{{Code: "schema_invalid", Message: "Profile JSON does not match the schema"}}}})
+			return
+		}
+		result, err := s.profiles.Save(expected, value)
+		if errors.Is(err, profile.ErrConflict) {
+			writeError(w, http.StatusPreconditionFailed, "profile_conflict", "Profile file changed; reload before saving")
+			return
+		}
+		var validation profile.ValidationError
+		if errors.As(err, &validation) {
+			writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"error": map[string]any{"code": "profile_invalid", "message": "Profile is invalid", "issues": validation.Issues}})
+			return
+		}
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "profile_save_failed", "Unable to save Profile")
+			return
+		}
+		w.Header().Set("ETag", result.Snapshot.ETag)
+		writeJSON(w, http.StatusOK, map[string]any{"status": "ready", "profile_revision": result.Snapshot.Revision, "semantic_changed": result.SemanticChanged})
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method is not allowed")
+	}
+}
+
+func (s *Server) reprocessProfile(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method is not allowed")
+		return
+	}
+	if s.profiles == nil || s.activate == nil {
+		writeError(w, http.StatusNotFound, "not_found", "Profile reprocessing is unavailable")
+		return
+	}
+	snapshot, err := s.profiles.Ready()
+	if errors.Is(err, profile.ErrNotReady) {
+		writeError(w, http.StatusConflict, "profile_not_ready", "Profile must be ready before reprocessing jobs")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal", "Unable to read active Profile")
+		return
+	}
+	activation, err := s.activate(r.Context(), snapshot.Revision, *snapshot.Profile)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "profile_reprocess_failed", "Unable to reprocess stale jobs")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status": "queued", "profile_revision": snapshot.Revision, "activation": activation,
+	})
+}
+
+func activationView(value store.ActivationStats) map[string]int {
+	return map[string]int{"partial_screened": value.PartialScreened, "requeued": value.Requeued, "protected": value.Protected, "unchanged": value.Unchanged}
+}
+
+func nullableRevision(value string) any {
+	if value == "" {
+		return nil
+	}
+	return value
 }
 
 func parseFilter(r *http.Request) (store.JobFilter, error) {
@@ -300,13 +427,24 @@ func pageSlice[T any](items []T, r *http.Request) []T {
 	return items
 }
 
-func pageJobs(jobs []store.Job, r *http.Request) map[string]any {
+func pageJobs(jobs []store.Job, r *http.Request, revisions ...string) map[string]any {
 	selected := pageSlice(jobs, r)
 	values := make([]any, 0, len(selected))
 	for _, job := range selected {
-		values = append(values, jobListView(job))
+		values = append(values, jobListView(job, revisions...))
 	}
 	return map[string]any{"items": values, "next_cursor": nil}
+}
+
+func (s *Server) currentProfileRevision() string {
+	if s.profiles == nil {
+		return ""
+	}
+	snapshot, err := s.profiles.Ready()
+	if err != nil {
+		return ""
+	}
+	return snapshot.Revision
 }
 
 func (s *Server) pageRuns(r *http.Request, runs []store.Run) (map[string]any, error) {

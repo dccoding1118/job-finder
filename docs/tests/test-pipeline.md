@@ -1,6 +1,6 @@
 # 測試規格 — pipeline（`internal/pipeline`）
 
-對應 [pipeline 模組設計](../designs/design-pipeline.md)、[agents 模組設計](../designs/design-agents.md)、PRD R3、R5、R7、R8、R9。本文件的 B3 範圍為 `letter` 階段編排與按需生成，B5 範圍為 104 ingest 入口；L1 以真 SQLite、合成 Job 與 fake Runner 驗證狀態推進、冪等與稽核，不呼叫真實來源或 CLI Runner。
+對應 [pipeline 模組設計](../designs/design-pipeline.md)、[agents 模組設計](../designs/design-agents.md)、PRD R1、R3、R5、R7、R8、R9。本文件涵蓋 `letter` 按需生成、104 ingest，以及 Profile activation／revision-aware worker；L1 以真 SQLite、合成 Job 與 fake Runner 驗證狀態推進、冪等與稽核，不呼叫真實來源或 CLI Runner。
 
 ## 1. 程式面閘門
 
@@ -47,7 +47,7 @@
 | PT-37 | letter 階段完成一部分後 worker 中斷，再重啟 | 已轉為終態的 Job 不重複呼叫；殘留 `letter_requested` Job 續作 |
 | PT-38 | `--job` 指向 `letter_requested` Job | 僅處理指定 Job，且遵守相同的防線、上限與稽核語意 |
 | PT-39 | 同一 run 的連續 Drafter／Reviewer 呼叫 | 依設定的最小間隔序列化；注入 sleeper 的等待次數與時長符合設定 |
-| PT-40 | Profile 變更可接受地點、薪資下限或任一條件篩選項目後啟動下一輪 run | 新一輪只依更新後的 Profile 篩選；不讀取或要求 `config.yaml` 的重複求職條件 |
+| PT-40 | Profile 儲存變更可接受地點、薪資下限或任一條件篩選項目 | worker 不重啟即對新 ingest 使用新 snapshot；既有 Job revision 與狀態不變，不讀取或要求 `config.yaml` 的重複求職條件 |
 | PT-41 | 兩輪 run 之間變更 `llm.roles` | 新一輪的評分、起草與審查使用新路由；每次 Agent 呼叫記錄實際 runner |
 
 ## 4. B5 單元測試案例：ingest 入口
@@ -77,7 +77,20 @@
 | PT-65 | 內頁 ingest 使一筆 Job 成為 `shortlisted` | 不呼叫 Drafter 或 Reviewer、不建立 letter；Job 停留 `shortlisted` 等待使用者要求 |
 | PT-66 | 內頁 ingest 的 Scorer 經重試與 fallback 後仍失敗 | Job 維持 `queued` 留待下輪 run 評分；回傳安全錯誤且不含 Agent 原始輸出 |
 
-## 5. 模組驗收
+## 5. Profile activation、競態與預算
+
+| 編號 | 測試情境 | 預期結果 |
+|---|---|---|
+| PT-70 | 新 revision 啟用，涵蓋 partial／full 各可重處理狀態 | 清除舊 filter hits、切換 revision、依矩陣重新篩選；通過者重新排入 score |
+| PT-70A | 只儲存新 revision，未送手動 reprocess | 既有 partial／full Job、Score 與狀態完全不變；worker 在 Filter／Scorer 前跳過 stale revision，不呼叫 Agent；新 ingest 使用新 revision |
+| PT-71 | `letter_requested`／`letter_ready`／`letter_failed` 與 applied Job | 狀態、Letter、apply state／event 不變；不自動呼叫 Drafter／Reviewer |
+| PT-72 | 同 revision 重複啟用 | 狀態、事件、Score 與 Agent call 數量不變 |
+| PT-73 | 重新排入 score 的數量超過每日預算 | 上限內逐步處理；其餘停留 queued，跨台北日界續作 |
+| PT-74 | score worker 持舊 snapshot 執行時，儲存新 Profile 後手動 reprocess | 舊 Agent call 保留實際 revision；activation 切換 Job revision後，舊結果 CAS 失敗，不成為現行 Score |
+| PT-75 | letter worker 執行時啟用新 revision | 工作以起始 snapshot 完成並保存其 revision；Letter 保留且導出 stale，不自動重跑 |
+| PT-76 | Profile missing／invalid／degraded | worker、run 與 ingest 處理暫停或回 profile_not_ready；provider ready 後自動喚醒 |
+
+## 6. 模組驗收
 
 - `mise run fmt`、`mise run lint` 與 `mise run test` 全數通過。
 - B3 僅讓使用者已要求（`letter_requested`）且通過程式防線與 Reviewer 核准的 Job 進入 `letter_ready`；重寫上限耗盡者進入 `letter_failed`。未經要求的 `shortlisted` 不產生任何 Agent 呼叫。

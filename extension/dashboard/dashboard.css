@@ -989,6 +989,26 @@ svg {
   color: #98a0af;
 }
 
+.revision-badge {
+  display: inline-flex;
+  width: fit-content;
+  margin-top: 7px;
+  padding: 3px 7px;
+  border-radius: 7px;
+  font-size: 10px;
+  font-weight: 720;
+}
+
+.revision-badge.is-current {
+  background: var(--positive-soft);
+  color: var(--positive);
+}
+
+.revision-badge.is-stale {
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+
 .empty-state {
   padding: 30px 20px;
   text-align: center;
@@ -1018,6 +1038,53 @@ svg {
   padding: 0;
   overflow: hidden;
 }
+
+.system-group {
+  display: grid;
+  gap: 12px;
+}
+
+.system-group > .card-heading {
+  margin-bottom: 0;
+}
+
+.system-group .system-card {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--canvas);
+}
+
+.button-stack {
+  display: grid;
+  gap: 8px;
+}
+
+.profile-card p {
+  margin: 8px 0 14px;
+  color: var(--ink-muted);
+  font-size: 12px;
+}
+
+.profile-card .reprocess-copy {
+  margin-top: -5px;
+  padding: 9px 10px;
+  border-radius: 9px;
+  background: var(--surface-muted);
+}
+
+.profile-state {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--neutral-soft);
+  color: var(--ink-muted);
+  font-size: 10px;
+  font-weight: 760;
+  text-transform: uppercase;
+}
+
+.profile-state.is-ready { background: var(--positive-soft); color: var(--positive); }
+.profile-state.is-invalid { background: var(--negative-soft); color: var(--negative); }
+.profile-state.is-missing { background: var(--warning-soft); color: var(--warning); }
 
 .system-row {
   gap: 12px;

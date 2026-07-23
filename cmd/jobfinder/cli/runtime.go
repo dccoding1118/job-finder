@@ -18,7 +18,7 @@ type runtime struct {
 	cfg          fileConfig
 	store        *store.Store
 	pipeline     pipeline.Pipeline
-	profile      profile.Profile
+	provider     *profile.Provider
 	scanInterval time.Duration
 }
 
@@ -28,10 +28,6 @@ func loadRuntime(path string) (*runtime, error) {
 		return nil, fmt.Errorf("read config: %w", err)
 	}
 	cfg, err := parseFileConfig(data)
-	if err != nil {
-		return nil, err
-	}
-	loadedProfile, profileYAML, err := profile.Load(cfg.Profile.Path)
 	if err != nil {
 		return nil, err
 	}
@@ -57,8 +53,13 @@ func loadRuntime(path string) (*runtime, error) {
 	if err != nil {
 		return nil, err
 	}
+	provider, err := profile.NewProvider(cfg.Profile.Path, denylist)
+	if err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 	p := pipeline.Pipeline{
-		Store: db, Filter: pipeline.FilterFromProfile(loadedProfile), ProfileYAML: profileYAML, Profile: loadedProfile,
+		Store: db, Provider: provider,
 		Denylist: denylist, Weights: [5]float64{cfg.Scoring.HardSkillWeight, cfg.Scoring.DomainWeight, cfg.Scoring.SeniorityWeight, cfg.Scoring.ConditionWeight, cfg.Scoring.DirectionWeight},
 		MaxScorePerDay: cfg.LLM.MaxScorePerDay, MaxLetterPerDay: cfg.LLM.MaxLetterPerDay, MaxLetterLength: cfg.LLM.MaxLetterLength, MinInterval: interval,
 	}
@@ -74,7 +75,7 @@ func loadRuntime(path string) (*runtime, error) {
 		_ = db.Close()
 		return nil, err
 	}
-	return &runtime{cfg: cfg, store: db, pipeline: p, profile: loadedProfile, scanInterval: scanInterval}, nil
+	return &runtime{cfg: cfg, store: db, pipeline: p, provider: provider, scanInterval: scanInterval}, nil
 }
 
 func (r *runtime) close() { _ = r.store.Close() }
@@ -82,6 +83,10 @@ func (r *runtime) close() { _ = r.store.Close() }
 // fetchSource builds the Yourator adapter and the search spec derived from the
 // Profile directions.
 func (r *runtime) fetchSource() (crawler.Source, crawler.SearchSpec, error) {
+	snapshot, err := r.provider.Ready()
+	if err != nil {
+		return nil, crawler.SearchSpec{}, err
+	}
 	source := r.cfg.Sources.Yourator
 	if !source.Enabled {
 		return nil, crawler.SearchSpec{}, fmt.Errorf("config: sources.yourator is disabled")
@@ -105,6 +110,6 @@ func (r *runtime) fetchSource() (crawler.Source, crawler.SearchSpec, error) {
 		}
 	}
 	adapter := crawler.Yourator{BaseURL: source.BaseURL, Client: &http.Client{Timeout: requestTimeout}, RequestDelayMin: requestDelayMin, RequestDelayMax: requestDelayMax, RetryMax: source.RetryMax, RetryBackoff: retryBackoff, CheckRobots: source.CheckRobots}
-	spec := crawler.SearchSpec{Queries: directionQueries(r.profile), Area: r.profile.Preferences.Locations, MaxPages: source.MaxPages}
+	spec := crawler.SearchSpec{Queries: directionQueries(*snapshot.Profile), Area: snapshot.Profile.Preferences.Locations, MaxPages: source.MaxPages}
 	return adapter, spec, nil
 }

@@ -35,6 +35,7 @@
     jobs: [],
     queue: [],
     runs: [],
+    profile: null,
     filters: { verdict: "recommended", process: "", apply: "", source: "" },
     filtersOpen: false,
     collectionRequest: 0,
@@ -69,6 +70,23 @@
 
   function text(value) {
     return value == null || value === "" ? "—" : String(value);
+  }
+
+  function displayScore(value) {
+    const score = Number(value);
+    return value == null || value === "" || !Number.isFinite(score) ? "—" : String(Math.round(score));
+  }
+
+  function shortRevision(value) {
+    return value ? String(value).replace(/^sha256:/, "").slice(0, 8) : "未知";
+  }
+
+  function scoreRevisionBadge(job) {
+    const total = job.score?.total ?? job.score_total;
+    if (total == null) return "";
+    const revision = job.score_profile_revision || job.evaluation_profile_revision;
+    const stale = Boolean(job.score_stale);
+    return `<span class="revision-badge ${stale ? "is-stale" : "is-current"}">Profile ${escapeHTML(shortRevision(revision))} · ${stale ? "待重評" : "最新"}</span>`;
   }
 
   function salary(job) {
@@ -162,7 +180,7 @@
     ];
     const rows = dimensions.map(([label, value]) => `
       <div class="score-row">
-        <div class="score-row-label"><span>${label}</span><strong>${text(value)}</strong></div>
+        <div class="score-row-label"><span>${label}</span><strong>${displayScore(value)}</strong></div>
         <div class="score-track" role="progressbar" aria-label="${label}評分" aria-valuenow="${Number(value) || 0}" aria-valuemin="0" aria-valuemax="100"><span style="--score: ${Number(value) || 0}%"></span></div>
       </div>`).join("");
     return `<section class="card" aria-labelledby="score-title"><div class="card-heading"><h2 id="score-title">五維評分</h2><span>0–100</span></div><div id="score" class="score-list" aria-label="總分 ${text(job.score.total)}">${rows}</div></section>`;
@@ -226,14 +244,16 @@
     const verdict = verdictMeta(job);
     const offline = state.connected === false ? `<div class="notice is-offline" role="alert"><div class="notice-title">${icon("cloud")}無法連線到 localhost API</div><p>目前內容仍可閱讀；產生信件與更新投遞狀態暫不可用。</p></div>` : "";
     const pending = job.verdict === "pending_score" ? `<div class="notice is-warning" role="status"><div class="notice-title"><span class="spinner" aria-hidden="true"></span>條件篩選已通過</div><p>${state.context.budget_exhausted ? "今日評分額度已用盡，職缺會保留至隔日。" : "評分正在背景處理，完成後會自動更新。"}</p></div>` : "";
+    const stale = [job.score_stale ? `評分使用 Profile ${shortRevision(job.score_profile_revision || job.evaluation_profile_revision)}` : "", job.letter_stale ? `求職信使用 Profile ${shortRevision(job.letter_profile_revision)}` : ""].filter(Boolean);
+    const staleNotice = stale.length ? `<div class="notice is-warning" role="status"><div class="notice-title">${icon("info")}待更新的舊版結果</div><p>${escapeHTML(stale.join("；"))}。可從系統頁手動更新過時評分；既有投遞與信件歷史不會被改寫。</p></div>` : "";
     const hits = job.filter_hits?.length ? `<section class="card"><div class="card-heading"><h2>命中條件</h2><span>${job.filter_hits.length} 項</span></div><ul class="filter-hits">${job.filter_hits.map((hit) => `<li>${escapeHTML(hit)}</li>`).join("")}</ul></section>` : "";
     const total = job.score?.total ?? job.score_total;
     const reason = job.score?.reason || (job.verdict === "pending_score" ? "評分正在背景處理。" : job.filter_hits?.length ? "此職缺命中設定的排除條件。" : "尚無評分理由。");
     root.innerHTML = `
       <div class="section-stack">
-        ${offline}${pending}
+        ${offline}${pending}${staleNotice}
         <div class="eyebrow-row"><span id="verdict-label" class="verdict-badge is-${verdict.tone}">${icon(verdict.icon)}${verdict.label}</span><span class="updated-at">${escapeHTML(job.source || "")}</span></div>
-        <div class="job-hero"><div><h1 class="job-title">${escapeHTML(text(job.title))}</h1><p class="company-name">${escapeHTML(text(job.company_name))}</p></div>${total == null ? "" : `<div class="score-total"><strong>${escapeHTML(total)}</strong><span>總分 / 100</span></div>`}</div>
+        <div class="job-hero"><div><h1 class="job-title">${escapeHTML(text(job.title))}</h1><p class="company-name">${escapeHTML(text(job.company_name))}</p>${scoreRevisionBadge(job)}</div>${total == null ? "" : `<div class="score-total"><strong>${escapeHTML(displayScore(total))}</strong><span>總分 / 100</span></div>`}</div>
         <p class="meta-line"><span class="meta-item">${icon("pin")}${escapeHTML(text(job.location))}</span><span class="meta-item">${icon("wallet")}${escapeHTML(salary(job))}</span></p>
         <section class="reason-card ${job.verdict === "unfit" ? "is-negative" : ""}"><strong>${job.verdict === "unfit" ? "排除理由" : job.verdict === "pending_score" ? "目前進度" : "判定理由"}</strong><p>${escapeHTML(reason)}</p></section>
         ${hits}${scoreCard(job)}
@@ -261,7 +281,7 @@
 
   function renderShortlist() {
     const root = document.querySelector("#screen-shortlist");
-    const rows = state.jobs.map((job) => `<button class="job-row" type="button" data-job-id="${job.id}"><span class="row-score" aria-label="總分 ${text(job.score_total)}">${text(job.score_total)}</span><span class="job-row-copy"><strong>${escapeHTML(text(job.title))}</strong><span>${escapeHTML(text(job.company_name))}</span><span class="row-meta"><span>${escapeHTML(text(job.source))}</span><span>${escapeHTML(verdictMeta(job).label)}</span><span>${escapeHTML(text(job.apply_state))}</span></span></span>${icon("arrow", "row-arrow")}</button>`).join("");
+    const rows = state.jobs.map((job) => `<button class="job-row" type="button" data-job-id="${job.id}"><span class="row-score" aria-label="總分 ${displayScore(job.score_total)}">${displayScore(job.score_total)}</span><span class="job-row-copy"><strong>${escapeHTML(text(job.title))}</strong><span>${escapeHTML(text(job.company_name))}</span><span class="row-meta"><span>${escapeHTML(text(job.source))}</span><span>${escapeHTML(verdictMeta(job).label)}</span><span>${escapeHTML(text(job.apply_state))}</span></span>${scoreRevisionBadge(job)}</span>${icon("arrow", "row-arrow")}</button>`).join("");
     root.innerHTML = `<div class="screen-heading"><div><h1>推薦職缺</h1><p>依總分排序，逐筆決定是否產生求職信。</p></div></div>${filterOptions()}<div id="jobs" class="job-list">${rows || emptyState("沒有符合篩選的職缺", "調整進階篩選或稍後重新整理。")}</div>`;
     document.querySelector("#verdict").value = state.filters.verdict;
     document.querySelector("#process").value = state.filters.process;
@@ -282,8 +302,29 @@
   function renderSystem() {
     const root = document.querySelector("#screen-system");
     const runs = state.runs.map((run) => `<article class="run-item"><div class="run-heading"><strong>${escapeHTML(text(run.trigger))}</strong><span>${escapeHTML(text(run.started_at))}</span></div><div class="run-stats">${runStats(run).map((value) => `<span>${escapeHTML(value)}</span>`).join("")}${run.error ? `<span>${escapeHTML(run.error)}</span>` : ""}</div></article>`).join("");
-    root.innerHTML = `<div class="section-stack"><div class="screen-heading"><div><h1>系統</h1><p>連線與最近抓取狀態。</p></div></div><section class="card system-card" aria-label="系統狀態"><div class="system-row"><span class="system-copy"><strong>localhost API</strong><span>由 Options 設定 loopback endpoint</span></span><span class="system-status ${state.connected ? "" : "is-warning"}"><span class="connection-dot"></span>${state.connected ? "正常" : "離線"}</span></div></section><button id="run" class="button is-primary is-full" type="button" ${state.connected === false || state.busy.has("run") ? "disabled" : ""}>${state.busy.has("run") ? '<span class="spinner" aria-hidden="true"></span>抓取已開始' : `${icon("play")}手動抓取自動來源`}</button><section aria-labelledby="runs-title"><div class="card-heading"><h2 id="runs-title">最近執行</h2><span>只記抓取事實</span></div><div id="runs" class="run-list">${runs || emptyState("尚無執行記錄", "手動抓取或排程執行後會顯示在這裡。")}</div></section></div>`;
+    const profile = state.profile;
+    const profileStatus = profile?.status || (state.connected === false ? "offline" : "loading");
+    const summary = profile?.summary || {};
+    const revision = profile?.profile_revision?.replace(/^sha256:/, "").slice(0, 8) || "—";
+    const profileCopy = profileStatus === "ready"
+      ? `年資 ${escapeHTML(text(summary.years_of_experience))} 年 · ${escapeHTML(text(summary.skill_count))} 項技能 · ${escapeHTML(text(summary.experience_count))} 段經歷<br>${escapeHTML(summary.directions?.join?.("、") || summary.direction || "方向未提供")} · revision ${escapeHTML(revision)}`
+      : profileStatus === "invalid"
+        ? `Profile 檔案需要人工修復。${profile.issues?.length ? `目前有 ${profile.issues.length} 項安全檢查問題。` : ""}`
+        : profileStatus === "missing" ? "尚未建立履歷與求職條件。" : "目前無法讀取 Profile 狀態。";
+    const profileAction = profileStatus === "missing" ? "開始設定" : profileStatus === "ready" ? "編輯履歷與求職條件" : profileStatus === "invalid" ? "查看修復說明" : "稍後再試";
+    const runUnavailable = ["missing", "invalid", "degraded", "offline"].includes(profileStatus);
+    const estimate = profile?.reprocess_estimate || {};
+    const staleJobs = Number(estimate.partial_screened || 0) + Number(estimate.requeued || 0);
+    const protectedJobs = Number(estimate.protected || 0);
+    root.innerHTML = `<div class="section-stack"><div class="screen-heading"><div><h1>系統</h1><p>連線、Profile、批次與執行歷程。</p></div></div>
+      <section class="card system-group" aria-labelledby="connection-title"><div class="card-heading"><h2 id="connection-title">連線與設定</h2></div><div class="system-card"><div class="system-row"><span class="system-copy"><strong>localhost API</strong><span>Side Panel 的 loopback 連線</span></span><span class="system-status ${state.connected ? "" : "is-warning"}"><span class="connection-dot"></span>${state.connected ? "正常" : "離線"}</span></div></div><button id="open-options" class="button is-secondary is-full" type="button">開啟連線設定</button></section>
+      <section class="card profile-card" aria-labelledby="profile-title"><div class="card-heading"><h2 id="profile-title">Profile</h2><span class="profile-state is-${escapeHTML(profileStatus)}">${escapeHTML(profileStatus)}</span></div><p>${profileCopy}</p>${profileStatus === "ready" ? `<p class="reprocess-copy">${staleJobs ? `${staleJobs} 筆職缺使用舊版 Profile，等待手動更新。` : "所有可更新職缺均使用目前 Profile。"}${protectedJobs ? `另有 ${protectedJobs} 筆求職信歷史受保護。` : ""}</p>` : ""}<div class="button-stack"><button id="open-profile" class="button is-secondary is-full" type="button" ${profileStatus === "offline" || profileStatus === "loading" ? "disabled" : ""}>${escapeHTML(profileAction)}</button><button id="reprocess-profile" class="button is-primary is-full" type="button" ${profileStatus !== "ready" || staleJobs === 0 || state.busy.has("reprocess") ? "disabled" : ""}>${state.busy.has("reprocess") ? '<span class="spinner" aria-hidden="true"></span>正在排入更新' : `${icon("refresh")}更新過時評分職缺`}</button></div></section>
+      <section class="card system-group" aria-labelledby="batch-title"><div class="card-heading"><h2 id="batch-title">自動與手動批次</h2></div><div class="system-card"><div class="system-row"><span class="system-copy"><strong>自動抓取時間</strong><span>每日 08:30（Asia/Taipei）</span></span><span class="metric-value">每日</span></div></div><button id="run" class="button is-primary is-full" type="button" ${state.connected === false || state.busy.has("run") || runUnavailable ? "disabled" : ""}>${state.busy.has("run") ? '<span class="spinner" aria-hidden="true"></span>抓取已開始' : `${icon("play")}立即手動抓取`}</button></section>
+      <section aria-labelledby="runs-title"><div class="card-heading"><h2 id="runs-title">批次歷程</h2><span>只記抓取事實</span></div><div id="runs" class="run-list">${runs || emptyState("尚無執行記錄", "手動抓取或排程執行後會顯示在這裡。")}</div></section></div>`;
     document.querySelector("#run").addEventListener("click", startRun);
+    document.querySelector("#open-profile")?.addEventListener("click", () => chrome.tabs.create({ url: chrome.runtime.getURL("profile/index.html") }));
+    document.querySelector("#open-options")?.addEventListener("click", () => chrome.runtime.openOptionsPage());
+    document.querySelector("#reprocess-profile")?.addEventListener("click", reprocessProfile);
   }
 
   function renderAll() {
@@ -309,13 +350,14 @@
   async function loadCollections() {
     const request = ++state.collectionRequest;
     const query = queryString();
-    const [jobs, queue, runs] = await Promise.all([api(`/api/v1/jobs?${query}`), api("/api/v1/queue"), api("/api/v1/runs")]);
+    const [jobs, queue, runs, profile] = await Promise.all([api(`/api/v1/jobs?${query}`), api("/api/v1/queue"), api("/api/v1/runs"), chrome.runtime.sendMessage({ type: "profile-api", path: "/api/v1/profile", method: "GET" })]);
     if (request !== state.collectionRequest) return false;
-    const connected = [jobs, queue, runs].some((result) => result?.ok);
+    const connected = [jobs, queue, runs, profile].some((result) => result?.ok);
     setConnection(connected);
     if (jobs?.ok) state.jobs = jobs.data.items || [];
     if (queue?.ok) state.queue = queue.data.items || [];
     if (runs?.ok) state.runs = runs.data.items || [];
+    state.profile = profile?.ok ? profile.data : null;
     if (!connected) announce(jobs?.error || queue?.error || runs?.error || "無法連線到 jobfinder API");
     return true;
   }
@@ -423,6 +465,22 @@
     await loadCollections();
     renderAll();
     showToast(result.data.status === "started" ? "已開始抓取" : "已有執行中的抓取");
+  }
+
+  async function reprocessProfile() {
+    if (state.busy.has("reprocess")) return;
+    state.busy.add("reprocess");
+    renderAll();
+    const result = await chrome.runtime.sendMessage({ type: "profile-api", path: "/api/v1/profile/reprocess", method: "POST" });
+    state.busy.delete("reprocess");
+    if (!result?.ok) {
+      renderAll();
+      return showToast(result?.error || "無法更新過時評分");
+    }
+    await loadCollections();
+    renderAll();
+    const queued = Number(result.data?.activation?.requeued || 0);
+    showToast(queued ? `已排入 ${queued} 筆重新評分` : "過時職缺已更新");
   }
 
   function startPollingIfNeeded() {

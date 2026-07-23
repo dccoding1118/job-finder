@@ -23,7 +23,7 @@ MVP 架構中為擴展預留的縫：Source adapter（加平台不動核心）�
 ### S0 — 個人 MVP（現在，對應 PRD 交付計畫 B0–B6）
 
 - **目標**：自己每天用得起來；完成「抓取→評分→生成→手動投遞→狀態追蹤」閉環。
-- **形態**：單人單機（GCP VM）、CLI ＋ localhost API ＋ Chrome 原生 Side Panel（含 104 半被動擷取）、SQLite、headless CLI LLM。
+- **形態**：單人單機（GCP VM）、CLI ＋ localhost API ＋ Chrome 原生 Side Panel（含單一 Profile 全頁編輯器與 104 半被動擷取）、SQLite、headless CLI LLM；Profile 仍以版控外 YAML 為真相。
 - **退出標準**：連續兩週日常使用；三來源皆通（Yourator/Cake 全自動、104 插件半被動）；投遞 ≥20 筆由本系統產出的求職信。
 
 ### S1 — 自用強化（求職期間持續迭代）
@@ -34,6 +34,7 @@ MVP 架構中為擴展預留的縫：Source adapter（加平台不動核心）�
   - 主動通知：每日高分職缺摘要推送（Email / LINE / Discord 擇一）。
   - 成效統計頁：投遞數、回應率、各來源/分數帶的轉換率——同時是未來產品的賣點素材。
   - 評分與生成品質迭代（以真實投遞結果當 eval）。
+  - 匯入去識別化履歷並產生 Profile 草稿，經使用者檢查與確認後才寫入；支援多 Profile 的建立、切換與個別媒合歸屬。
   - **深入評估（按需）**：推薦職缺提供「深入評估」動作，才產出優缺點、機會分析，並查詢公司與職缺評論等外部即時評價。與求職信同屬按需觸發——每筆職缺的例行評分維持五維＋短理由，把較貴的分析留給使用者真的在考慮的少數職缺。此功能定案前，`ScoreResult` 不擴充 pros/cons 欄位。
 - **架構演進**：無重大變更；驗證「事件流→統計」的資料模型。
 
@@ -41,7 +42,7 @@ MVP 架構中為擴展預留的縫：Source adapter（加平台不動核心）�
 
 - **目標**：驗證「別人也能用」——Profile 建置體驗與產出品質對非本人是否成立。
 - **關鍵項**：
-  - e2e UI 第一版：Profile 填寫/編輯 → 候選清單 → 推薦清單 → 求職信 → 投遞狀態管理（取代 YAML 手編）。
+  - e2e Web UI 第一版：將本機 extension 的 Profile 表單與求職流程遷入具登入的 Web 介面；Profile 改為租戶資料，不再依賴本機 YAML。
   - 實名登入（Google OAuth）；每使用者一份 Profile 與資料隔離。
   - 部署上雲：容器化、每租戶獨立實例（沿用 SQLite 亦可），最小維運。
   - LLM 改直串 API（Runner 換實作）：多用戶下 CLI 訂閱模式不成立；開始量測每用戶 token 成本。
@@ -71,7 +72,7 @@ MVP 架構中為擴展預留的縫：Source adapter（加平台不動核心）�
 | # | 流程 | 元件 | 說明 |
 |---|---|---|---|
 | 1 | 註冊 / 登入（Google OAuth） | **Web**（container service） | 建立帳號；通知 Email 存於帳號層（見 §4.4） |
-| 2 | 建立/編輯 Profile、設定偏好與通知 | **Web** → DB | 表單化取代 MVP 的 YAML 手編；PII 檢核在送出時執行 |
+| 2 | 建立/編輯 Profile、設定偏好與通知 | **Web** → DB | 承接 S0 extension 表單的業務欄位，加入帳號與租戶資料；PII 檢核在送出時執行 |
 | 3 | 每日排程執行 pipeline | **Scheduler** → **Pipeline Job**（container job） | 即現在 MVP 的 `jobfinder run` 打包成 job：抓取 → 初篩 → 評分，逐租戶媒合；求職信依用戶要求生成 |
 | 4 | 推薦通知寄送 | **Pipeline Job** 尾端 → **Email 服務**（SES/SendGrid 類） | 高分職缺摘要；點擊導回站內檢閱與決定是否生成求職信 |
 | 5 | 用戶回站操作 | **Web** | 備選職缺（`scored`，未達閾值）、推薦職缺（`shortlisted`/`letter_ready`）、要求生成求職信、求職信檢閱複製、投遞狀態回報、run 運作歷程、設定配置 |
@@ -109,7 +110,7 @@ MVP 架構中為擴展預留的縫：Source adapter（加平台不動核心）�
 
 | MVP 模組（現在） | 產品化元件（未來） | 演進動作 |
 |---|---|---|
-| `api`（localhost JSON API）＋ Side Panel | Web container | 將 Side Panel 的 Job／Run 操作遷入 Web，並加 OAuth、Profile 表單、設定頁、通知偏好 |
+| `api`（localhost JSON API）＋ Side Panel／Profile editor | Web container | 將 Job／Run／Profile 操作遷入 Web，並加 OAuth、租戶資料隔離、設定頁與通知偏好 |
 | `pipeline`＋`crawler`＋`agents`（`jobfinder run`） | Pipeline Job container | 打包容器、改吃租戶參數；Runner 換直串 LLM API 實作 |
 | `store`（SQLite） | PostgreSQL | 介面不變、換 driver；加租戶維度 |
 | systemd timer | Cloud Scheduler | 觸發語意相同（每日 one-shot、冪等） |
@@ -130,7 +131,7 @@ MVP 架構中為擴展預留的縫：Source adapter（加平台不動核心）�
 | 面向 | S0–S1（自用） | S2（Alpha） | S3（SaaS） |
 |---|---|---|---|
 | 使用者 | 本人 | 3–5 試用者 | 公開付費 |
-| Profile | YAML 手編 | Web 表單 | Web 表單＋範本 |
+| Profile | extension 表單編輯單一 YAML 真相 | Web 表單＋每租戶資料 | Web 表單＋多 Profile／範本 |
 | 資料庫 | SQLite | SQLite（每租戶） | PostgreSQL 多租戶 |
 | LLM | headless CLI（訂閱內） | 直串 API | 直串 API＋成本工程 |
 | 爬蟲 | 本機 per-user | 單租戶實例 | 集中抓取池＋合規供給 |

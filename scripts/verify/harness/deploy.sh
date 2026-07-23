@@ -19,7 +19,7 @@ command -v sha256sum >/dev/null || {
   exit 2
 }
 
-mkdir -p "${ARTIFACT_ROOT}/bin" "${ARTIFACT_ROOT}/extension" "${ARTIFACT_ROOT}/systemd" \
+mkdir -p "${ARTIFACT_ROOT}/bin" "${ARTIFACT_ROOT}/extension" "${ARTIFACT_ROOT}/systemd" "${ARTIFACT_ROOT}/fixtures" \
   "${HARNESS_ROOT}/bin" "${RUNTIME_ROOT}/tmp" "${RUNTIME_ROOT}/systemd-mock" "${RUNTIME_ROOT}/systemd-live" "${EVIDENCE_ROOT}"
 chmod 700 "${VERIFY_ROOT}" "${ARTIFACT_ROOT}" "${HARNESS_ROOT}" "${RUNTIME_ROOT}" "${RUNTIME_ROOT}/tmp" "${EVIDENCE_ROOT}"
 
@@ -32,6 +32,7 @@ install -m 0755 "${PROJECT_ROOT}/bin/jobfinder" "${VERIFY_BINARY}"
 install -m 0755 "${PROJECT_ROOT}/scripts/verify/harness/fake-agent.sh" "${HARNESS_ROOT}/bin/claude"
 install -m 0755 "${PROJECT_ROOT}/scripts/verify/harness/fake-agent.sh" "${HARNESS_ROOT}/bin/codex"
 install -m 0600 "${profile_source}" "${VERIFY_PROFILE}"
+install -m 0600 "${PROJECT_ROOT}/scripts/verify/fixtures/profile.synthetic.json" "${VERIFY_PROFILE_JSON}"
 sed "s|__VERIFY_ROOT__|${VERIFY_ROOT}|g" "${mock_config_source}" >"${MOCK_CONFIG}"
 sed "s|__VERIFY_ROOT__|${VERIFY_ROOT}|g" "${live_config_source}" >"${LIVE_CONFIG}"
 chmod 600 "${MOCK_CONFIG}" "${LIVE_CONFIG}"

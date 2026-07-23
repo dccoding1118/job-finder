@@ -474,6 +474,17 @@ Clear-Content "$env:LOCALAPPDATA\jobfinder\tunnel.log"
 Start-ScheduledTask -TaskName 'Jobfinder-Api-Tunnel'
 ```
 
+### 9.5 建立與編輯 Profile
+
+1. 在 Side Panel 開啟「系統」。`missing` 時選「開始設定」，`ready` 時選「編輯履歷與求職條件」；`invalid` 時先依安全摘要修復或移走後端損壞檔案。
+2. 在 extension 全頁編輯器完成表單。草稿只存在目前頁面記憶體，不會自動儲存；關閉或重新整理前先自行確認內容。
+3. 按下「儲存 Profile」後確認新擷取職缺會立即使用新版，既有職缺保留原評分與 revision；再明確確認儲存。
+4. 成功後核對 revision 短碼。Job 的綠色「最新」表示評分使用 active Profile；黃色「待重評」表示仍保留舊版評分。需要更新時回到系統頁按「更新過時評分職缺」；排隊受每日上限控制，可能跨台北日界完成。
+5. 手動更新不會改動既有求職信或投遞歷史；受保護項目可能持續顯示 stale。
+6. 若顯示 `profile_conflict`，保留目前草稿供自行複製，重新載入後再合併；不得以舊 ETag 強制覆蓋後端檔案。
+
+Profile、薪資、經歷、API body 與 YAML 不得貼入 tunnel log、驗收 evidence、issue 或對外截圖。日常 Profile 仍只保存在 VM 上 `config.yaml` 指定的 owner-only 檔案。
+
 ## 10. 疑難排解
 
 依序檢查，不要一開始就重裝 extension 或開放 VM API port。

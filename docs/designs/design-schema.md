@@ -28,6 +28,7 @@
 | `content_hash` | TEXT | 內容雜湊（見 §4 去重與變更偵測） |
 | `process_state` | TEXT | 見 §3 狀態機 |
 | `filter_hits` | TEXT NULL | 條件篩選淘汰時命中的條件名稱（JSON array 字串） |
+| `profile_revision` | TEXT NULL | 該 Job 現行處理判定所屬的 Profile revision；legacy 或受保護歷史可為 NULL |
 | `apply_state` | TEXT NULL | 見 §3；僅 `letter_ready` 後有值，初始 `pending` |
 | `discovered_by_run_id` | INTEGER NULL FK→runs | 首次入庫的抓取輪次；104 等使用者導覽 capture 入庫者為 NULL |
 | `first_seen_at` / `last_seen_at` | TEXT | RFC3339 |
@@ -47,9 +48,10 @@
 | `total` | REAL | Go 依權重計算的加權總分 |
 | `reason` | TEXT | ≤50 字推薦/不推薦理由 |
 | `runner` | TEXT | 產出此評分的 runner（`claude` / `codex`） |
+| `profile_revision` | TEXT NULL | 產生此 Score 的 Profile revision；新資料必填，legacy 可為 NULL |
 | `created_at` | TEXT | RFC3339 |
 
-現行有效評分＝該 job 最新一筆。
+現行有效評分＝與 `jobs.profile_revision` 相同的最新一筆；revision 不同或為 legacy NULL 的 Score 保留供稽核，但不可當成現行評分。
 
 ### 2.3 `letters`
 
@@ -62,6 +64,7 @@
 | `rounds` | INTEGER | 起草＋重寫總輪數 |
 | `review_log` | TEXT | 各輪審查意見（JSON 字串），供稽核 |
 | `runner_draft` / `runner_review` | TEXT | 各角色使用的 runner |
+| `profile_revision` | TEXT NULL | 產生此 Letter 的實際 Profile revision；新資料必填，legacy 可為 NULL |
 | `created_at` | TEXT | RFC3339 |
 
 ### 2.4 `status_events`
@@ -100,6 +103,7 @@
 | `input` / `output` | TEXT | 完整 prompt 與原始輸出（不得含 PII） |
 | `ok` | INTEGER | 0/1 |
 | `duration_ms` | INTEGER | |
+| `profile_revision` | TEXT NULL | score／draft／review 呼叫開始時的 Profile revision；與 Profile 無關的呼叫為 NULL |
 | `created_at` | TEXT | RFC3339 |
 
 ## 3. 狀態機（權威定義）
@@ -124,7 +128,13 @@
 
 終態：`filtered_out`、`scored`、`letter_ready`（處理軸而言）。`shortlisted` 與 `letter_failed` 是**停留狀態**——系統不會自行推進，只有使用者要求才轉入 `letter_requested`（PRD R5.0）。`letter_requested` 是 letter 階段的唯一取件狀態。
 
-### 3.2 `apply_state`（使用者擁有）
+### 3.2 Profile activation 專用轉換
+
+Profile activation 不是一般 `TransitionProcess`，只能經 store 專用交易入口執行。新 revision 對 `discovered`／partial `filtered_out` 重做可用條件；對有全文的 `new`、`queued`、`filtered_out`、`scored`、`shortlisted` 設定新 revision 並回到／維持 `new`。`letter_requested`、`letter_ready`、`letter_failed`、Letter、apply state 與 apply event 全部受保護，不回退或重送。
+
+activation、filter 結果、Score 保存與 process transition 均以 expected state ＋ expected `profile_revision` compare-and-set。相同 revision 的 activation 是 no-op，不新增重複事件。
+
+### 3.3 `apply_state`（使用者擁有）
 
 | From | To |
 |---|---|
@@ -138,7 +148,7 @@
 ## 4. 去重與變更偵測
 
 - 唯一鍵 `(source, external_id)`：已存在則更新 `last_seen_at`。
-- `content_hash = sha256(title + "\n" + description + "\n" + salary_min/max + location + remote_type)`——**只含來源端內容欄位，不含任何本系統回寫欄位**，確保比對可收斂。partial 職缺不計 hash（NULL），補入全文時才首次計算。
+- `content_hash = sha256(title + "\n" + description + "\n" + salary_min/max + location + remote_type)`——**只含來源端內容欄位，不含 `profile_revision` 或任何本系統回寫欄位**。Job 內容與 Profile 是兩個獨立變動軸。partial 職缺不計 hash（NULL），補入全文時才首次計算。
 - 雜湊變更 ⇒ 更新內容欄位並將 `process_state` 重置為 `new`（§3.1）；僅適用已有全文的職缺。
 - partial upsert（列表收割）遇既有職缺（任何狀態）只更新 `last_seen_at`，不覆蓋內容、不改狀態——待看清單天然為增量。
 
@@ -150,9 +160,13 @@
 | `TransitionProcess(jobID, to, meta)` / `TransitionApply(jobID, to, note)` | 驗證合法轉換 → 更新欄位 → 寫 `status_events`（同一交易） |
 | `ListJobs(filter, sort)` | UI/CLI 查詢：依狀態、來源、分數排序 |
 | `PickForStage(stage, limit)` | 常駐 worker 各階段取件（`new`→filter、`queued`→score、`letter_requested`→letter）；`shortlisted` 不是任何階段的取件狀態 |
-| `CountAgentCallsSince(role, since)` | 每日預算計數（見 [design-pipeline](design-pipeline.md) §4） |
+| `ActivateProfile(fromRevision, toRevision)` | 依 §3.2 在單一交易內切換可重新處理的 Job；回傳 partial screened、requeued、protected、unchanged 統計 |
+| revision-aware CAS | filter／score／transition 寫入皆驗證 expected state 與 expected revision；舊 snapshot 結果不得成為現行判定 |
+| `CountAgentCallsSince(role, since)` | 每日預算計數（見 [design-pipeline](design-pipeline.md) §5） |
 | `SummarizeRunJobs(runID)` | 依 `discovered_by_run_id` 即時導出該輪職缺的現行判定分布 |
 | `SaveScore / SaveLetter / SaveAgentCall / StartRun / FinishRun` | 寫入各實體 |
+
+migration 新增 revision 欄位時全部允許 legacy NULL，不猜測歷史資料使用的 Profile。升級與服務啟動不自動 activation；legacy Job 維持 stale，直到使用者明確要求更新過時評分。migration 本身不呼叫 Agent。
 
 ## 6. 交付物
 

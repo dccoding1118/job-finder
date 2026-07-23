@@ -17,7 +17,9 @@
 
 B0–B5 的核心程式已完成並通過 `mise run fmt/lint/test`：schema/store、profile、crawler（Yourator adapter 與 104 列表／內頁解析）、pipeline（排程抓取編排、常駐 worker、條件篩選、每日預算）、agents（Scorer／Drafter／Reviewer 與 `llm.roles` primary／fallback 路由）、localhost API、Chrome 原生 Side Panel 與 systemd unit。求職信按需生成（`letter_requested` 取件）、verdict 導出與 104 清單就地標記均已落地。執行模型為「排程只驅動 fetch，filter／score／letter 由 API service 內常駐 worker 非同步消化」，`runs` 只記抓取事實、判定分布於檢視時即時查詢。
 
-e2e 驗收 harness（`scripts/verify/`、`assert-positive.mjs`）已對齊非同步／按需模型：`run` 只 fetch、手動 `--stage` 或常駐 worker 消化 filter／score／letter、`runs.stats` 只記抓取事實、求職信「未要求不生成 → `RequestLetter` 後生成」、轉換經 `letter_requested`、`schema_version=2`，`mise run e2e-mock` 的 V1／V2／V4／V5 全綠（25 步，詳見 `docs/verify.md` §4）。真 Yourator live（V3）、`scripts/deploy/` 安裝／更新／回滾與實際 Chrome 人工 gate 均已通過。
+e2e 驗收 harness（`scripts/verify/`、`assert-positive.mjs`）已對齊非同步／按需模型：`run` 只 fetch、手動 `--stage` 或常駐 worker 消化 filter／score／letter、`runs.stats` 只記抓取事實、求職信「未要求不生成 → `RequestLetter` 後生成」、轉換經 `letter_requested`、`schema_version=3`。`mise run e2e-mock` 的 V1／V2／V4／V5／V7 S30–S36 全綠（32 步，詳見 `docs/verify.md` §4）。真 Yourator live（V3）、`scripts/deploy/` 安裝／更新／回滾與既有 Side Panel 的實際 Chrome 人工 gate 均已通過。
+
+Profile editor 與 `profile_revision` 已實作：extension 全頁表單編輯單一 YAML 真相、ETag 條件式儲存、runtime snapshot 即時切換、既有職缺手動 revision-aware 重新處理、setup mode、schema v3 migration 與 stale viewmodel 均已完成；Profile 儲存與服務啟動不自動重評舊職缺，新 ingest 立即使用 active revision。L1、Playwright 與 V7 S30–S36 全綠。Profile editor 的實際 Chrome 人工 gate與正式發布進度見 `docs/changes/change-profile-editor.md` 與 `STATUS.md`。
 
 ## 2. 主要技術與環境
 
@@ -42,12 +44,12 @@ Go 不保證在裸 PATH；以 `mise run <task>` 或 `mise exec -- go <args>` 執
 | 主題 | 先看 | 實作位置 |
 |---|---|---|
 | SQLite schema、migration、實體 CRUD、狀態轉換 | `docs/designs/design-schema.md` | `internal/store/` |
-| 匿名 Profile、PII 檢核、校準建議 | `docs/designs/design-profile.md` | `internal/profile/` |
+| 匿名 Profile、PII 檢核、canonical serialization、ETag／revision、runtime provider、校準建議 | `docs/designs/design-profile.md` | `internal/profile/` |
 | Source adapter、去重、內容變更偵測、104 payload 解析 | `docs/designs/design-crawler.md` | `internal/crawler/` |
-| fetch/filter/score/letter 編排、Profile 條件篩選、冪等與鎖 | `docs/designs/design-pipeline.md` | `internal/pipeline/` |
+| fetch/filter/score/letter 編排、Profile activation／重新處理、revision-aware CAS、每日預算與鎖 | `docs/designs/design-pipeline.md` | `internal/pipeline/` |
 | CLI Runner、Scorer、Drafter、Reviewer 與輸出驗證 | `docs/designs/design-agents.md` | `internal/agents/` |
-| Job／Run／狀態／判定（verdict）導出／求職信要求／手動 run 與 104 capture API | `docs/designs/design-api.md` | `internal/api/` |
-| Side Panel 儀表板、104 列表就地標記與內頁擷取 | `docs/designs/design-extension.md` | `extension/` |
+| Profile GET／PUT／手動 reprocess、Job stale viewmodel、Job／Run／狀態／verdict／求職信要求／手動 run 與 104 capture API | `docs/designs/design-api.md` | `internal/api/` |
+| Side Panel、全頁 Profile editor、104 列表就地標記與內頁擷取 | `docs/designs/design-extension.md` | `extension/` |
 | CLI 命令樹 | 本檔 §4 與各模組的 CLI 介面 | `cmd/jobfinder/cli/` |
 
 `docs/PRD.md` 定義需求；`docs/design.md` 定義系統邊界與模組依賴；詳細設計文件定義各模組契約。`STATUS.md` 只保留未完成任務與未歸檔結論，不承載專案設計。
@@ -58,6 +60,7 @@ Go 不保證在裸 PATH；以 `mise run <task>` 或 `mise exec -- go <args>` 執
 2. **契約先行**：先定 schema、Profile 格式與 Agent JSON 契約，再實作依賴它們的模組。所有狀態轉換只能經 `internal/store` 的轉換函式，並寫入 `status_events`。
 3. **Zero-PII**：資料庫、版控內容、fixture、log 與求職信不得包含姓名、Email、電話、身分證字號、學校或公司名稱。求職信落款固定使用 `[你的姓名]`、`[你的聯絡方式]`。
 4. **Human-in-the-Loop**：系統只產生建議與求職信；求職信只在使用者對推薦職缺要求後才生成（`letter_requested` 是 letter 階段的唯一取件狀態），外部平台投遞必須由使用者手動完成。Profile 校準只產生 diff 建議，不得自動改寫。
+   Profile 內容只有使用者明確儲存時才可寫入；revision 變更不得自動重生或覆蓋求職信，也不得改寫投遞歷史。
 5. **來源合規**：只處理免登入公開頁、遵守 robots.txt 且不繞過防護。104 僅處理使用者瀏覽器已載入的內容；不得背景開分頁、批次抓取或規避驗證。
 6. **Cobra 慣例**：`main.go` 維持薄入口；每個 resource 或子命令各有一個 `cli` 檔案；輸出使用 `cmd.OutOrStdout()` 或 `cmd.OutOrStderr()`，讓測試可擷取。
 7. **正式文件與註解只寫最新狀態**：設計與程式碼變更的歷程不散落在正文；詳細規格以文字與表格呈現。

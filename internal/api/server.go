@@ -15,6 +15,7 @@ import (
 
 	"github.com/dccoding1118/job-finder/internal/crawler"
 	"github.com/dccoding1118/job-finder/internal/pipeline"
+	"github.com/dccoding1118/job-finder/internal/profile"
 	"github.com/dccoding1118/job-finder/internal/store"
 )
 
@@ -38,10 +39,17 @@ type Server struct {
 	cfg      Config
 	trigger  Triggerer
 	pipeline Processor
+	profiles *profile.Provider
+	activate profile.ActivationFunc
 	http     *http.Server
 }
 
-func New(cfg Config, data *store.Store, trigger Triggerer, processor Processor) (*Server, error) {
+type ProfileConfig struct {
+	Provider *profile.Provider
+	Activate profile.ActivationFunc
+}
+
+func New(cfg Config, data *store.Store, trigger Triggerer, processor Processor, profileConfigs ...ProfileConfig) (*Server, error) {
 	if data == nil || strings.TrimSpace(cfg.Token) == "" || strings.TrimSpace(cfg.ExtensionOrigin) == "" {
 		return nil, errors.New("api: store, token, and extension origin are required")
 	}
@@ -49,6 +57,10 @@ func New(cfg Config, data *store.Store, trigger Triggerer, processor Processor) 
 		return nil, err
 	}
 	s := &Server{store: data, cfg: cfg, trigger: trigger, pipeline: processor}
+	if len(profileConfigs) > 0 {
+		s.profiles = profileConfigs[0].Provider
+		s.activate = profileConfigs[0].Activate
+	}
 	s.http = &http.Server{Addr: cfg.Addr, Handler: s.routes(), ReadHeaderTimeout: 10 * time.Second}
 	return s, nil
 }
@@ -71,6 +83,8 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("/api/v1/runs", s.runs)
 	mux.HandleFunc("/api/v1/capture/list", s.captureList)
 	mux.HandleFunc("/api/v1/capture/job", s.captureJob)
+	mux.HandleFunc("/api/v1/profile", s.profile)
+	mux.HandleFunc("/api/v1/profile/reprocess", s.reprocessProfile)
 	return s.authorize(mux)
 }
 
@@ -87,8 +101,8 @@ func (s *Server) authorize(next http.Handler) http.Handler {
 				return
 			}
 			w.Header().Set("Access-Control-Allow-Origin", s.cfg.ExtensionOrigin)
-			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
-			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, If-Match")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS")
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}

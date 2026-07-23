@@ -6,7 +6,7 @@
 
 - **Runner 抽象**：以 subprocess 呼叫 headless CLI（claude 為主、codex 為輔），統一「prompt 進、結構化 JSON 出」。
 - **三個 Agent 角色**：Scorer（評分）、Drafter（起草）、Reviewer（審查），各自的 prompt 模板與輸出契約。
-- 輸出驗證、重試、runner fallback、防幻覺程式防線、`agent_calls` 稽核寫入。
+- 輸出驗證、重試、runner fallback、防幻覺程式防線、`agent_calls` 稽核寫入；Profile 相關呼叫記錄工作開始時 snapshot 的 `profile_revision`。
 - 不負責：取件與狀態推進（pipeline）、權重計算後的分流（pipeline 依 store 轉換）。
 
 ## 2. Runner 抽象
@@ -73,6 +73,8 @@
 
 ## 4. Agent prompt 要點（模板放 `internal/agents/prompts/*.tmpl`）
 
+Profile 輸入一律來自 provider snapshot 的 canonical YAML。Scorer、Drafter 與 Reviewer 單次工作途中不得重新載入 Profile；每次 `agent_calls` 與其 Score／Letter 產出保存相同的實際 revision。
+
 | 角色 | 輸入 | 規則要點 |
 |---|---|---|
 | Scorer | Profile YAML 全文＋Job（title/company/JD/薪資/地點/remote） | 逐維給分；條件契合須對照 preferences；方向契合對照 directions 關鍵字；理由 ≤50 字 |
@@ -80,6 +82,8 @@
 | Reviewer | Profile＋Job＋草稿 | 毒舌審查：任何 Profile 無根據的技能/經歷/數字＝幻覺必挑；空泛形容詞（「熱情」「抗壓」等無實據修飾）要求刪除；可直接給 `edited_letter`；檢查佔位符落款 |
 
 ## 5. 生成迴圈與防幻覺防線（R5）
+
+letter 工作以開始時取得的 snapshot 完成。若 Profile 在工作途中更新，Letter 與所有 draft／review call 仍記錄原 revision；完成後可立即導出 `letter_stale=true`，但不得丟棄、覆蓋或自動重跑已完成的使用者要求。
 
 ```
 draft = Drafter(profile, job)

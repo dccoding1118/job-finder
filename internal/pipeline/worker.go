@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"sync"
 	"time"
+
+	"github.com/dccoding1118/job-finder/internal/profile"
 )
 
 // DefaultScanInterval is how long the worker sleeps when nothing is pending.
@@ -49,9 +51,17 @@ func (w *Worker) Run(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+		case <-w.profileChanges():
 		case <-time.After(interval):
 		}
 	}
+}
+
+func (w *Worker) profileChanges() <-chan struct{} {
+	if w.Pipeline.Provider != nil {
+		return w.Pipeline.Provider.Changes()
+	}
+	return nil
 }
 
 // Tick runs one pass of every stage. Passes are serialized by a process-local
@@ -63,6 +73,9 @@ func (w *Worker) Tick(ctx context.Context) (WorkerStats, error) {
 	stats := WorkerStats{}
 	var failures []error
 	filtered, err := w.Pipeline.FilterJobsWithStats(ctx, 0)
+	if errors.Is(err, profile.ErrNotReady) {
+		return stats, nil
+	}
 	stats.Filtered = filtered.Processed
 	failures = append(failures, err)
 	if ctx.Err() != nil {

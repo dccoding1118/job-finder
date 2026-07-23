@@ -1,6 +1,6 @@
 # 測試規格 — api（`internal/api`）
 
-對應 [api 模組設計](../designs/design-api.md)、PRD R6、R7、R9。L1 使用 `httptest`、暫存 SQLite 與合成 Job／Score／Letter／Run 資料；不啟動真實瀏覽器、不呼叫 Agent、來源或 104。
+對應 [api 模組設計](../designs/design-api.md)、PRD R1、R6、R7、R9。L1 使用 `httptest`、暫存 YAML／SQLite 與合成 Profile／Job／Score／Letter／Run 資料；不啟動真實瀏覽器、不呼叫 Agent、來源或 104。
 
 ## 1. 程式面閘門
 
@@ -17,6 +17,7 @@
 | Store | 每案例使用暫存 SQLite 與真實 migration；以 store API 建立 Job、分數、信件、Run 與 StatusEvent |
 | 合成資料 | 職稱、公司、JD、評分理由與信件皆使用無識別性的合成字串；求職信含兩個固定佔位符 |
 | Pipeline | 以可觀測 fake triggerer／ingester／letter requester 取代真實 pipeline；記錄 trigger、payload 與呼叫次數，不呼叫外部程序 |
+| Profile | 使用暫存 YAML、fake provider／activator 與合成 JSON；可控制 missing、invalid、ready、ETag conflict 與手動 reprocess 統計 |
 | HTTP | `httptest`；斷言 status、CORS、JSON schema、資料庫狀態與禁止外洩欄位 |
 | 時間 | 注入固定 clock；排序與事件時間可重現 |
 
@@ -73,3 +74,16 @@
 | AT-58 | capture job 通過篩選但當日評分預算已用盡 | 回傳 `pending_score` 且 `budget_exhausted` 為真 |
 
 extension 的實機互動不由 API L1 取代，最終以 [verify](../verify.md) 的 B5 手動 Chrome gate 驗收。
+
+## 6. Profile、setup 與 stale 案例
+
+| 編號 | 測試情境 | 預期結果 |
+|---|---|---|
+| AT-60 | GET Profile 的 missing／invalid／ready | 回對應 status、ETag、safe issues；ready 才回結構化 Profile、revision、摘要與預估 |
+| AT-61 | PUT 缺 `If-Match`、ETag 不符 | 分別回 428、412；不寫檔；衝突回應不含 Profile |
+| AT-62 | PUT 含非法欄位或 PII | 回 422 與安全欄位 issue；不回 denylist 值或完整 payload |
+| AT-63 | PUT 合法新語意／相同語意 | 前者回新 revision 並切換 snapshot、既有 Job 不變；後者 `semantic_changed=false`；兩者皆不 activation |
+| AT-64 | Profile missing／invalid 時呼叫 run 或 capture | 回 409 `profile_not_ready`；健康、Profile、Job／Run 讀取仍可用 |
+| AT-65 | Job 的 Score／Letter revision 與 active revision 相同或不同 | 四個 revision 欄位與 `score_stale`／`letter_stale` 正確；verdict 與 apply state 不變 |
+| AT-66 | Profile missing 或 ready 時 POST reprocess | missing 回 409 且不呼叫 activator；ready 只在 POST 時以 active snapshot 呼叫一次並回統計 |
+| AT-66 | Profile CORS 與觀測安全 | preflight 允許 PUT／If-Match；observer、log、錯誤與 evidence 不含 Profile body、薪資、經歷或 YAML |

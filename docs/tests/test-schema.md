@@ -70,7 +70,7 @@
 
 | 編號 | 測試情境 | 預期結果 |
 |---|---|---|
-| ST-40 | 為同一 Job 連續儲存兩筆 score | 兩筆皆保留；取得現行評分時回傳最新一筆 |
+| ST-40 | 為同一 Job 連續儲存不同 revision 的 score | 兩筆皆保留；取得現行評分時只回與 `jobs.profile_revision` 相同的最新一筆 |
 | ST-41 | 儲存 score 的任一維度超出 0–100、reason 超過 50 字、runner 非法 | 被拒絕且不寫入資料 |
 | ST-42 | 儲存 approved 或 failed letter | 完整保留內容、輪數、審查紀錄、draft/review runner 與建立時間 |
 | ST-43 | 儲存 letter 時 status、rounds、runner 或內容不合法 | 被拒絕且不寫入資料 |
@@ -90,6 +90,17 @@
 | ST-52 | 儲存成功與失敗的 Job 相關 agent call | 保留角色、runner、input/output、ok、duration 與時間；Job 外鍵正確 |
 | ST-53 | 儲存校準用途的 agent call | `job_id` 可為 NULL；其餘必填欄位仍受驗證 |
 | ST-54 | agent call 含非法 role、runner、ok 值、負 duration 或 PII 命中 | 被拒絕且不寫入資料 |
+
+### 3.7 Profile revision 與 activation
+
+| 編號 | 測試情境 | 預期結果 |
+|---|---|---|
+| ST-60 | migration 升級既有資料 | Job／Score／Letter／Agent call 新欄位存在；legacy rows 保持 NULL，不猜測 revision |
+| ST-61 | 保存新 Score、Letter 與 Profile 相關 agent call | 寫入實際 revision；歷史 append-only，不覆蓋舊產出 |
+| ST-62 | 查詢現行 Score | 只取與 `jobs.profile_revision` 相同的最新 Score；不同 revision／NULL 不當成現行值 |
+| ST-63 | 新 revision activation 狀態矩陣 | partial 與 full Job 依設計重設；letter_requested／ready／failed、Letter 與 apply 歷史完全不變 |
+| ST-64 | 同 revision activation | no-op；不新增狀態事件、不重設狀態 |
+| ST-65 | 舊 worker 以舊 revision 寫 filter／Score／transition | expected state＋revision CAS 拒絕；現行 Job 與 Score 不變 |
 
 ## 4. 模組驗收
 

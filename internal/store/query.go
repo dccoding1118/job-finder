@@ -21,24 +21,26 @@ type JobFilter struct {
 
 // Score is the latest matching score retained for a job.
 type Score struct {
-	HardSkill int       `json:"hard_skill"`
-	Domain    int       `json:"domain"`
-	Seniority int       `json:"seniority"`
-	Condition int       `json:"condition"`
-	Direction int       `json:"direction"`
-	Total     float64   `json:"total"`
-	Reason    string    `json:"reason"`
-	Runner    string    `json:"runner"`
-	CreatedAt time.Time `json:"created_at"`
+	HardSkill       int       `json:"hard_skill"`
+	Domain          int       `json:"domain"`
+	Seniority       int       `json:"seniority"`
+	Condition       int       `json:"condition"`
+	Direction       int       `json:"direction"`
+	Total           float64   `json:"total"`
+	Reason          string    `json:"reason"`
+	Runner          string    `json:"runner"`
+	CreatedAt       time.Time `json:"created_at"`
+	ProfileRevision *string   `json:"profile_revision"`
 }
 
 // Letter is an approved or failed letter retained for a job.
 type Letter struct {
-	Content   string    `json:"content"`
-	Status    string    `json:"status"`
-	Rounds    int       `json:"rounds"`
-	ReviewLog string    `json:"review_log"`
-	CreatedAt time.Time `json:"created_at"`
+	Content         string    `json:"content"`
+	Status          string    `json:"status"`
+	Rounds          int       `json:"rounds"`
+	ReviewLog       string    `json:"review_log"`
+	CreatedAt       time.Time `json:"created_at"`
+	ProfileRevision *string   `json:"profile_revision"`
 }
 
 // StatusEvent records a process or application-state transition.
@@ -78,13 +80,13 @@ func (s *Store) GetJobDetail(ctx context.Context, id int64) (JobDetail, bool, er
 		return JobDetail{}, found, err
 	}
 	detail := JobDetail{Job: job, Events: []StatusEvent{}}
-	detail.Score, err = s.CurrentScore(ctx, id)
+	detail.Score, err = s.LatestScore(ctx, id)
 	if err != nil {
 		return JobDetail{}, false, err
 	}
 	var letter Letter
 	var letterCreatedAt string
-	err = s.db.QueryRowContext(ctx, `SELECT content, status, rounds, review_log, created_at FROM letters WHERE job_id=? ORDER BY created_at DESC, id DESC LIMIT 1`, id).Scan(&letter.Content, &letter.Status, &letter.Rounds, &letter.ReviewLog, &letterCreatedAt)
+	err = s.db.QueryRowContext(ctx, `SELECT content, status, rounds, review_log, created_at, profile_revision FROM letters WHERE job_id=? ORDER BY created_at DESC, id DESC LIMIT 1`, id).Scan(&letter.Content, &letter.Status, &letter.Rounds, &letter.ReviewLog, &letterCreatedAt, &letter.ProfileRevision)
 	if err == nil {
 		letter.CreatedAt, err = parseTimestamp(letterCreatedAt)
 		if err != nil {
@@ -121,12 +123,33 @@ func (s *Store) GetJobDetail(ctx context.Context, id int64) (JobDetail, bool, er
 func (s *Store) CurrentScore(ctx context.Context, jobID int64) (*Score, error) {
 	var score Score
 	var createdAt string
-	err := s.db.QueryRowContext(ctx, `SELECT dim_hard_skill, dim_domain, dim_seniority, dim_condition, dim_direction, total, reason, runner, created_at FROM scores WHERE job_id=? ORDER BY created_at DESC, id DESC LIMIT 1`, jobID).Scan(&score.HardSkill, &score.Domain, &score.Seniority, &score.Condition, &score.Direction, &score.Total, &score.Reason, &score.Runner, &createdAt)
+	err := s.db.QueryRowContext(ctx, `SELECT s.dim_hard_skill, s.dim_domain, s.dim_seniority, s.dim_condition, s.dim_direction, s.total, s.reason, s.runner, s.created_at, s.profile_revision
+		FROM scores s JOIN jobs j ON j.id=s.job_id
+		WHERE s.job_id=? AND s.profile_revision IS j.profile_revision
+		ORDER BY s.created_at DESC, s.id DESC LIMIT 1`, jobID).Scan(&score.HardSkill, &score.Domain, &score.Seniority, &score.Condition, &score.Direction, &score.Total, &score.Reason, &score.Runner, &createdAt, &score.ProfileRevision)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get score: %w", err)
+	}
+	score.CreatedAt, err = parseTimestamp(createdAt)
+	if err != nil {
+		return nil, fmt.Errorf("decode score timestamp: %w", err)
+	}
+	return &score, nil
+}
+
+// LatestScore returns the newest historical score regardless of active revision.
+func (s *Store) LatestScore(ctx context.Context, jobID int64) (*Score, error) {
+	var score Score
+	var createdAt string
+	err := s.db.QueryRowContext(ctx, `SELECT dim_hard_skill, dim_domain, dim_seniority, dim_condition, dim_direction, total, reason, runner, created_at, profile_revision FROM scores WHERE job_id=? ORDER BY created_at DESC, id DESC LIMIT 1`, jobID).Scan(&score.HardSkill, &score.Domain, &score.Seniority, &score.Condition, &score.Direction, &score.Total, &score.Reason, &score.Runner, &createdAt, &score.ProfileRevision)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get latest score: %w", err)
 	}
 	score.CreatedAt, err = parseTimestamp(createdAt)
 	if err != nil {
@@ -233,10 +256,10 @@ func (s *Store) ListJobs(ctx context.Context, filter JobFilter, sort JobSort) ([
 	if sort != "" && sort != JobSortNewest && sort != JobSortScore {
 		return nil, fmt.Errorf("store: invalid job sort %q", sort)
 	}
-	query := `SELECT j.id, j.source, j.external_id, j.url, j.title, j.company_name, j.company_info, j.description, j.salary_min, j.salary_max, j.location, j.remote_type, j.process_state, j.apply_state, j.content_hash, j.filter_hits, latest_score.total
+	query := `SELECT j.id, j.source, j.external_id, j.url, j.title, j.company_name, j.company_info, j.description, j.salary_min, j.salary_max, j.location, j.remote_type, j.process_state, j.apply_state, j.content_hash, j.filter_hits, j.profile_revision, latest_score.total
 		FROM jobs j
 		LEFT JOIN scores latest_score ON latest_score.id = (
-			SELECT id FROM scores WHERE job_id = j.id ORDER BY created_at DESC, id DESC LIMIT 1
+			SELECT id FROM scores WHERE job_id = j.id AND profile_revision IS j.profile_revision ORDER BY created_at DESC, id DESC LIMIT 1
 		)
 		WHERE (? = '' OR j.process_state = ?)
 		  AND (? = '' OR j.apply_state = ?)

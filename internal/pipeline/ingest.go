@@ -30,17 +30,21 @@ func (p Pipeline) IngestList(ctx context.Context, rows []crawler.RawJob) ([]Inge
 		return nil, fmt.Errorf("pipeline: store is required")
 	}
 	results := make([]IngestResult, 0, len(rows))
+	snapshot, err := p.snapshot()
+	if err != nil {
+		return nil, err
+	}
 	for _, row := range rows {
 		if !row.Partial() {
 			return nil, fmt.Errorf("pipeline: list item %q must not carry a description", row.ExternalID)
 		}
-		upsert, err := p.Store.UpsertJob(ctx, jobInput(row), nil)
+		upsert, err := p.Store.UpsertJob(ctx, jobInput(row, snapshot.Revision), nil)
 		if err != nil {
 			return nil, err
 		}
 		job := upsert.Job
 		if upsert.Created {
-			if job, err = p.screen(ctx, job); err != nil {
+			if job, err = p.screen(ctx, job, snapshot); err != nil {
 				return nil, err
 			}
 		}
@@ -63,13 +67,17 @@ func (p Pipeline) IngestJob(ctx context.Context, row crawler.RawJob) (IngestResu
 	if row.Partial() {
 		return IngestResult{}, fmt.Errorf("pipeline: captured job %q requires a description", row.ExternalID)
 	}
-	upsert, err := p.Store.UpsertJob(ctx, jobInput(row), nil)
+	snapshot, err := p.snapshot()
+	if err != nil {
+		return IngestResult{}, err
+	}
+	upsert, err := p.Store.UpsertJob(ctx, jobInput(row, snapshot.Revision), nil)
 	if err != nil {
 		return IngestResult{}, err
 	}
 	job := upsert.Job
 	if job.ProcessState == "new" {
-		if job, err = p.screen(ctx, job); err != nil {
+		if job, err = p.screen(ctx, job, snapshot); err != nil {
 			return IngestResult{}, err
 		}
 	}
@@ -78,9 +86,20 @@ func (p Pipeline) IngestJob(ctx context.Context, row crawler.RawJob) (IngestResu
 
 // screen applies the screening rules a job's available fields support and moves
 // it out of its intake state accordingly.
-func (p Pipeline) screen(ctx context.Context, job store.Job) (store.Job, error) {
-	hits := p.Filter.Match(job)
-	if len(hits) > 0 {
+func (p Pipeline) screen(ctx context.Context, job store.Job, snapshot workProfile) (store.Job, error) {
+	hits := snapshot.Filter.Match(job)
+	if job.ProcessState == "new" {
+		if err := p.Store.CommitFilter(ctx, job.ID, snapshot.Revision, hits); err != nil {
+			return job, err
+		}
+		job.ProcessState = "queued"
+		if len(hits) > 0 {
+			job.ProcessState = "filtered_out"
+		}
+		job.FilterHits = hits
+		return job, nil
+	}
+	if len(hits) > 0 && job.ProcessState == "discovered" {
 		if err := p.Store.SetFilterHits(ctx, job.ID, hits); err != nil {
 			return job, err
 		}
@@ -88,13 +107,6 @@ func (p Pipeline) screen(ctx context.Context, job store.Job) (store.Job, error) 
 			return job, err
 		}
 		job.ProcessState, job.FilterHits = "filtered_out", hits
-		return job, nil
-	}
-	if job.ProcessState == "new" {
-		if err := p.Store.TransitionProcess(ctx, job.ID, "queued"); err != nil {
-			return job, err
-		}
-		job.ProcessState = "queued"
 	}
 	return job, nil
 }
@@ -112,6 +124,9 @@ func (p Pipeline) result(ctx context.Context, job store.Job, created, unchanged 
 func (p Pipeline) RequestLetter(ctx context.Context, jobID int64) error {
 	if p.Store == nil {
 		return fmt.Errorf("pipeline: store is required")
+	}
+	if _, err := p.snapshot(); err != nil {
+		return err
 	}
 	detail, found, err := p.Store.GetJobDetail(ctx, jobID)
 	if err != nil {
