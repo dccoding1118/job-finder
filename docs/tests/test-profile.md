@@ -19,6 +19,7 @@
 | denylist fixture | 每個禁詞均為合成字串；逐詞案例另覆蓋大小寫差異 |
 | PII 偵測輸入 | Email、電話與身分證字號 pattern 於測試執行時動態組成；不保存為 fixture、log 或版控檔案，且不得使用真實個資 |
 | 錯誤驗證 | 失敗時斷言回傳錯誤包含欄位或命中位置，且不回傳可供後續 Agent 使用的 Profile |
+| JSON／檔案 fixture | 合法與 unknown-field JSON、語意相同但排版不同的 YAML、暫存檔權限與可注入檔案失敗；不得讀取日常 `profile.yaml` |
 
 ## 3. 單元測試案例
 
@@ -40,9 +41,9 @@
 | 編號 | 測試情境 | 預期結果 |
 |---|---|---|
 | PT-10 | 對合法基準 Profile 執行 denylist 與內建 pattern 檢核 | 通過，沒有命中項目 |
-| PT-11 | Profile 含 denylist 禁詞，且字母大小寫與 denylist 不同 | 拒絕；回報命中的禁詞與位置，大小寫不影響偵測 |
+| PT-11 | Profile 含 denylist 禁詞，且字母大小寫與 denylist 不同 | 拒絕；安全 issue 指向欄位位置但不回禁詞本身，大小寫不影響偵測 |
 | PT-12 | Profile 分別含 Email、台灣手機、台灣市話與身分證字號格式 | 每一種輸入均被拒絕；回報對應的 pattern 命中位置 |
-| PT-13 | Profile 同時含多個 denylist 與 pattern 命中 | 一次回報全部命中，供使用者完整修正 |
+| PT-13 | Profile 同時含多個 denylist 與 pattern 命中 | 一次回報全部安全 issue，供使用者完整修正；不回完整輸入或 denylist 值 |
 | PT-14 | 對合成求職信文字呼叫共用 PII 檢核函式 | 行為與 Profile 檢核一致；乾淨文字通過，含禁詞或內建 pattern 的文字被拒絕 |
 
 ### 3.3 CLI 介面
@@ -61,6 +62,17 @@
 | PT-30 | `interview` 事件少於 `calibration.min_interviews` | `jobfinder calibrate` 拒絕執行並說明尚未達門檻；不呼叫 Agent、不改寫 Profile |
 | PT-31 | 達門檻的合成 Job、Score 與 `interview` 事件 | Calibrator 收到去識別化資料；輸出格式正確的建議 diff；Profile 檔案未被系統改寫 |
 | PT-32 | Calibrator 輸出非法格式或含 PII | 拒絕建議、回傳安全錯誤；不寫入 Profile 或建議檔 |
+
+### 3.5 Canonical serialization、檔案與 provider
+
+| 編號 | 測試情境 | 預期結果 |
+|---|---|---|
+| PT-40 | JSON／YAML round-trip 與 unknown field | 已知欄位、enum、陣列順序完整；unknown field 拒絕且不無聲遺失 |
+| PT-41 | 相同結構的不同 YAML 註解／排版 | canonical revision 相同、精確 bytes ETag 不同 |
+| PT-42 | 任一語意欄位改變或重送相同內容 | 前者 revision 改變；後者 revision 不變且回 semantic no-op |
+| PT-43 | 新建與替換 Profile | 檔案與暫存檔為 `0600`，同目錄原子 rename；不擴大父目錄權限 |
+| PT-44 | PII、schema、fsync／rename 失敗 | 不改磁碟檔或 active snapshot；issue 僅含安全 code、path、message |
+| PT-45 | provider 的 missing／invalid／ready | 狀態正確；ready snapshot immutable；單一工作取得後不因後續替換而變動 |
 
 ## 4. 模組驗收
 

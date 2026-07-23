@@ -143,7 +143,7 @@ async function main() {
     result.generate_letter_state_after_response = "requested";
 
     await dashboard.getByRole("tab", { name: "系統" }).click();
-    await dashboard.getByRole("button", { name: "手動抓取自動來源" }).click();
+    await dashboard.getByRole("button", { name: "立即手動抓取" }).click();
     result.manual_run_requested = true;
     // The "已開始抓取" acknowledgement is immediately overwritten by load()'s
     // connected note, so the durable proof is the manual-extension run appearing

@@ -84,6 +84,7 @@ func (f Filter) Match(j store.Job) []string {
 type Pipeline struct {
 	Store           *store.Store
 	Source          crawler.Source
+	Provider        *profile.Provider
 	Filter          Filter
 	Scorer          agents.Scorer
 	Drafter         agents.Drafter
@@ -99,6 +100,25 @@ type Pipeline struct {
 	MinInterval     time.Duration
 	// Now supplies the clock the Taipei day boundary is derived from.
 	Now func() time.Time
+}
+
+type workProfile struct {
+	Value    profile.Profile
+	YAML     string
+	Revision string
+	Filter   Filter
+}
+
+func (p Pipeline) snapshot() (workProfile, error) {
+	if p.Provider != nil {
+		snapshot, err := p.Provider.Ready()
+		if err != nil {
+			return workProfile{}, err
+		}
+		return workProfile{Value: *snapshot.Profile, YAML: snapshot.YAML, Revision: snapshot.Revision, Filter: FilterFromProfile(*snapshot.Profile)}, nil
+	}
+	revision, _ := profile.Revision(p.Profile)
+	return workProfile{Value: p.Profile, YAML: p.ProfileYAML, Revision: revision, Filter: p.Filter}, nil
 }
 
 func (p Pipeline) now() time.Time {
@@ -176,6 +196,9 @@ func (p Pipeline) Letter(ctx context.Context, limit int) (int, error) {
 // LetterWithStats drafts letters for the jobs a user has requested. Jobs that
 // stay `shortlisted` are never picked up, so an unrequested job costs nothing.
 func (p Pipeline) LetterWithStats(ctx context.Context, limit int) (StageStats, error) {
+	if _, err := p.snapshot(); err != nil {
+		return StageStats{}, err
+	}
 	remaining, limited, err := p.LetterBudgetRemaining(ctx)
 	if err != nil {
 		return StageStats{}, err
@@ -191,6 +214,10 @@ func (p Pipeline) LetterWithStats(ctx context.Context, limit int) (StageStats, e
 	stats := StageStats{}
 	var failures []error
 	for i, job := range jobs {
+		snapshot, snapshotErr := p.snapshot()
+		if snapshotErr != nil {
+			return stats, snapshotErr
+		}
 		if i > 0 && p.MinInterval > 0 {
 			select {
 			case <-ctx.Done():
@@ -200,7 +227,7 @@ func (p Pipeline) LetterWithStats(ctx context.Context, limit int) (StageStats, e
 		}
 		jobID := job.ID
 		audit := func(role, runner, input, output string, ok bool, duration time.Duration) error {
-			return p.Store.SaveAgentCall(ctx, store.AgentCallInput{JobID: &jobID, Role: role, Runner: runner, Input: input, Output: output, OK: ok, DurationMS: duration.Milliseconds()})
+			return p.Store.SaveAgentCall(ctx, store.AgentCallInput{JobID: &jobID, Role: role, Runner: runner, Input: input, Output: output, OK: ok, DurationMS: duration.Milliseconds(), ProfileRevision: snapshot.Revision})
 		}
 		drafter, reviewer := p.Drafter, p.Reviewer
 		drafter.Audit, reviewer.Audit = audit, audit
@@ -208,7 +235,7 @@ func (p Pipeline) LetterWithStats(ctx context.Context, limit int) (StageStats, e
 		if job.Description != nil {
 			desc = *job.Description
 		}
-		result, e := agents.GenerateLetter(ctx, drafter, reviewer, p.ProfileYAML, p.Profile, agents.Job{Title: job.Title, CompanyName: job.CompanyName, Description: desc, Location: job.Location, RemoteType: job.RemoteType, SalaryMin: job.SalaryMin, SalaryMax: job.SalaryMax}, p.Denylist, p.MaxLetterLength)
+		result, e := agents.GenerateLetter(ctx, drafter, reviewer, snapshot.YAML, snapshot.Value, agents.Job{Title: job.Title, CompanyName: job.CompanyName, Description: desc, Location: job.Location, RemoteType: job.RemoteType, SalaryMin: job.SalaryMin, SalaryMax: job.SalaryMax}, p.Denylist, p.MaxLetterLength)
 		if e != nil {
 			if ctx.Err() != nil {
 				return stats, e
@@ -219,7 +246,7 @@ func (p Pipeline) LetterWithStats(ctx context.Context, limit int) (StageStats, e
 		if result.Status == "failed" {
 			result.Content = "[你的姓名]\n[你的聯絡方式]"
 		}
-		if err := p.Store.SaveLetter(ctx, store.LetterInput{JobID: job.ID, Content: result.Content, Status: result.Status, ReviewLog: result.ReviewLog, Rounds: result.Rounds, RunnerDraft: result.DraftRunner, RunnerReview: result.ReviewRunner}); err != nil {
+		if err := p.Store.SaveLetter(ctx, store.LetterInput{JobID: job.ID, Content: result.Content, Status: result.Status, ReviewLog: result.ReviewLog, Rounds: result.Rounds, RunnerDraft: result.DraftRunner, RunnerReview: result.ReviewRunner, ProfileRevision: snapshot.Revision}); err != nil {
 			return stats, err
 		}
 		state := "letter_failed"
@@ -246,13 +273,17 @@ func (p Pipeline) Fetch(ctx context.Context, spec crawler.SearchSpec, runID *int
 	if p.Store == nil || p.Source == nil {
 		return FetchStats{}, fmt.Errorf("pipeline: store and source are required")
 	}
+	snapshot, err := p.snapshot()
+	if err != nil {
+		return FetchStats{}, err
+	}
 	rows, err := p.Source.Fetch(ctx, spec)
 	if err != nil {
 		return FetchStats{}, err
 	}
 	stats := FetchStats{}
 	for _, r := range rows {
-		result, e := p.Store.UpsertJob(ctx, jobInput(r), runID)
+		result, e := p.Store.UpsertJob(ctx, jobInput(r, snapshot.Revision), runID)
 		if e != nil {
 			return stats, e
 		}
@@ -264,13 +295,13 @@ func (p Pipeline) Fetch(ctx context.Context, spec crawler.SearchSpec, runID *int
 	return stats, nil
 }
 
-func jobInput(r crawler.RawJob) store.JobInput {
+func jobInput(r crawler.RawJob, revision string) store.JobInput {
 	description := r.Description
 	var ptr *string
 	if !r.Partial() {
 		ptr = &description
 	}
-	return store.JobInput{Source: r.Source, ExternalID: r.ExternalID, URL: r.URL, Title: r.Title, CompanyName: r.CompanyName, CompanyInfo: companyInfo(r.CompanyInfo), Description: ptr, SalaryMin: r.SalaryMin, SalaryMax: r.SalaryMax, Location: r.Location, RemoteType: r.RemoteType}
+	return store.JobInput{Source: r.Source, ExternalID: r.ExternalID, URL: r.URL, Title: r.Title, CompanyName: r.CompanyName, CompanyInfo: companyInfo(r.CompanyInfo), Description: ptr, SalaryMin: r.SalaryMin, SalaryMax: r.SalaryMax, Location: r.Location, RemoteType: r.RemoteType, ProfileRevision: revision}
 }
 
 func (p Pipeline) FilterJobs(ctx context.Context, limit int) (int, error) {
@@ -279,6 +310,9 @@ func (p Pipeline) FilterJobs(ctx context.Context, limit int) (int, error) {
 }
 
 func (p Pipeline) FilterJobsWithStats(ctx context.Context, limit int) (StageStats, error) {
+	if _, err := p.snapshot(); err != nil {
+		return StageStats{}, err
+	}
 	limit, _ = stageLimit(limit, 0, false)
 	jobs, err := p.Store.PickForStage(ctx, "filter", limit)
 	if err != nil {
@@ -286,16 +320,21 @@ func (p Pipeline) FilterJobsWithStats(ctx context.Context, limit int) (StageStat
 	}
 	stats := StageStats{}
 	for _, job := range jobs {
-		if hits := p.Filter.Match(job); len(hits) > 0 {
-			if err := p.Store.SetFilterHits(ctx, job.ID, hits); err != nil {
-				return stats, err
-			}
-			if err := p.Store.TransitionProcess(ctx, job.ID, "filtered_out"); err != nil {
-				return stats, err
-			}
-			stats.FilteredOut++
-		} else if err := p.Store.TransitionProcess(ctx, job.ID, "queued"); err != nil {
+		snapshot, err := p.snapshot()
+		if err != nil {
 			return stats, err
+		}
+		if !jobUsesRevision(job, snapshot.Revision) {
+			continue
+		}
+		hits := snapshot.Filter.Match(job)
+		if err := p.Store.CommitFilter(ctx, job.ID, snapshot.Revision, hits); errors.Is(err, store.ErrStaleRevision) {
+			continue
+		} else if err != nil {
+			return stats, err
+		}
+		if len(hits) > 0 {
+			stats.FilteredOut++
 		}
 		stats.Processed++
 	}
@@ -308,6 +347,9 @@ func (p Pipeline) Score(ctx context.Context, limit int) (int, error) {
 }
 
 func (p Pipeline) ScoreWithStats(ctx context.Context, limit int) (StageStats, error) {
+	if _, err := p.snapshot(); err != nil {
+		return StageStats{}, err
+	}
 	remaining, limited, err := p.ScoreBudgetRemaining(ctx)
 	if err != nil {
 		return StageStats{}, err
@@ -323,6 +365,13 @@ func (p Pipeline) ScoreWithStats(ctx context.Context, limit int) (StageStats, er
 	stats := StageStats{}
 	var failures []error
 	for i, job := range jobs {
+		snapshot, snapshotErr := p.snapshot()
+		if snapshotErr != nil {
+			return stats, snapshotErr
+		}
+		if !jobUsesRevision(job, snapshot.Revision) {
+			continue
+		}
 		if i > 0 && p.MinInterval > 0 {
 			select {
 			case <-ctx.Done():
@@ -337,9 +386,9 @@ func (p Pipeline) ScoreWithStats(ctx context.Context, limit int) (StageStats, er
 		jobID := job.ID
 		scorer := p.Scorer
 		scorer.Audit = func(role, runner, input, output string, ok bool, duration time.Duration) error {
-			return p.Store.SaveAgentCall(ctx, store.AgentCallInput{JobID: &jobID, Role: role, Runner: runner, Input: input, Output: output, OK: ok, DurationMS: duration.Milliseconds()})
+			return p.Store.SaveAgentCall(ctx, store.AgentCallInput{JobID: &jobID, Role: role, Runner: runner, Input: input, Output: output, OK: ok, DurationMS: duration.Milliseconds(), ProfileRevision: snapshot.Revision})
 		}
-		score, e := scorer.Score(ctx, p.ProfileYAML, agents.Job{Title: job.Title, CompanyName: job.CompanyName, Description: desc, Location: job.Location, RemoteType: job.RemoteType, SalaryMin: job.SalaryMin, SalaryMax: job.SalaryMax})
+		score, e := scorer.Score(ctx, snapshot.YAML, agents.Job{Title: job.Title, CompanyName: job.CompanyName, Description: desc, Location: job.Location, RemoteType: job.RemoteType, SalaryMin: job.SalaryMin, SalaryMax: job.SalaryMax})
 		if e != nil {
 			if ctx.Err() != nil {
 				return stats, e
@@ -348,20 +397,23 @@ func (p Pipeline) ScoreWithStats(ctx context.Context, limit int) (StageStats, er
 			continue
 		}
 		total := float64(score.HardSkill)*p.Weights[0] + float64(score.Domain)*p.Weights[1] + float64(score.Seniority)*p.Weights[2] + float64(score.Condition)*p.Weights[3] + float64(score.Direction)*p.Weights[4]
-		if err := p.Store.SaveScore(ctx, store.ScoreInput{JobID: job.ID, HardSkill: score.HardSkill, Domain: score.Domain, Seniority: score.Seniority, Condition: score.Condition, Direction: score.Direction, Total: total, Reason: score.Reason, Runner: score.Runner}); err != nil {
-			return stats, err
-		}
 		state := "scored"
 		if total >= p.Threshold {
 			state = "shortlisted"
 			stats.Shortlisted++
 		}
-		if err := p.Store.TransitionProcess(ctx, job.ID, state); err != nil {
+		if err := p.Store.CommitScore(ctx, store.ScoreInput{JobID: job.ID, HardSkill: score.HardSkill, Domain: score.Domain, Seniority: score.Seniority, Condition: score.Condition, Direction: score.Direction, Total: total, Reason: score.Reason, Runner: score.Runner, ProfileRevision: snapshot.Revision}, state); errors.Is(err, store.ErrStaleRevision) {
+			continue
+		} else if err != nil {
 			return stats, err
 		}
 		stats.Processed++
 	}
 	return stats, errors.Join(failures...)
+}
+
+func jobUsesRevision(job store.Job, revision string) bool {
+	return job.ProfileRevision != nil && *job.ProfileRevision == revision
 }
 
 func companyInfo(v string) string {

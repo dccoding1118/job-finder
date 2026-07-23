@@ -1,10 +1,11 @@
 # 模組設計 — extension（Chrome MV3 Side Panel 與 104 半被動擷取）
 
-對應需求：R6、R9。Chrome MV3 extension 是 MVP 唯一的使用者前端：原生 Side Panel 提供儀表板，104 content script 提供半被動擷取與列表快速判定。B4 交付 Side Panel；B5 交付 104 擷取組。
+對應需求：R1、R6、R9。Chrome MV3 extension 是 MVP 唯一的使用者前端：原生 Side Panel 提供儀表板與 Profile 入口，全頁 editor 編輯 Profile，104 content script 提供半被動擷取與列表快速判定。
 
 ## 1. 職責邊界
 
-- 原生 Side Panel 提供目前職缺、待看清單、推薦職缺、篩選、JD／評分對照、求職信生成入口與複製、投遞狀態、手動 run 與 Run 歷史；toolbar action 只負責開啟 Side Panel，不顯示 popup。
+- 原生 Side Panel 提供目前職缺、待看清單、推薦職缺、篩選、JD／評分對照、求職信生成入口與複製、投遞狀態、手動 run、Run 歷史與 Profile 狀態卡；toolbar action 只負責開啟 Side Panel，不顯示 popup。
+- extension 自有全頁編輯器以結構化表單建立／編輯單一 Profile；不解析 YAML、不自動儲存，也不保存草稿副本。
 - Options 儲存 localhost API endpoint 與 token；service worker 是唯一 API client，統一加入認證、處理錯誤與轉送訊息。
 - content script 只處理使用者已載入的 104 搜尋結果、通知頁與職缺內頁；列表頁顯示小型判定標記，內頁把擷取結果作為目前分頁 context 提供給 Side Panel，不注入完整評分 overlay。
 - 後端解析、狀態轉換、判定導出、評分與信件生成分別屬 crawler、store、api、pipeline、agents；插件不重複實作業務規則——**判定一律取用 API 回傳的 `verdict`，不自行從 `process_state` 或分數推導**。
@@ -15,6 +16,7 @@
 | 元件 | 位置 | 職責 |
 |---|---|---|
 | Side Panel | `extension/dashboard/` | R6 儀表板；向 service worker 要求目前分頁 context、Job／Run 資料與動作 |
+| Profile editor | `extension/profile/` | extension 全頁結構化表單、ETag 儲存、衝突與驗證問題處理 |
 | Options | `extension/options/` | 驗證並儲存 API endpoint 與 token；不記錄 JD 或求職信 |
 | service worker | `extension/service-worker.js` | API gateway、訊息協調、認證 header、錯誤標準化 |
 | list content script | `extension/content/list.js` | 僅在使用者載入 104 搜尋／通知頁時擷取可見項目、顯示 status badge |
@@ -26,6 +28,16 @@ manifest 以固定 key 產生穩定 unpacked extension ID，最低支援 Chrome 
 
 ## 3. Side Panel 儀表板（B4）
 
+「系統」頁的 Profile 卡依 API 呈現 `missing`／`invalid`／`ready`：missing 提供「開始設定」，invalid 顯示安全問題摘要與人工修復提示，ready 顯示年資、技能數、經歷數、方向與 revision 短碼。卡片開啟 extension 自有的全頁編輯器，不建立獨立 Web UI。
+
+編輯器依序包含專業摘要、學歷、經歷與成就、技能與證照、求職方向與條件、產業避開與篩選、誠實邊界；陣列可新增、刪除與排序。欄位使用業務用語，前端即時檢查只提供提示，後端驗證是唯一權威。
+
+- 草稿只存在 editor page 記憶體；重新整理、關閉或 extension reload 後不保留，有未儲存內容時離頁確認。
+- 儲存確認說明新擷取職缺會立即使用新版、既有職缺保留原評分；確認後才以 GET 的 ETag 送出 `PUT`。
+- 儲存成功顯示 revision 短碼；`412 profile_conflict` 保留草稿並要求重新載入，不提供強制覆蓋。
+- Job 清單與詳情將分數四捨五入為整數，並以綠色「Profile revision · 最新」或黃色「Profile revision · 待重評」呈現評分版本；Letter stale 另行提示，不改 verdict／apply。
+- 動態陣列新增後，焦點移至該按鈕所屬區塊的新欄位並以最近距離捲入畫面，不跳到其他同型清單。
+
 Side Panel 固定提供「目前職缺、待看、推薦、系統」四個頁籤。sticky header 顯示品牌、API 連線、目前頁面脈絡、主題切換與重新整理；內容在 320px 以上維持單欄；目前職缺的主要動作置於 sticky action dock。toolbar action 以 `chrome.sidePanel.setPanelBehavior({openPanelOnActionClick: true})` 開啟 Side Panel。
 
 | 頁籤 | 資料 | 使用者動作 |
@@ -33,13 +45,13 @@ Side Panel 固定提供「目前職缺、待看、推薦、系統」四個頁籤
 | 目前職缺 | active tab capture context 對應的 Job 詳情；或使用者從推薦清單選取的 Job | 檢視判定、總分／命中條件、理由、五維、JD、求職信與投遞狀態；開啟原始連結 |
 | 待看 | `discovered` Job 的職稱、公司、薪資、地點與原始連結 | 以明確使用者動作開啟原始頁面 |
 | 推薦 | 預設 `verdict=recommended` 且按 Match Score 排序的清單；進階篩選可切換判定、處理、投遞與來源 | 選取一筆後切到目前職缺；不自動開啟原始頁面 |
-| 系統 | API 連線狀態、手動 run、Run 歷史 | 觸發 run；檢視抓取事實與現行判定分布 |
+| 系統 | 依序呈現「連線與設定」「Profile」「自動與手動批次」「批次歷程」群組 | 開啟 Options、開始設定／編輯 Profile、更新過時評分、查看每日 08:30 排程、手動抓取與檢視歷程 |
 
 清單預設顯示判定為推薦的職缺，依最新 Match Score 由高至低排序。無分數或投遞狀態時顯示「—」。複製使用 `navigator.clipboard.writeText`，manifest 僅為此功能宣告 `clipboardRead`／`clipboardWrite`；失敗時保留可選取文字並顯示說明。五維分數以技能、領域、資歷、條件、方向與總分呈現；Run 統計逐項顯示，不得顯示為物件字串。判定與狀態不得只以顏色表達，須同時有文字或圖示；所有控制項可用鍵盤操作並有可辨識名稱。
 
 主題以 `data-theme="light|dark"` 套用 `ui-design/DESIGN.md` 的語意 token。使用者選擇存於 extension local storage 的 `theme` 欄位；切換只改視覺，不重設 active tab、選取 Job、表單或 busy 狀態。JD、求職信與 Job response 只存在當次頁面記憶體，離線時可繼續閱讀，但不得寫入 extension storage。
 
-**求職信生成入口**（PRD R5.0、R6.8）：對照區依 API 回傳的 `letter_state` 決定呈現——`none` 顯示「產生求職信」按鈕；按下後送出 `POST /api/v1/jobs/{id}/letter`，立即轉為處理中並停用按鈕（回應為受理，不等待完成）；`requested` 顯示處理中與說明「下一輪執行完成」；`ready` 顯示求職信與複製；`failed` 顯示未過審與「再次產生」。生成結果由使用者重新整理或下次載入時取得，插件不得為此輪詢高頻請求。
+**求職信生成入口**（PRD R5.0、R6.8）：對照區依 API 回傳的 `letter_state` 決定呈現——`none` 顯示「產生求職信」按鈕；按下後送出 `POST /api/v1/jobs/{id}/letter`，立即轉為處理中並停用按鈕（回應為受理，不等待完成）；`requested` 顯示處理中與說明「後端完成後可重新載入」；`ready` 顯示求職信與複製；`failed` 顯示未過審與「再次產生」。生成結果由使用者重新整理或下次載入時取得，插件不得為此輪詢高頻請求。
 
 ## 4. 104 擷取與目前分頁 context（B5）
 
@@ -108,6 +120,8 @@ Side Panel 固定提供「目前職缺、待看、推薦、系統」四個頁籤
 
 - manifest 採 MV3，B4 宣告 `storage`、`sidePanel`、`clipboardRead`、`clipboardWrite` 與 loopback API host permission；B5 另宣告 §4.0 三個 104 URL pattern 的 content scripts（含 `pda.104.com.tw` 通知頁）。不得請求未使用權限。
 - API endpoint 預設 `http://127.0.0.1:8686`；Options 儲存前驗證為 `http` loopback URL 或使用者建立 SSH forward 後的 loopback URL。token 使用 `chrome.storage.local`，不顯示於 Side Panel 或 log。
+- Profile、草稿、薪資、自由文字與 Profile API body 不得寫入 `chrome.storage`、console、trace 或 screenshot evidence；service worker 是 Profile API 的唯一 client，content script 不可取得 Profile。
+- editor 的 `saving` 狀態停用重複儲存與離頁；`conflict`、validation issues 與離線錯誤保留表單，並把焦點移到可修正的第一個欄位或錯誤摘要。
 - list／job 擷取失敗、API 離線或 token 無效時，Side Panel 顯示可理解的錯誤與使用者觸發的重送；不得背景高頻重試或暫存 JD。
 - 列表標記採 Shadow DOM，避免與 104 頁面樣式互相污染。
 
@@ -116,7 +130,7 @@ Side Panel 固定提供「目前職缺、待看、推薦、系統」四個頁籤
 - Side Panel、Options、service worker 訊息與 API error mapping 以 mock API 單元測試；不使用真實 JD、Profile、token 或 104 頁面。
 - B4 隔離 Chromium 自動模擬使用固定 unpacked ID，保存不含 token/body 的 request 摘要與 Side Panel screenshot，並驗證 light／dark 主題、來源／流程／投遞／判定篩選、五維對照、求職信生成要求、clipboard、SQLite apply 回寫與結構化 Run history；實際 Chrome 另走人工 gate。
 - 104 script 的實機驗收見 [verify](../verify.md) V5；必須由驗收者載入測試版插件，以使用者導覽完成列表就地標記、內頁 context 與待看流程。
-- 交付 `extension/` 的 MV3 manifest、Side Panel、Options、service worker、content scripts、列表標記與測試；API capture endpoint 與 crawler `parse104/` 分屬各自模組交付。
+- 交付 `extension/` 的 MV3 manifest、Side Panel、Profile editor、Options、service worker、content scripts、列表標記與測試；API capture endpoint 與 crawler `parse104/` 分屬各自模組交付。
 
 ## 7. 待決
 

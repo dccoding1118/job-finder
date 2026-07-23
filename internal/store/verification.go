@@ -40,32 +40,35 @@ type VerificationJob struct {
 	ApplyState        *string             `json:"apply_state"`
 	ContentHash       *string             `json:"content_hash"`
 	FilterHits        []string            `json:"filter_hits"`
+	ProfileRevision   *string             `json:"profile_revision"`
 	Score             *VerificationScore  `json:"score"`
 	Letter            *VerificationLetter `json:"letter"`
 	Events            []VerificationEvent `json:"events"`
 }
 
 type VerificationScore struct {
-	HardSkill    int     `json:"hard_skill"`
-	Domain       int     `json:"domain"`
-	Seniority    int     `json:"seniority"`
-	Condition    int     `json:"condition"`
-	Direction    int     `json:"direction"`
-	Total        float64 `json:"total"`
-	ReasonSHA256 string  `json:"reason_sha256"`
-	Runner       string  `json:"runner"`
+	HardSkill       int     `json:"hard_skill"`
+	Domain          int     `json:"domain"`
+	Seniority       int     `json:"seniority"`
+	Condition       int     `json:"condition"`
+	Direction       int     `json:"direction"`
+	Total           float64 `json:"total"`
+	ReasonSHA256    string  `json:"reason_sha256"`
+	Runner          string  `json:"runner"`
+	ProfileRevision *string `json:"profile_revision"`
 }
 
 type VerificationLetter struct {
-	Status                string `json:"status"`
-	Rounds                int    `json:"rounds"`
-	ContentSHA256         string `json:"content_sha256"`
-	ReviewLogSHA256       string `json:"review_log_sha256"`
-	ReviewEntries         int    `json:"review_entries"`
-	RunnerDraft           string `json:"runner_draft"`
-	RunnerReview          string `json:"runner_review"`
-	HasNamePlaceholder    bool   `json:"has_name_placeholder"`
-	HasContactPlaceholder bool   `json:"has_contact_placeholder"`
+	Status                string  `json:"status"`
+	Rounds                int     `json:"rounds"`
+	ContentSHA256         string  `json:"content_sha256"`
+	ReviewLogSHA256       string  `json:"review_log_sha256"`
+	ReviewEntries         int     `json:"review_entries"`
+	RunnerDraft           string  `json:"runner_draft"`
+	RunnerReview          string  `json:"runner_review"`
+	HasNamePlaceholder    bool    `json:"has_name_placeholder"`
+	HasContactPlaceholder bool    `json:"has_contact_placeholder"`
+	ProfileRevision       *string `json:"profile_revision"`
 }
 
 type VerificationEvent struct {
@@ -75,10 +78,11 @@ type VerificationEvent struct {
 }
 
 type VerificationAgentCalls struct {
-	Role   string `json:"role"`
-	Runner string `json:"runner"`
-	OK     bool   `json:"ok"`
-	Count  int    `json:"count"`
+	Role            string  `json:"role"`
+	Runner          string  `json:"runner"`
+	OK              bool    `json:"ok"`
+	Count           int     `json:"count"`
+	ProfileRevision *string `json:"profile_revision"`
 }
 
 // SnapshotForVerification reads only safe summaries needed to reconstruct E2E assertions.
@@ -127,7 +131,7 @@ func (s *Store) SnapshotForVerification(ctx context.Context) (VerificationSnapsh
 			Title: job.Title, CompanyName: job.CompanyName, CompanyInfo: job.CompanyInfo,
 			SalaryMin: job.SalaryMin, SalaryMax: job.SalaryMax, Location: job.Location,
 			RemoteType: job.RemoteType, ProcessState: job.ProcessState, ApplyState: job.ApplyState,
-			ContentHash: job.ContentHash, FilterHits: []string{}, Events: []VerificationEvent{},
+			ContentHash: job.ContentHash, FilterHits: []string{}, ProfileRevision: job.ProfileRevision, Events: []VerificationEvent{},
 		}
 		if job.Description != nil {
 			item.DescriptionSHA256 = digest(*job.Description)
@@ -147,7 +151,7 @@ func (s *Store) SnapshotForVerification(ctx context.Context) (VerificationSnapsh
 				HardSkill: detail.Score.HardSkill, Domain: detail.Score.Domain,
 				Seniority: detail.Score.Seniority, Condition: detail.Score.Condition,
 				Direction: detail.Score.Direction, Total: detail.Score.Total,
-				ReasonSHA256: digest(detail.Score.Reason), Runner: detail.Score.Runner,
+				ReasonSHA256: digest(detail.Score.Reason), Runner: detail.Score.Runner, ProfileRevision: detail.Score.ProfileRevision,
 			}
 		}
 		if detail.Letter != nil {
@@ -165,6 +169,7 @@ func (s *Store) SnapshotForVerification(ctx context.Context) (VerificationSnapsh
 				ReviewEntries: entries, RunnerDraft: draft, RunnerReview: review,
 				HasNamePlaceholder:    strings.Contains(detail.Letter.Content, "[你的姓名]"),
 				HasContactPlaceholder: strings.Contains(detail.Letter.Content, "[你的聯絡方式]"),
+				ProfileRevision:       detail.Letter.ProfileRevision,
 			}
 		}
 		for _, event := range detail.Events {
@@ -177,7 +182,7 @@ func (s *Store) SnapshotForVerification(ctx context.Context) (VerificationSnapsh
 	if err != nil {
 		return out, err
 	}
-	callRows, err := s.db.QueryContext(ctx, `SELECT role, runner, ok, COUNT(*) FROM agent_calls GROUP BY role, runner, ok ORDER BY role, runner, ok`)
+	callRows, err := s.db.QueryContext(ctx, `SELECT role, runner, ok, profile_revision, COUNT(*) FROM agent_calls GROUP BY role, runner, ok, profile_revision ORDER BY role, runner, ok, profile_revision`)
 	if err != nil {
 		return out, fmt.Errorf("verification: summarize agent calls: %w", err)
 	}
@@ -186,7 +191,7 @@ func (s *Store) SnapshotForVerification(ctx context.Context) (VerificationSnapsh
 	for callRows.Next() {
 		var call VerificationAgentCalls
 		var ok int
-		if err := callRows.Scan(&call.Role, &call.Runner, &ok, &call.Count); err != nil {
+		if err := callRows.Scan(&call.Role, &call.Runner, &ok, &call.ProfileRevision, &call.Count); err != nil {
 			return out, fmt.Errorf("verification: scan agent calls: %w", err)
 		}
 		call.OK = ok == 1

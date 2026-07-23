@@ -1,6 +1,6 @@
 # 測試規格 — extension（`extension/`）
 
-對應 [extension 模組設計](../designs/design-extension.md)、PRD R6、R9。Side Panel、Options 與 service worker 以 mock Chrome API 與 mock API response 測試；104 content script 的最終驗收由 B5 Chrome 實機 gate 完成。
+對應 [extension 模組設計](../designs/design-extension.md)、PRD R1、R6、R9。Side Panel、Profile editor、Options 與 service worker 以 mock Chrome API 與 mock API response 測試；104 content script 與 Profile editor 的最終驗收由 Chrome 實機 gate 完成。
 
 ## 1. 自動化案例
 
@@ -26,6 +26,14 @@
 | ET-18 | B5 | 搜尋頁虛擬捲動回收與載入新項目 | MutationObserver 收割新出現的項目；已收割項目不重送 capture；捲離回收不影響已送出的標記狀態 |
 | ET-19 | B5 | 搜尋頁第一筆廣告職缺（`jobsource` 前綴 `hotjob`） | 不收割、不送 capture、不標記 |
 | ET-20 | B5 | 搜尋頁與通知頁的同一職缺 | 兩套 selector 正規化為同一組 capture 項目（external_id、url、職稱、公司、地區、薪資一致） |
+| ET-30 | Profile | 系統頁 Profile 卡的 missing／invalid／ready | 顯示正確摘要與開始設定／編輯動作；invalid 不顯示敏感內容 |
+| ET-31 | Profile | 全頁表單與動態陣列 | 所有 schema 欄位可編輯；陣列可新增、刪除、排序；新增後聚焦同區塊的新欄位且不跳至其他同型清單；鍵盤與錯誤聚焦可用 |
+| ET-32 | Profile | 未儲存草稿離頁、reload 與無 autosave | 離頁先確認；reload 後草稿消失；未按儲存不送 PUT |
+| ET-33 | Profile | 儲存確認與成功回饋 | 使用者確認「新職缺立即使用、舊評分保留」後才送含 If-Match 的 PUT；顯示 revision 短碼，不自動 reprocess |
+| ET-34 | Profile | 412 conflict／422 validation／離線 | 保留草稿、顯示安全問題與重新載入；不提供強制覆蓋 |
+| ET-35 | Profile | storage、log 與 service worker 路由 | Profile／草稿／API body 不進 storage 或 log；content script 不可讀取，所有 request 經 service worker |
+| ET-36 | Profile | Job stale 標示與主題切換 | 分數只顯示整數；Score revision 以綠色最新／黃色待重評辨識，Letter stale 另提示；不改 verdict/apply，切換主題不清除 editor 狀態 |
+| ET-37 | 系統 | 群組、Options、排程與手動 reprocess | 依連線、Profile、批次、歷程排序；可開 Options；顯示每日 08:30；只有按下更新才 POST reprocess |
 
 測資不得含真實 JD、Profile、token 或 104 頁面內容。
 
@@ -36,3 +44,4 @@
 - 在使用者自行點開的 104 職缺頁確認內頁擷取，Side Panel「目前職缺」顯示判定／五維分數／快取；104 頁面不出現第二套完整評分 overlay。
 - 在 Side Panel 確認清單、判定、對照、求職信生成與複製、投遞狀態、手動 run、Run 歷史與待看清單。
 - 將人工檢查結果與不含敏感內容的證據記入 `.local-dev/verify/`。
+- 由系統頁進入全頁 Profile editor，核對窄幅入口、完整表單、動態新增定位、鍵盤操作、離頁提醒、錯誤聚焦、ETag 衝突、手動更新過時評分與 light／dark 主題；不得載入實際使用者 Profile。

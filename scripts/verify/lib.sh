@@ -17,6 +17,7 @@ LIVE_CONFIG="${RUNTIME_ROOT}/config-live.yaml"
 MOCK_DB="${RUNTIME_ROOT}/mock.db"
 LIVE_DB="${RUNTIME_ROOT}/live.db"
 ARTIFACT_MANIFEST="${ARTIFACT_ROOT}/manifest.txt"
+VERIFY_PROFILE_JSON="${ARTIFACT_ROOT}/fixtures/profile.synthetic.json"
 
 require_file() {
   local path="$1"

@@ -13,7 +13,7 @@
 在專案根目錄執行：
 
 ```bash
-mise run e2e-mock   # 物化隔離 artifact → 依序跑 V1/V2/V4/V5 共 25 步 → 產生答案卷
+mise run e2e-mock   # 物化隔離 artifact → 依序跑 V1/V2/V4/V5/V7 共 32 步 → 產生答案卷
 ```
 
 - **沙盒**：`.local-dev/verify/`（gitignored 隔離根，0700，不碰日常 Profile/設定/SQLite）。
@@ -28,13 +28,13 @@ mise run e2e-mock   # 物化隔離 artifact → 依序跑 V1/V2/V4/V5 共 25 步
   | SQLite snapshot | `<binary> verify snapshot --db .local-dev/verify/runtime/mock.db` | 4 筆 Job 的終態、五維分數、letter 輪次、狀態事件 |
   | browser evidence | `evidence/extension-browser.json`、`evidence/extension-dashboard.png` | extension 模擬互動的安全摘要與截圖 |
 
-- **跑到哪停**：mock 全 25 步現可跑（✅）。V3 live 需真 Yourator＋已授權 `claude`/`codex` CLI，另跑 `mise run e2e-live`（⏳，§6）。實際 Chrome 安裝與相容性一律人工 gate（§9）。
+- **跑到哪停**：mock 全 32 步現可跑（✅）。V3 live 需真 Yourator＋已授權 `claude`/`codex` CLI，另跑 `mise run e2e-live`（⏳，§6）。實際 Chrome 安裝與相容性一律人工 gate（§9）。
 
 ## 2. 覆蓋度地圖（需求 ←→ 案例）
 
 | 需求 | 成品流程中的驗證 | 正向案例 | 負向案例 | 現況 |
 |---|---|---|---|---|
-| R1 匿名 Profile、PII 防線、僅產校準建議 | V1、V6 | S1–S3 | N-P | ◑ |
+| R1 Profile editor、revision、PII 防線、僅產校準建議 | V1、V6、V7 | S1–S3、S30–S37 | N-P、N-PRF | ◑ |
 | R2 Yourator／Cake／104 進同一 Job 流程 | V2、V5、V6 | S4、S7、S24–S25 | N-SRC | ◑ |
 | R3 Profile 條件篩選與可稽核狀態 | V2、V5 | S8、S24 | N-FLT | ◑ |
 | R4 CLI Runner 評分、五維分流、設定路由 | V2、V3 | S9 | — | ◑ |
@@ -78,17 +78,18 @@ mock 一趟用固定合成測資；下表即「標準答案」，逐值由 `asse
 ### 3.4 Profile 與來源請求測資
 
 - Profile（匿名）：`years_of_experience=8`、`education=master (computer science)`、`expert=[Java]`、`proficient=[Go]`、`directions=[P1:cloud architecture, P2:backend engineering, P3:platform reliability]`。
+- V7 bootstrap 另以不存在的 Profile 啟動；首次儲存使用同一份合成內容。revision 由 canonical 結構計算，evidence 只記 revision 短碼與筆數，不保存 Profile request／response body。
 - 來源請求序：先 `GET /robots.txt` → 3 個方向各一次 `GET /api/v4/jobs`（`term[]`＝`{cloud,platform}`／`{backend,Go}`／`{Kubernetes,reliability}`，page=1）→ 4 個唯一 `GET /jobs/1000..1003`。跨 query 重複項不重抓。
 
-## 4. 正向案例 V（mock，25 步原子案例）
+## 4. 正向案例 V（mock，32 步原子案例）
 
-`mise run e2e-mock` 依序執行下列 25 步，共用同一 artifact、SQLite 與答案卷；任一步失敗即停止並保留隔離目錄。每步一個原子觀察，標準答案為字面值（詳細測資見 §3，機器斷言見 `assert-positive.mjs`）。
+`mise run e2e-mock` 依序執行 V1／V2／V4／V5 的 25 步與 V7 的 7 步，共用同一 artifact，分別使用一般 mock 與 Profile mock 的隔離 SQLite、Profile 與答案卷；任一步失敗即停止並保留隔離目錄。每步一個原子觀察，標準答案為字面值（詳細測資見 §3，機器斷言見 `assert-positive.mjs`）。
 
 | 步 | 動作 | 標準答案（字面預期） | 案例·需求 | 狀態 |
 |---|---|---|---|---|
 | S1 | 物化隔離 artifact | binary_sha256 == manifest；extension、rendered API/run/timer unit 存在 | V1·R8 | ✅ |
 | S2 | 驗證隔離權限 | 驗收 root=0700；Profile／denylist／config=0600 | V1·R1 | ✅ |
-| S3 | 驗證匿名 Profile 與 schema | Profile summary＝§3.4；schema_version=2、WAL、foreign_keys、6 張表 | V1·R1 | ✅ |
+| S3 | 驗證匿名 Profile 與 schema | Profile summary＝§3.4；schema_version=3、WAL、foreign_keys、6 張表；四個 revision 欄位可用 | V1·R1 | ✅ |
 | S4 | 啟動 Yourator fixture | `GET /healthz`→200 由本 harness 綁定；external_id 1000–1003 均合成 | V2·R2 | ✅ |
 | S5 | 抓取後手動 filter/score（letter 零取件） | `run`＝`fetched:4/new:4`；`--stage filter`＝`filtered:1`；`--stage score`＝`scored:3`；letter 未要求不取件、不生成 | V2·R5/R7 | ✅ |
 | S6 | 驗證來源搜尋請求 | request journal＝§3.4（robots→3 query→4 detail），共 8 筆 | V2·R2 | ✅ |
@@ -108,9 +109,22 @@ mock 一趟用固定合成測資；下表即「標準答案」，逐值由 `asse
 | S20 | Side Panel 判定篩選、copy、apply | 四頁籤與 light／dark theme 正常；filters_verified、detail_verified、clipboard==核准合成信、`#1002` apply pending→applied 並寫回 SQLite | V4·R6 | ✅ |
 | S21 | Side Panel 求職信生成入口 | 對 `#1001`（letter_failed）再次產生→受理轉 `letter_requested`；狀態事件永久記錄第 2 次 `letter_requested`，worker 隨後取件 | V4·R6 | ✅ |
 | S22 | Side Panel 手動抓取與 Run history | manual fetch 完成；API `runs` 出現 `trigger=manual-extension`；Run history 呈現 fetch stats 與 verdict 分布；存 screenshot | V4·R7 | ✅ |
-| S23 | extension mock browser L1 | 專案鎖定 Playwright 6 tests 全 pass：Side Panel／Options／service worker 的 mock Chrome API 互動，及 content script 於 104 search／notification／detail fixture 上的標記與 active-tab context（搜尋頁 `.jobfinder-mark` 依 verdict 標記、跳過 hotjob 廣告、title／data-gtm 地區薪資照 live selector 讀取；通知頁無 data-gtm 依位置與格式讀取；內頁由 JobPosting JSON-LD 擷取且不注入完整評分 overlay） | V4·R6／R9 | ✅ |
+| S23 | extension mock browser L1 | 專案鎖定 Playwright 7 tests 全 pass：Side Panel／Profile editor／Options／service worker 的 mock Chrome API 互動，及 content script 於 104 search／notification／detail fixture 上的標記與 active-tab context（搜尋頁 `.jobfinder-mark` 依 verdict 標記、跳過 hotjob 廣告、title／data-gtm 地區薪資照 live selector 讀取；通知頁無 data-gtm 依位置與格式讀取；內頁由 JobPosting JSON-LD 擷取且不注入完整評分 overlay） | V4·R6／R9 | ✅ |
 | S24 | 104 清單就地判定且列表路徑零 Agent | v5intern→`unfit/filtered_out`、v5senior→`discovered/pending_detail`；列表路徑 Agent 呼叫數不變 | V5·R2/R3/R9 | ✅ |
 | S25 | 104 既有職缺回判定、內頁 capture 非同步 | 重複 list 對既有職缺 `created=false` 回現行判定；v5senior 進待看 queue；`capture/job`→`queued/pending_score`、score=null | V5·R9 | ✅ |
+
+### V7 — Profile editor、revision 與重新處理
+
+| 步 | 動作 | 標準答案（字面預期） | 案例·需求 | 狀態 |
+|---|---|---|---|---|
+| S30 | 以不存在的 Profile 啟動 serve | health、Profile、Job／Run 讀取可用；Profile status=`missing`；worker 與處理型 route 暫停／409 | V7·R1 | ✅ |
+| S31 | 從 extension 建立合法合成 Profile | migration 升至含 revision 欄位的 schema；產生 `0600` YAML；provider 不重啟即 ready；回 ETag 與 revision，不自動重處理既有 Job | V7·R1/R6 | ✅ |
+| S32 | 建立各處理／letter／apply 狀態後修改 Profile，再手動更新 | PUT 後既有 Job 保留原 revision 並 stale；POST reprocess 後 eligible Job 切新 revision並重新篩選／排分；letter／apply 歷史不變 | V7·R1/R7 | ✅ |
+| S33 | 重送語意相同 Profile | revision 不變、`semantic_changed=false`；狀態事件、Score 與 Agent call 數不增加 | V7·R1/R7 | ✅ |
+| S34 | 外部修改 YAML 後以舊 ETag 儲存 | 回 412；磁碟與 active snapshot 不被舊資料覆蓋；editor 保留草稿 | V7·R1/R6 | ✅ |
+| S35 | 送入 unknown field 與合成 PII | 回 422 safe issues；檔案與 snapshot 不變；log／evidence 不含 payload 或 denylist 值 | V7·R1/R8 | ✅ |
+| S36 | score worker 執行中更新 Profile 並手動 reprocess | 舊 call 保留實際 revision；activation 切換 Job revision 後，舊結果 CAS 失敗，不成為現行 Score | V7·R1/R7 | ✅ |
+| S37 | Chrome 人工 Profile gate | 系統頁四群組、Options 入口、批次時間、手動 reprocess、整數評分與 revision 燈號、全頁表單新增定位、衝突、離頁提醒及 light／dark 可用 | V7·R6 | ⏳ |
 
 ## 5. 負向案例 N（骨架，待正向穩定後累加）
 
@@ -122,6 +136,7 @@ mock 一趟用固定合成測資；下表即「標準答案」，逐值由 `asse
 | N-FLT | denylist／排除關鍵字邊界 | 命中 denylist 的 Profile 輸入被拒且不落庫；排除命中一律 `filtered_out` | R3 | ⏳ |
 | N-LTR | 未要求即生成、輪數上限 | 未 `letter request` 前驅動 letter 階段→零取件、零 Agent；超出 review 上限→`failed` 終態 | R5 | ⏳ |
 | N-P | PII 防線 | 求職信含實體姓名/聯絡方式而非 placeholder→`FAIL`；evidence 誤含禁記欄位→`FAIL` | R1/R8 | ⏳ |
+| N-PRF | Profile 前置條件與條件式儲存 | missing／invalid 的處理型 route→409；缺 If-Match→428；衝突→412；非法／PII→422；均不得改檔或 snapshot | R1/R6/R8 | ⏳ |
 
 ## 6. 現行 live 案例：V3（真來源與已授權 CLI Agent）
 
@@ -159,7 +174,7 @@ mise run e2e-live
 | 項目 | 規則 |
 |---|---|
 | evidence | 每案例在同一份答案卷記錄 artifact revision/checksum、觀察值、狀態轉換、Run 摘要及 browser trace／截圖索引。 |
-| 禁止記錄 | Profile、職缺全文、求職信、token、Agent 原始輸入輸出、日常 SQLite 資料。 |
+| 禁止記錄 | Profile request／response body與 YAML、職缺全文、求職信、token、Agent 原始輸入輸出、日常 SQLite 資料。 |
 | mock fixture | 合成 Profile／Job／Agent 回覆；不將真實職缺或個資加入 repo、fixture 或 evidence。 |
 | live 資料 | 真職缺只留 gitignored live SQLite；evidence 僅存筆數、hash、狀態與格式摘要。 |
 | `PASS` | 案例所有標準答案成立且答案卷可重建該判定。 |
@@ -173,3 +188,4 @@ mise run e2e-live
 3. 完成 **V5** 的真 104 頁人工 Chrome gate；真頁面只驗證使用者已載入的內容，確認清單就地標記與既有職缺判定一致。
 4. 完成 **V6** 的 Cake adapter 與校準 diff，再將 V1–V6 彙整為完整日常求職迴圈。
 5. 依 §5 骨架累加負向案例 N，沿用相同需求對照與 evidence 格式。
+6. 將同一 extension artifact 載入實際 Chrome，完成 **V7 S37** Profile editor 人工 gate。

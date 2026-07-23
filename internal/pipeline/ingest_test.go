@@ -145,6 +145,37 @@ func TestScoreBudgetStopsAtDailyLimit(t *testing.T) {
 	_ = db
 }
 
+func TestWorkerSkipsStaleRevisionBeforeFilteringOrCallingScorer(t *testing.T) {
+	p, db := openPipeline(t, Filter{})
+	runner := &letterRunner{name: "claude", replies: []string{`{"hard_skill":90,"domain":90,"seniority":90,"condition":90,"direction":90,"reason":"fit"}`}}
+	p.Scorer = agents.Scorer{Primary: runner}
+	ctx := context.Background()
+	description := "Go platform work"
+	for _, input := range []store.JobInput{
+		{Source: "104", ExternalID: "stale-filter", URL: "https://www.104.com.tw/job/stale-filter", Title: "Engineer", CompanyName: "Example", CompanyInfo: "software", Description: &description, Location: "Taipei", RemoteType: "hybrid", ProfileRevision: "sha256:old"},
+		{Source: "104", ExternalID: "stale-score", URL: "https://www.104.com.tw/job/stale-score", Title: "Engineer", CompanyName: "Example", CompanyInfo: "software", Description: &description, Location: "Taipei", RemoteType: "hybrid", ProfileRevision: "sha256:old"},
+	} {
+		created, err := db.UpsertJob(ctx, input, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if input.ExternalID == "stale-score" {
+			if err := db.TransitionProcess(ctx, created.Job.ID, "queued"); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+
+	filtered, err := p.FilterJobsWithStats(ctx, 0)
+	if err != nil || filtered.Processed != 0 {
+		t.Fatalf("stale filter processed=%d err=%v", filtered.Processed, err)
+	}
+	scored, err := p.ScoreWithStats(ctx, 0)
+	if err != nil || scored.Processed != 0 || runner.calls != 0 {
+		t.Fatalf("stale score processed=%d calls=%d err=%v", scored.Processed, runner.calls, err)
+	}
+}
+
 func TestWorkerConsumesEveryStage(t *testing.T) {
 	p, db := openPipeline(t, Filter{Locations: []string{"Taipei"}})
 	p.Scorer = agents.Scorer{Primary: &letterRunner{name: "claude", replies: []string{`{"hard_skill":90,"domain":90,"seniority":90,"condition":90,"direction":90,"reason":"fit"}`}}}

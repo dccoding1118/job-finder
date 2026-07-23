@@ -18,7 +18,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const schemaVersion = 2
+const schemaVersion = 3
 
 //go:embed schema.sql
 var schemaSQL string
@@ -29,6 +29,10 @@ var upgrades = map[int]string{
 	1: `ALTER TABLE jobs ADD COLUMN discovered_by_run_id INTEGER REFERENCES runs(id);
 	CREATE INDEX IF NOT EXISTS jobs_discovered_by_run_idx ON jobs(discovered_by_run_id);
 	CREATE INDEX IF NOT EXISTS agent_calls_role_created_idx ON agent_calls(role, created_at);`,
+	2: `ALTER TABLE jobs ADD COLUMN profile_revision TEXT;
+	ALTER TABLE scores ADD COLUMN profile_revision TEXT;
+	ALTER TABLE letters ADD COLUMN profile_revision TEXT;
+	ALTER TABLE agent_calls ADD COLUMN profile_revision TEXT;`,
 }
 
 var piiPattern = regexp.MustCompile(`(?i)[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}|(?:\+886|0)9\d{8}`)
@@ -40,37 +44,39 @@ type Store struct {
 }
 
 type JobInput struct {
-	Source      string
-	ExternalID  string
-	URL         string
-	Title       string
-	CompanyName string
-	CompanyInfo string
-	Description *string
-	SalaryMin   *int
-	SalaryMax   *int
-	Location    string
-	RemoteType  string
+	Source          string
+	ExternalID      string
+	URL             string
+	Title           string
+	CompanyName     string
+	CompanyInfo     string
+	Description     *string
+	SalaryMin       *int
+	SalaryMax       *int
+	Location        string
+	RemoteType      string
+	ProfileRevision string
 }
 
 type Job struct {
-	ID           int64
-	Source       string
-	ExternalID   string
-	URL          string
-	Title        string
-	CompanyName  string
-	CompanyInfo  string
-	Description  *string
-	SalaryMin    *int
-	SalaryMax    *int
-	Location     string
-	RemoteType   string
-	ProcessState string
-	ApplyState   *string
-	ContentHash  *string
-	FilterHits   []string
-	ScoreTotal   *float64
+	ID              int64
+	Source          string
+	ExternalID      string
+	URL             string
+	Title           string
+	CompanyName     string
+	CompanyInfo     string
+	Description     *string
+	SalaryMin       *int
+	SalaryMax       *int
+	Location        string
+	RemoteType      string
+	ProcessState    string
+	ApplyState      *string
+	ContentHash     *string
+	FilterHits      []string
+	ScoreTotal      *float64
+	ProfileRevision *string
 }
 
 type UpsertResult struct {
@@ -84,6 +90,7 @@ type ScoreInput struct {
 	HardSkill, Domain, Seniority, Condition, Direction int
 	Total                                              float64
 	Reason, Runner                                     string
+	ProfileRevision                                    string
 }
 
 type LetterInput struct {
@@ -91,6 +98,7 @@ type LetterInput struct {
 	Content, Status, ReviewLog string
 	Rounds                     int
 	RunnerDraft, RunnerReview  string
+	ProfileRevision            string
 }
 
 type AgentCallInput struct {
@@ -98,6 +106,7 @@ type AgentCallInput struct {
 	Role, Runner, Input, Output string
 	OK                          bool
 	DurationMS                  int64
+	ProfileRevision             string
 }
 
 // RunStats records fetch facts only: filter, score, and letter are consumed by
@@ -233,9 +242,9 @@ func (s *Store) UpsertJob(ctx context.Context, input JobInput, runID *int64) (Up
 			description, contentHashValue = *input.Description, hash
 		}
 		result, execErr := tx.ExecContext(ctx, `INSERT INTO jobs
-			(source, external_id, url, title, company_name, company_info, description, salary_min, salary_max, location, remote_type, content_hash, process_state, discovered_by_run_id, first_seen_at, last_seen_at, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			input.Source, input.ExternalID, input.URL, input.Title, input.CompanyName, input.CompanyInfo, description, input.SalaryMin, input.SalaryMax, input.Location, input.RemoteType, contentHashValue, state, runID, now, now, now)
+			(source, external_id, url, title, company_name, company_info, description, salary_min, salary_max, location, remote_type, content_hash, process_state, profile_revision, discovered_by_run_id, first_seen_at, last_seen_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			input.Source, input.ExternalID, input.URL, input.Title, input.CompanyName, input.CompanyInfo, description, input.SalaryMin, input.SalaryMax, input.Location, input.RemoteType, contentHashValue, state, nullableString(input.ProfileRevision), runID, now, now, now)
 		if execErr != nil {
 			return UpsertResult{}, fmt.Errorf("insert job: %w", execErr)
 		}
@@ -249,7 +258,7 @@ func (s *Store) UpsertJob(ctx context.Context, input JobInput, runID *int64) (Up
 		if err := tx.Commit(); err != nil {
 			return UpsertResult{}, fmt.Errorf("commit inserted job: %w", err)
 		}
-		job := Job{ID: id, Source: input.Source, ExternalID: input.ExternalID, URL: input.URL, Title: input.Title, CompanyName: input.CompanyName, CompanyInfo: input.CompanyInfo, Description: input.Description, SalaryMin: input.SalaryMin, SalaryMax: input.SalaryMax, Location: input.Location, RemoteType: input.RemoteType, ProcessState: state, ContentHash: stringPtr(hash, !partial)}
+		job := Job{ID: id, Source: input.Source, ExternalID: input.ExternalID, URL: input.URL, Title: input.Title, CompanyName: input.CompanyName, CompanyInfo: input.CompanyInfo, Description: input.Description, SalaryMin: input.SalaryMin, SalaryMax: input.SalaryMax, Location: input.Location, RemoteType: input.RemoteType, ProcessState: state, ContentHash: stringPtr(hash, !partial), ProfileRevision: stringPtr(input.ProfileRevision, input.ProfileRevision != "")}
 		return UpsertResult{Job: job, Created: true}, nil
 	}
 
@@ -278,7 +287,7 @@ func (s *Store) UpsertJob(ctx context.Context, input JobInput, runID *int64) (Up
 	if existing.ContentHash == nil || canReset(existing.ProcessState) {
 		newState = "new"
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE jobs SET url=?, title=?, company_name=?, company_info=?, description=?, salary_min=?, salary_max=?, location=?, remote_type=?, content_hash=?, process_state=?, updated_at=?, last_seen_at=? WHERE id=?`, input.URL, input.Title, input.CompanyName, input.CompanyInfo, *input.Description, input.SalaryMin, input.SalaryMax, input.Location, input.RemoteType, hash, newState, now, now, existing.ID); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE jobs SET url=?, title=?, company_name=?, company_info=?, description=?, salary_min=?, salary_max=?, location=?, remote_type=?, content_hash=?, process_state=?, profile_revision=?, updated_at=?, last_seen_at=? WHERE id=?`, input.URL, input.Title, input.CompanyName, input.CompanyInfo, *input.Description, input.SalaryMin, input.SalaryMax, input.Location, input.RemoteType, hash, newState, nullableString(input.ProfileRevision), now, now, existing.ID); err != nil {
 		return UpsertResult{}, fmt.Errorf("update changed job: %w", err)
 	}
 	if newState != existing.ProcessState {
@@ -293,6 +302,7 @@ func (s *Store) UpsertJob(ctx context.Context, input JobInput, runID *int64) (Up
 	existing.Description, existing.SalaryMin, existing.SalaryMax = input.Description, input.SalaryMin, input.SalaryMax
 	existing.Location, existing.RemoteType = input.Location, input.RemoteType
 	existing.ContentHash, existing.ProcessState = stringPtr(hash, true), newState
+	existing.ProfileRevision = stringPtr(input.ProfileRevision, input.ProfileRevision != "")
 	return UpsertResult{Job: existing, Changed: true}, nil
 }
 
@@ -381,7 +391,10 @@ func (s *Store) SaveScore(ctx context.Context, input ScoreInput) error {
 	if err := validateScore(input); err != nil {
 		return err
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO scores (job_id, dim_hard_skill, dim_domain, dim_seniority, dim_condition, dim_direction, total, reason, runner, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, input.JobID, input.HardSkill, input.Domain, input.Seniority, input.Condition, input.Direction, input.Total, input.Reason, input.Runner, s.timestamp())
+	if input.ProfileRevision == "" {
+		input.ProfileRevision = s.jobRevision(ctx, input.JobID)
+	}
+	_, err := s.db.ExecContext(ctx, `INSERT INTO scores (job_id, dim_hard_skill, dim_domain, dim_seniority, dim_condition, dim_direction, total, reason, runner, profile_revision, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, input.JobID, input.HardSkill, input.Domain, input.Seniority, input.Condition, input.Direction, input.Total, input.Reason, input.Runner, nullableString(input.ProfileRevision), s.timestamp())
 	if err != nil {
 		return fmt.Errorf("save score: %w", err)
 	}
@@ -392,7 +405,10 @@ func (s *Store) SaveLetter(ctx context.Context, input LetterInput) error {
 	if input.JobID <= 0 || (input.Status != "approved" && input.Status != "failed") || input.Rounds < 1 || input.Content == "" || input.RunnerDraft == "" || (input.Status == "approved" && input.RunnerReview == "") {
 		return errors.New("store: invalid letter")
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO letters (job_id, content, status, rounds, review_log, runner_draft, runner_review, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, input.JobID, input.Content, input.Status, input.Rounds, input.ReviewLog, input.RunnerDraft, input.RunnerReview, s.timestamp())
+	if input.ProfileRevision == "" {
+		input.ProfileRevision = s.jobRevision(ctx, input.JobID)
+	}
+	_, err := s.db.ExecContext(ctx, `INSERT INTO letters (job_id, content, status, rounds, review_log, runner_draft, runner_review, profile_revision, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, input.JobID, input.Content, input.Status, input.Rounds, input.ReviewLog, input.RunnerDraft, input.RunnerReview, nullableString(input.ProfileRevision), s.timestamp())
 	if err != nil {
 		return fmt.Errorf("save letter: %w", err)
 	}
@@ -410,11 +426,22 @@ func (s *Store) SaveAgentCall(ctx context.Context, input AgentCallInput) error {
 	if input.OK {
 		ok = 1
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO agent_calls (job_id, role, runner, input, output, ok, duration_ms, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, input.JobID, input.Role, input.Runner, input.Input, input.Output, ok, input.DurationMS, s.timestamp())
+	if input.ProfileRevision == "" && input.JobID != nil {
+		input.ProfileRevision = s.jobRevision(ctx, *input.JobID)
+	}
+	_, err := s.db.ExecContext(ctx, `INSERT INTO agent_calls (job_id, role, runner, input, output, ok, duration_ms, profile_revision, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, input.JobID, input.Role, input.Runner, input.Input, input.Output, ok, input.DurationMS, nullableString(input.ProfileRevision), s.timestamp())
 	if err != nil {
 		return fmt.Errorf("save agent call: %w", err)
 	}
 	return nil
+}
+
+func (s *Store) jobRevision(ctx context.Context, jobID int64) string {
+	var revision sql.NullString
+	if err := s.db.QueryRowContext(ctx, "SELECT profile_revision FROM jobs WHERE id=?", jobID).Scan(&revision); err == nil && revision.Valid {
+		return revision.String
+	}
+	return ""
 }
 
 func (s *Store) StartRun(ctx context.Context, trigger string) (int64, error) {
@@ -532,7 +559,7 @@ func insertEvent(ctx context.Context, tx *sql.Tx, jobID int64, axis, from, to, n
 }
 
 // jobColumns is the single job projection every reader scans with scanJobRow.
-const jobColumns = "id, source, external_id, url, title, company_name, company_info, description, salary_min, salary_max, location, remote_type, process_state, apply_state, content_hash, filter_hits"
+const jobColumns = "id, source, external_id, url, title, company_name, company_info, description, salary_min, salary_max, location, remote_type, process_state, apply_state, content_hash, filter_hits, profile_revision"
 
 func findJobTx(ctx context.Context, tx *sql.Tx, source, externalID string) (Job, bool, error) {
 	row := tx.QueryRowContext(ctx, "SELECT "+jobColumns+" FROM jobs WHERE source=? AND external_id=?", source, externalID)
@@ -569,7 +596,7 @@ func scanJob(row rowScanner) (Job, bool, error) {
 func scanJobRow(row rowScanner) (Job, error) {
 	var job Job
 	var filterHits sql.NullString
-	if err := row.Scan(&job.ID, &job.Source, &job.ExternalID, &job.URL, &job.Title, &job.CompanyName, &job.CompanyInfo, &job.Description, &job.SalaryMin, &job.SalaryMax, &job.Location, &job.RemoteType, &job.ProcessState, &job.ApplyState, &job.ContentHash, &filterHits); err != nil {
+	if err := row.Scan(&job.ID, &job.Source, &job.ExternalID, &job.URL, &job.Title, &job.CompanyName, &job.CompanyInfo, &job.Description, &job.SalaryMin, &job.SalaryMax, &job.Location, &job.RemoteType, &job.ProcessState, &job.ApplyState, &job.ContentHash, &filterHits, &job.ProfileRevision); err != nil {
 		return Job{}, err
 	}
 	if filterHits.Valid && filterHits.String != "" {

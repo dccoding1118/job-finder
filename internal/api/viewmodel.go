@@ -47,12 +47,21 @@ var statesByVerdict = func() map[string][]string {
 
 func verdictOf(processState string) string { return verdictByState[processState] }
 
-func jobListView(job store.Job) map[string]any {
+func jobListView(job store.Job, revisions ...string) map[string]any {
+	current := ""
+	if len(revisions) > 0 {
+		current = revisions[0]
+	}
 	value := map[string]any{
 		"id": job.ID, "source": job.Source, "url": job.URL, "title": job.Title, "company_name": job.CompanyName,
 		"salary_min": job.SalaryMin, "salary_max": job.SalaryMax, "location": job.Location,
 		"score_total": job.ScoreTotal, "process_state": job.ProcessState, "apply_state": job.ApplyState,
 		"verdict": verdictOf(job.ProcessState), "filter_hits": nullableHits(job.FilterHits),
+		"current_profile_revision": nullableRevision(current), "evaluation_profile_revision": job.ProfileRevision,
+	}
+	if job.ScoreTotal != nil {
+		value["score_profile_revision"] = job.ProfileRevision
+		value["score_stale"] = job.ProfileRevision == nil || current == "" || *job.ProfileRevision != current
 	}
 	if state, ok := letterStateByState[job.ProcessState]; ok {
 		value["letter_state"] = state
@@ -60,13 +69,29 @@ func jobListView(job store.Job) map[string]any {
 	return value
 }
 
-func jobView(detail store.JobDetail) map[string]any {
-	value := jobListView(detail.Job)
+func jobView(detail store.JobDetail, revisions ...string) map[string]any {
+	value := jobListView(detail.Job, revisions...)
+	current := ""
+	if len(revisions) > 0 {
+		current = revisions[0]
+	}
 	value["description"] = detail.Job.Description
 	value["remote_type"] = detail.Job.RemoteType
 	value["score"] = detail.Score
 	value["letter"] = detail.Letter
 	value["status_events"] = detail.Events
+	value["score_profile_revision"] = nil
+	value["letter_profile_revision"] = nil
+	value["score_stale"] = false
+	value["letter_stale"] = false
+	if detail.Score != nil {
+		value["score_profile_revision"] = detail.Score.ProfileRevision
+		value["score_stale"] = detail.Score.ProfileRevision == nil || current == "" || *detail.Score.ProfileRevision != current
+	}
+	if detail.Letter != nil {
+		value["letter_profile_revision"] = detail.Letter.ProfileRevision
+		value["letter_stale"] = detail.Letter.ProfileRevision == nil || current == "" || *detail.Letter.ProfileRevision != current
+	}
 	if detail.Score != nil && detail.Job.ScoreTotal == nil {
 		value["score_total"] = detail.Score.Total
 	}

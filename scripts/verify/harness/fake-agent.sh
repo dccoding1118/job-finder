@@ -35,6 +35,12 @@ esac
 
 case "${prompt}" in
   *"評分器"*)
+	if [[ -n "${JOBFINDER_VERIFY_AGENT_SIGNAL:-}" ]]; then
+	  : >"${JOBFINDER_VERIFY_AGENT_SIGNAL}"
+	fi
+	if [[ -n "${JOBFINDER_VERIFY_AGENT_DELAY:-}" ]]; then
+	  sleep "${JOBFINDER_VERIFY_AGENT_DELAY}"
+	fi
     if [[ "${prompt}" == *"Verification low score"* ]]; then
       payload='{"hard_skill":60,"domain":60,"seniority":60,"condition":60,"direction":60,"reason":"合成低分情境"}'
     elif [[ "${prompt}" == *"Verification failure"* ]]; then

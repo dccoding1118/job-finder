@@ -1,0 +1,38 @@
+{
+  "summary": "Anonymous platform and backend engineering profile",
+  "years_of_experience": 8,
+  "education": { "degree": "master", "field": "computer science" },
+  "experiences": [
+    {
+      "role": "backend engineer",
+      "org_type": "technology provider",
+      "years": 4,
+      "summary": "Delivered reliable cloud services",
+      "achievements": ["Improved delivery reliability"],
+      "skills": ["Go", "Java"]
+    }
+  ],
+  "skills": {
+    "expert": ["Java"],
+    "proficient": ["Go"],
+    "familiar": ["Kubernetes"]
+  },
+  "certifications": [],
+  "preferences": {
+    "salary_min": 0,
+    "salary_target": 0,
+    "locations": ["Taipei"],
+    "remote": "preferred",
+    "directions": [
+      { "key": "P1", "title": "cloud architecture", "keywords": ["cloud", "platform"] }
+    ],
+    "industry_avoid": [],
+    "screening": {
+      "exclude_title_keywords": ["intern"],
+      "exclude_description_keywords": [],
+      "require_any_keywords": ["cloud", "Go", "backend", "platform"],
+      "exclude_companies": []
+    }
+  },
+  "honesty_bounds": ["Platform configuration experience is not operations ownership"]
+}

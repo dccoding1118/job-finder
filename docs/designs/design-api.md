@@ -1,10 +1,10 @@
 # 模組設計 — api（localhost JSON API）
 
-對應需求：R6、R7、R9。`jobfinder serve` 啟動只供 Chrome extension 使用的 localhost JSON API；Side Panel 負責全部日常使用者介面。
+對應需求：R1、R6、R7、R9。`jobfinder serve` 啟動只供 Chrome extension 使用的 localhost JSON API；Side Panel 與 extension Profile editor 負責全部日常使用者介面。
 
 ## 1. 職責與邊界
 
-- 提供 Job、Run、待看清單的讀取，求職信生成要求、投遞狀態的受控寫入，以及非同步手動抓取。
+- 提供 Profile 條件式讀寫、Job、Run、待看清單的讀取，求職信生成要求、投遞狀態的受控寫入，以及非同步手動抓取。
 - 將 104 list／job capture payload 交給 crawler 解析器與 pipeline ingest 入口，並回傳可直接呈現的判定。
 - server process 內另承載 pipeline 的常駐 worker（見 [design-pipeline](design-pipeline.md) §2.2）；worker 不經 API 路由，兩者只共用 process 生命週期與 store。
 - 導出 verdict（§3.1）——所有前端呈現判定的唯一來源。
@@ -18,7 +18,7 @@
 | `api.addr` | 必須是 loopback 位址，預設 `127.0.0.1:8686`；拒絕 wildcard 與非 loopback 位址。 |
 | `api.token` | owner-only `config.yaml` 的非空隨機值，作為 extension 專用、可撤換的 credential；所有 endpoint 必須以 `Authorization: Bearer <token>` 驗證。 |
 | `api.extension_origin` | 已安裝插件的精確 `chrome-extension://<id>` origin。request 帶 `Origin` 時必須完全相符；Chromium MV3 privileged fetch 未帶 `Origin` 時由有效 token 驗證。 |
-| CORS | preflight 與帶 Origin 的 request 僅對精確 extension origin 回 `Access-Control-Allow-Origin`、`Authorization` 與必要方法；錯誤 Origin 即使 token 正確仍拒絕。無 Origin request 不回 CORS header。 |
+| CORS | preflight 與帶 Origin 的 request 僅對精確 extension origin 允許必要方法（含 `PUT`）與 `Authorization`、`If-Match`；錯誤 Origin 即使 token 正確仍拒絕。無 Origin request 不回 CORS header。 |
 
 extension 的 Options 儲存 API endpoint 與 token，service worker 代為發送所有 API request，避免將 API token 交給 104 頁面的 content script。遠端 VM 使用時，使用者先建立 SSH local forward，再將 endpoint 設為本機轉送位址。
 
@@ -44,6 +44,8 @@ extension 的 Options 儲存 API endpoint 與 token，service worker 代為發�
 推薦職缺另附 `letter_state`，供前端決定呈現生成入口、處理中或求職信：`none`（`shortlisted`，未要求）／`requested`（`letter_requested`，處理中）／`ready`（`letter_ready`）；`letter_failed` 的 verdict 仍為 `recommended`，`letter_state` 為 `failed`。
 - Job 的原始 JD、信件與評分理由仍只在本機 API 回應，不寫入 extension storage 或 log。
 
+Job viewmodel 另回 `current_profile_revision`、`evaluation_profile_revision`、`score_profile_revision`、`letter_profile_revision`，以及由各產出 revision 是否為 NULL／不同於 active revision 導出的 `score_stale`、`letter_stale`。stale 不是 DB 狀態，不改變 verdict 或 apply state。
+
 ## 4. API 路由
 
 | 方法／路徑 | 請求 | 成功結果 | 錯誤 |
@@ -57,6 +59,13 @@ extension 的 Options 儲存 API endpoint 與 token，service worker 代為發�
 | `GET /api/v1/runs` | 選填 `limit`、`cursor` | Run page，依開始時間新到舊；每輪含抓取事實與該輪職缺的現行判定分布 | 非法分頁 400 |
 | `POST /api/v1/capture/list` | 104 列表 items | 每筆的 job ID、`verdict`、總分（無則 null）、`filter_hits`（無則 null）與是否本次新建 | payload 不合法 400；ingest 失敗 500 |
 | `POST /api/v1/capture/job` | 104 內頁素材 | 該筆的 job ID、`verdict`、現行五維分數與 reason（無則 null）、`filter_hits`（無則 null）、是否為快取結果 | payload 不合法 400；ingest 失敗 500 |
+| `GET /api/v1/profile` | 無 | `status`、結構化 `profile`、revision、摘要、issues、重新處理預估；header 帶 ETag | 認證或檔案 I/O 失敗 |
+| `PUT /api/v1/profile` | `If-Match`＋完整 Profile JSON | 新 ETag、revision、`semantic_changed` | 缺條件 428；衝突 412；驗證 422；儲存失敗 500 |
+| `POST /api/v1/profile/reprocess` | 無 | active revision 與重新篩選／排隊／受保護統計 | Profile 未 ready 409；重新處理失敗 500 |
+
+`GET /api/v1/profile` 的 `status` 為 `missing`／`invalid`／`ready`；只有可安全解析時才回完整結構化 Profile。正常授權 GET 是唯一可回 Profile 內容的 response；錯誤、observer、log 與 evidence 不得包含 Profile、薪資、經歷、denylist 命中值或 YAML。
+
+`PUT` 必須先通過 ETag、strict schema 與 PII 驗證，再原子寫入並切換 active snapshot；不得修改既有 Job revision 或呼叫 activation。語意相同時回 `semantic_changed=false`。`POST /api/v1/profile/reprocess` 取得當下 ready snapshot，經 pipeline 專用入口將可更新的 stale Job 切至該 revision；求職信狀態與投遞歷史受保護。Profile 未 ready 時，手動 run、reprocess 與 capture 等處理型 route 回 `409 profile_not_ready`；Profile API 與既有 Job／Run 讀取仍可用。
 
 `POST /api/v1/jobs/{id}/letter` 是使用者表達投遞意願的唯一 API 入口（PRD R5.0），對 `shortlisted` 與 `letter_failed` 皆適用——因此它同時取代了「重試求職信」這個獨立動作。handler 只呼叫 pipeline 的 `RequestLetter`，立即回應且不等待 Agent 完成；對已是 `letter_requested` 的 Job 重複呼叫為冪等（回 `requested`，不重複啟動工作）。
 

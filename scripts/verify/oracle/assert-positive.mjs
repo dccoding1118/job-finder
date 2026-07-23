@@ -10,7 +10,7 @@ const readJSON = () => JSON.parse(fs.readFileSync(file, "utf8"));
 
 if (mode === "schema") {
   const data = readJSON();
-  assert.equal(data.schema_version, 2);
+  assert.equal(data.schema_version, 3);
   assert.equal(data.journal_mode.toLowerCase(), "wal");
   assert.equal(data.foreign_keys, true);
   assert.deepEqual(data.tables, ["agent_calls", "jobs", "letters", "runs", "scores", "status_events"]);
@@ -18,9 +18,53 @@ if (mode === "schema") {
   process.exit(0);
 }
 
+if (mode === "schema-migrated") {
+  const data = readJSON();
+  assert.equal(data.schema_version, 3);
+  assert.equal(data.journal_mode.toLowerCase(), "wal");
+  assert.equal(data.foreign_keys, true);
+  assert.deepEqual(data.tables, ["agent_calls", "jobs", "letters", "runs", "scores", "status_events"]);
+  assert.ok(data.jobs.length > 0);
+  process.exit(0);
+}
+
 if (mode === "agent-total") {
   const data = readJSON();
   process.stdout.write(String((data.agent_calls || []).reduce((sum, call) => sum + call.count, 0)));
+  process.exit(0);
+}
+
+if (mode === "profile-response") {
+  const data = readJSON();
+  assert.equal(data.status, "ready");
+  assert.match(data.profile_revision, /^sha256:[a-f0-9]{64}$/);
+  assert.equal(data.semantic_changed, phase !== "same");
+  assert.equal(data.activation, undefined);
+  process.exit(0);
+}
+
+if (mode === "profile-reprocess-response") {
+  const data = readJSON();
+  assert.equal(data.status, "queued");
+  assert.match(data.profile_revision, /^sha256:[a-f0-9]{64}$/);
+  const activation = data.activation || {};
+  for (const key of ["partial_screened", "requeued", "protected", "unchanged"]) assert.ok(Number.isInteger(activation[key]) && activation[key] >= 0);
+  if (phase === "change") {
+    assert.ok(activation.partial_screened > 0);
+    assert.ok(activation.requeued > 0);
+    assert.ok(activation.protected > 0);
+  }
+  process.exit(0);
+}
+
+if (mode === "profile-race") {
+  const data = readJSON();
+  assert.equal(data.schema_version, 3);
+  const revisions = new Set(data.agent_calls.map(({ profile_revision }) => profile_revision).filter(Boolean));
+  assert.ok(revisions.size >= 2, "agent audit did not retain multiple Profile revisions");
+  const currentScores = data.jobs.filter((job) => job.score && job.profile_revision === job.score.profile_revision);
+  assert.ok(currentScores.length > 0, "no current Score matches its Job Profile revision");
+  for (const job of currentScores) assert.match(job.profile_revision, /^sha256:[a-f0-9]{64}$/);
   process.exit(0);
 }
 
@@ -89,6 +133,11 @@ const FIXTURES = {
   1003: { title: "Verification low score cloud engineer", company: "Example Operations", description: "Maintain cloud operations services", salary: [90000, 100000], remote: "onsite" },
 };
 
+function assertAgentCalls(actual, expected) {
+  for (const call of actual) assert.match(call.profile_revision, /^sha256:[a-f0-9]{64}$/);
+  assert.deepEqual(actual.map(({ profile_revision: _revision, ...call }) => call), expected);
+}
+
 // letterConsumed is true once the user has requested the two letters and the
 // letter stage has been driven; base is the pre-request state.
 function processStateOf(id, letterConsumed) {
@@ -110,7 +159,7 @@ function transitionsOf(id, letterConsumed) {
 if (mode === "snapshot") {
   const data = readJSON();
   const letterConsumed = phase === "lettered" || phase === "repeat";
-  assert.equal(data.schema_version, 2);
+  assert.equal(data.schema_version, 3);
   assert.equal(data.journal_mode.toLowerCase(), "wal");
   assert.equal(data.foreign_keys, true);
   assert.deepEqual(data.tables, ["agent_calls", "jobs", "letters", "runs", "scores", "status_events"]);
@@ -131,6 +180,7 @@ if (mode === "snapshot") {
     assert.equal(job.location, "Taipei");
     assert.equal(job.remote_type, expected.remote);
     assert.equal(job.process_state, processStateOf(id, letterConsumed));
+	assert.match(job.profile_revision, /^sha256:[a-f0-9]{64}$/);
     const content = [expected.title, expected.description, ...expected.salary.map(String), "Taipei", expected.remote].join("\n");
     assert.equal(job.content_hash, sha256(content));
     assert.deepEqual(job.events.map(({ axis, from_state, to_state }) => `${axis}:${from_state}->${to_state}`), transitionsOf(id, letterConsumed));
@@ -143,13 +193,16 @@ if (mode === "snapshot") {
   assert.equal(jobs[1003].score.total, 60);
   assert.deepEqual([jobs[1003].score.hard_skill, jobs[1003].score.domain, jobs[1003].score.seniority, jobs[1003].score.condition, jobs[1003].score.direction], [60, 60, 60, 60, 60]);
   assert.equal(jobs[1003].score.runner, "claude");
+	assert.equal(jobs[1003].score.profile_revision, jobs[1003].profile_revision);
   assert.equal(jobs[1003].score.reason_sha256, sha256("合成低分情境"));
   assert.equal(jobs[1003].letter, null);
   assert.equal(jobs[1001].score.total, 80);
+	assert.equal(jobs[1001].score.profile_revision, jobs[1001].profile_revision);
   assert.equal(jobs[1001].score.reason_sha256, sha256("合成重試情境"));
   assert.equal(jobs[1002].score.total, 90);
   assert.deepEqual([jobs[1002].score.hard_skill, jobs[1002].score.domain, jobs[1002].score.seniority, jobs[1002].score.condition, jobs[1002].score.direction], [90, 90, 90, 90, 90]);
   assert.equal(jobs[1002].score.reason_sha256, sha256("合成核准情境"));
+	assert.equal(jobs[1002].score.profile_revision, jobs[1002].profile_revision);
 
   if (!letterConsumed) {
     // No letter is drafted until the user requests one, so the letter stage has
@@ -158,7 +211,7 @@ if (mode === "snapshot") {
     assert.equal(jobs[1002].letter, null);
     assert.equal(jobs[1001].apply_state, null);
     assert.equal(jobs[1002].apply_state, null);
-    assert.deepEqual(data.agent_calls, [{ role: "scorer", runner: "claude", ok: true, count: 3 }]);
+    assertAgentCalls(data.agent_calls, [{ role: "scorer", runner: "claude", ok: true, count: 3 }]);
   } else {
     assert.deepEqual([jobs[1002].apply_state, jobs[1002].letter.status, jobs[1002].letter.rounds], ["pending", "approved", 1]);
     assert.deepEqual([jobs[1001].apply_state, jobs[1001].letter.status, jobs[1001].letter.rounds], [null, "failed", 3]);
@@ -167,10 +220,11 @@ if (mode === "snapshot") {
       assert.equal(jobs[id].letter.runner_review, "codex");
       assert.equal(jobs[id].letter.has_name_placeholder, true);
       assert.equal(jobs[id].letter.has_contact_placeholder, true);
+	  assert.equal(jobs[id].letter.profile_revision, jobs[id].profile_revision);
     }
     assert.equal(jobs[1001].letter.review_entries, 3);
     assert.equal(jobs[1002].letter.review_entries, 1);
-    assert.deepEqual(data.agent_calls, [
+    assertAgentCalls(data.agent_calls, [
       { role: "drafter", runner: "claude", ok: true, count: 4 },
       { role: "reviewer", runner: "codex", ok: true, count: 4 },
       { role: "scorer", runner: "claude", ok: true, count: 3 },

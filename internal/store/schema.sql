@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     content_hash TEXT,
     process_state TEXT NOT NULL,
     filter_hits TEXT,
+    profile_revision TEXT,
     apply_state TEXT,
     discovered_by_run_id INTEGER REFERENCES runs(id),
     first_seen_at TEXT NOT NULL,
@@ -37,6 +38,7 @@ CREATE TABLE IF NOT EXISTS scores (
     total REAL NOT NULL,
     reason TEXT NOT NULL,
     runner TEXT NOT NULL,
+    profile_revision TEXT,
     created_at TEXT NOT NULL
 );
 
@@ -49,6 +51,7 @@ CREATE TABLE IF NOT EXISTS letters (
     review_log TEXT NOT NULL,
     runner_draft TEXT NOT NULL,
     runner_review TEXT NOT NULL,
+    profile_revision TEXT,
     created_at TEXT NOT NULL
 );
 
@@ -80,6 +83,7 @@ CREATE TABLE IF NOT EXISTS agent_calls (
     output TEXT NOT NULL,
     ok INTEGER NOT NULL,
     duration_ms INTEGER NOT NULL,
+    profile_revision TEXT,
     created_at TEXT NOT NULL
 );
 

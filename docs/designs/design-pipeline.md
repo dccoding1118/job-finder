@@ -5,7 +5,7 @@
 ## 1. 職責邊界
 
 - 抓取的排程編排（fetch），以及 filter → score → letter 三階段的**常駐消化**；各階段從 store 取件、呼叫對應模組、寫回狀態。求職信階段只處理使用者已要求的職缺（`letter_requested`）。
-- Profile 求職條件的篩選實作，以及供 104 半被動擷取使用的 ingest 入口。
+- Profile 求職條件的篩選實作、Profile activation 與既有 Job 重新處理，以及供 104 半被動擷取使用的 ingest 入口。
 - 冪等、序列化、LLM rate limit、每日預算、Run 紀錄。
 - 不負責：抓取細節（crawler）、LLM 呼叫（agents）、狀態轉換合法性（store）。
 
@@ -41,7 +41,9 @@ worker 隨 API server process 常駐（同 binary、同 systemd service），持
 | score | `queued` | Scorer → SaveScore | `scored`（total < 閾值）∣ `shortlisted`（≥ 閾值） |
 | letter | `letter_requested` | Drafter／Reviewer | `letter_ready` ∣ `letter_failed` |
 
-worker 是 process 內單一消化者，以 process 內 mutex 序列化，不需 flock。無待處理件時休眠等待，有件即取，因此排程 fetch、CLI 與 extension capture 三個入口寫進來的職缺走的是同一條消化路徑，沒有「等下一輪」的空窗。
+worker 是 process 內單一消化者，以 process 內 mutex 序列化取件；資料正確性仍由 store 的 expected state ＋ expected `profile_revision` CAS 保證，不能以 mutex 取代。無待處理件時休眠等待，有件即取，因此排程 fetch、CLI 與 extension capture 三個入口寫進來的職缺走的是同一條消化路徑，沒有「等下一輪」的空窗。
+
+filter、score 與 letter 每筆工作開始時各自從 Profile provider 取得一次 immutable snapshot。filter／score 只處理 `jobs.profile_revision` 與 snapshot revision 相符的工作；letter 記錄工作開始時實際取得的 revision，不要求與既有 Score 相同。Profile 為 `missing`、`invalid` 或 `degraded` 時 worker 暫停取件。
 
 **letter 階段只處理使用者已要求的職缺**（PRD R5.0）：`shortlisted` 不是取件狀態，達閾值的推薦職缺停留在該狀態直到使用者要求。使用者的要求由 API（[design-api](design-api.md)）或 `jobfinder letter request --job ID` 經 store 轉為 `letter_requested`，worker 才取件。無待處理要求時，letter 階段自然是零筆、零 Agent 呼叫、零費用。
 
@@ -57,10 +59,10 @@ pipeline 提供 **ingest 入口**供 API capture endpoint 呼叫（見 [design-a
 
 | 入口 | 行為 | 回傳 | LLM |
 |---|---|---|---|
-| `IngestList(items)` | 104 解析器 → 逐筆比對 `(source, external_id)`：**既有 Job** 只更新 `last_seen_at`（§5 partial upsert 語意），不重跑任何階段；**新職缺** upsert partial（`discovered`）→ 同步套用欄位可用的條件篩選（§3）→ `filtered_out` ∣ 留在 `discovered` | 每筆的 job ID、現行 `process_state`、現行 score（無則 NULL）、`filter_hits`（無則 NULL）、是否本次新建 | 不呼叫 |
+| `IngestList(items)` | 104 解析器 → 逐筆比對 `(source, external_id)`：**既有 Job** 只更新 `last_seen_at`（[design-schema](design-schema.md) §4 partial upsert 語意），不重跑任何階段；**新職缺** upsert partial（`discovered`）→ 同步套用欄位可用的條件篩選（§3）→ `filtered_out` ∣ 留在 `discovered` | 每筆的 job ID、現行 `process_state`、現行 score（無則 NULL）、`filter_hits`（無則 NULL）、是否本次新建 | 不呼叫 |
 | `IngestJob(capture)` | 解析全文 → upsert（partial 補全文 ⇒ `new`，或新建 `new`）→ 同步條件篩選（§3，全欄位） → `filtered_out` ∣ `queued`；已有現行評分且內容雜湊未變者直接回傳快取 | 該筆的現行 `process_state`、現行 score（尚未評分則 NULL）、`filter_hits`（無則 NULL）、是否為快取結果 | 不呼叫 |
 
-兩個 ingest 入口都**不呼叫 LLM**，皆為同步且毫秒級：條件篩選是純字串比對，不需網路也不需 Agent。差別只在可用的輸入——
+兩個 ingest 入口都要求 ready Profile snapshot，並把本次條件判定綁定其 revision；Profile 未 ready 時回 `profile_not_ready`。兩者都**不呼叫 LLM**，皆為同步且毫秒級：條件篩選是純字串比對，不需網路也不需 Agent。差別只在可用的輸入——
 
 | 入口 | 輸入 | 可套用的條件 |
 |---|---|---|
@@ -94,7 +96,19 @@ partial 條件篩選於 `IngestList` 入庫時同步執行（§2.3）；worker �
 
 批次來源（Yourator／Cake）若列表回應不含全文亦會產生 partial 職缺，該類職缺不套用 partial 篩選，停留 `discovered` 進入待看清單——partial 篩選只在 104 清單 capture 路徑上執行，因為只有該路徑需要同步回傳就地標記。
 
-## 4. Rate limit 與每日預算
+## 4. 手動 Profile activation 與重新處理
+
+Profile 儲存產生新語意 revision 時只切換 provider snapshot；既有 Job、Score 與處理狀態保持原 revision，服務啟動也不自動 activation。新擷取職缺由 ingest 寫入當下 snapshot revision。使用者在系統頁明確要求更新過時評分後，pipeline 以當下 active snapshot 呼叫 store activation transaction，完成本地重新篩選與入隊；常駐 worker 隨後依既有輪詢消化。
+
+| 現行資料 | activation 行為 |
+|---|---|
+| `discovered`／partial `filtered_out` | 切換 revision、清除舊 filter hits，重做 partial 條件；可在 `discovered` 與 `filtered_out` 間改判。 |
+| 有全文的 `new`／`queued`／`filtered_out`／`scored`／`shortlisted` | 切換 revision、清除舊 filter hits，回到／維持 `new`；通過篩選後重新排入 score。 |
+| `letter_requested`／`letter_ready`／`letter_failed`、Letter、apply history | 保留狀態與歷史，不取消、不重送、不覆寫；由 API 導出 stale。 |
+
+activation 本身只做本地篩選與重新入隊，不呼叫 LLM。重新評分沿用 `max_score_per_day`，預算用盡時停留 `queued` 跨台北日界續作。相同 revision 重送不得重設狀態或增加事件／Agent 呼叫。Profile 在 activation 或 worker 執行途中再次改變時，舊 snapshot 結果仍由 CAS 拒絕成為現行判定；Agent call 稽核保留實際 revision。
+
+## 5. Rate limit 與每日預算
 
 | 參數（設定檔） | 預設 | 說明 |
 |---|---|---|
@@ -107,7 +121,7 @@ partial 條件篩選於 `IngestList` 入庫時同步執行（§2.3）；worker �
 
 預算用盡時 worker 停止取件，職缺停留 `queued`／`letter_requested` 至隔日；此為刻意的成本封頂，不記為錯誤。API 據此讓 Side Panel 呈現「已達今日上限」而非「處理中」。
 
-## 5. 錯誤處理
+## 6. 錯誤處理
 
 | 情境 | 處置 |
 |---|---|
@@ -116,8 +130,11 @@ partial 條件篩選於 `IngestList` 入庫時同步執行（§2.3）；worker �
 | 每日預算用盡 | worker 停止取件至隔日日界；非錯誤，不記 errors |
 | fetch 致命錯誤（DB 打不開等） | FinishRun(error) 後非零退出 |
 | worker 致命錯誤 | 記錄後由 systemd 重啟 API service；狀態即進度，重啟後續作 |
+| Profile 缺少或無效 | setup／invalid 模式；抓取、ingest 與 worker 暫停，Profile 讀寫 API 保持可用 |
+| 舊 revision worker 寫回 | store CAS 拒絕，保留 Agent call 稽核，不改現行狀態或 Score |
+| activation transaction 失敗 | Profile snapshot 與既有 Job revision 均不變；API 回錯誤，使用者可重試 |
 
-## 6. 設定檔（`config.yaml`）
+## 7. 設定檔（`config.yaml`）
 
 | 區段 | 內容 |
 |---|---|
@@ -126,14 +143,14 @@ partial 條件篩選於 `IngestList` 入庫時同步執行（§2.3）；worker �
 | `sources.<name>` | enabled、max_pages、request_delay_min/max、retry_max、retry_backoff、check_robots；query 預設由 Profile directions 依順序展開，每個方向一組、每來源最多三組；`sources.yourator.base_url` 為選填端點覆寫，預設正式 Yourator 網域，僅供隔離驗收以本機 fixture 驗證 adapter |
 | `scoring` | 五維權重、閾值（預設 75） |
 | `calibration.min_interviews` | 反向校準門檻（預設 5） |
-| `llm` | §4 每日預算、呼叫間隔與 timeout；`llm.roles` 為各角色的 primary/fallback 分別指定 agent CLI 與 model（見 design-agents） |
+| `llm` | §5 每日預算、呼叫間隔與 timeout；`llm.roles` 為各角色的 primary/fallback 分別指定 agent CLI 與 model（見 design-agents） |
 | `worker.scan_interval` | 常駐 worker 無待處理件時的掃描間隔（預設 5s） |
 | `api.addr` | B4 API 監聽位址，預設 `127.0.0.1:8686` |
 | `api.token` / `api.extension_origin` | API 驗證 token 與允許的 extension origin |
 
 repo 內提供 `configs/config.example.yaml`；實際 `config.yaml` 含本機 token 等執行設定，gitignore。薪資、地點與條件篩選只存在 `profile.yaml`，不在 config 重複保存。
 
-## 7. 測試
+## 8. 測試
 
 - 全流程整合：Yourator-compatible loopback fixture 經 production adapter 完成 fetch，加上 artifact 內 fake Runner 由 worker 消化至終態，精確斷言來源 request、正規化欄位、各狀態筆數與 run stats。
 - fetch 邊界：`run` 只產生 `new`／`discovered` 職缺即退出，斷言不呼叫 Scorer、不寫入判定統計。
@@ -145,12 +162,13 @@ repo 內提供 `configs/config.example.yaml`；實際 `config.yaml` 含本機 to
 - ingest：列表與內頁 ingest 全程無 LLM 呼叫；內頁 ingest 對通過篩選者留 `queued` 並回 NULL score，對淘汰者同步回 `filtered_out` 與 `filter_hits`；快取命中回現行 score。
 - 兩次篩選：partial 入庫只套用「partial 適用」條件；補全文後套用全部條件，且第一次已 `filtered_out` 者不再被取件。
 - flock：worker 常駐時第二 process 的 `jobfinder run --stage` 立即退出。
+- Profile activation：partial／full 狀態矩陣、相同 revision no-op、重新評分受每日預算、letter／apply 保護、舊 worker CAS 失敗與 in-flight letter 記錄實際 revision。
 
-## 8. 交付物
+## 9. 交付物
 
 - `internal/pipeline/`：fetch run 編排、常駐 worker、ingest 入口、`RequestLetter`、filter 規則、rate limiter、每日預算、lock、設定載入（或獨立 `internal/config`）＋測試。
 - `cmd/jobfinder/cli/run.go`、`cmd/jobfinder/cli/letter.go`。
 
-## 9. 待決
+## 10. 待決
 
 （無。）

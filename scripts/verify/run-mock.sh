@@ -122,7 +122,7 @@ grep -Fqx 'proficient: [Go]' "${output_file}" || fail 'profile proficient skills
 grep -Fqx 'directions: [P1:cloud architecture P2:backend engineering P3:platform reliability]' "${output_file}" || fail 'profile directions are invalid'
 "${binary}" verify snapshot --db "${MOCK_DB}" >"${RUNTIME_ROOT}/tmp/schema-snapshot.json" || fail 'SQLite schema snapshot failed'
 assert_node schema "${RUNTIME_ROOT}/tmp/schema-snapshot.json" >"${output_file}" 2>&1 || fail 'SQLite schema contract is invalid'
-record '- 匿名 Profile summary、schema version=2、WAL、foreign keys 與必要資料表已由物化 binary 建立。'
+record '- 匿名 Profile summary、schema version=3、WAL、foreign keys、必要資料表與 revision 欄位已由物化 binary 建立。'
 pass_step
 
 begin_step 'S04' 'V2·R2' '產生本機 Yourator mock 資料來源'
