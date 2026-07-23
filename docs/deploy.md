@@ -49,7 +49,7 @@
 
 ## 5. 遠端存取與維運
 
-API 不公開網路埠。從工作站使用 SSH local forward，例如將本機埠轉送到 VM 的 `127.0.0.1:8686`，再在 extension Options 設定該本機 endpoint；不得將 service 改綁 `0.0.0.0` 作為替代。跨機（Windows Chrome ↔ GCP VM API）載入 extension 與建立通道的完整人工步驟見 `docs/runbook-extension.md`。
+API 不公開網路埠。Windows 工作站以背景常駐的 SSH local forward，將專用的本機 `127.0.0.1:18686` 轉送到 VM 的 `127.0.0.1:8686`，extension Options 使用該本機 endpoint；不得將 service 改綁 `0.0.0.0` 作為替代。通道由 Windows Task Scheduler 於登入時啟動，IAP 先處理底層重連，常駐 wrapper 在 SSH process 退出後重建完整 session；完整設定、驗證與排障步驟見 [Windows extension 與 GCP API 常駐通道](guides/runbook-extension.md)。
 
 日常診斷使用 `journalctl --user -u jobfinder-api.service`、`journalctl --user -u jobfinder-run.service` 與 Side Panel 的 Run 歷史。驗證 systemd 環境時，以 `systemd-run --user --wait --pipe` 執行相同 binary／設定組合，API 使用 transient service，timer 使用 transient timer 實際觸發 one-shot；互動 shell 成功不構成 service 環境成功的證據。user bus 不可用時，開發驗收回 `ENVIRONMENT_BLOCKED`，不誤判為產品失敗。
 

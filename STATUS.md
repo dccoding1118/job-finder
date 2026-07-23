@@ -1,6 +1,6 @@
 # STATUS — job-finder（MVP 開發）
 
-> 最後更新：2026-07-22。規劃文件見 `docs/PRD.md`、`docs/design.md`、`docs/roadmap.md`、`docs/deploy.md`、`docs/designs/`。
+> 最後更新：2026-07-23。規劃文件見 `docs/PRD.md`、`docs/design.md`、`docs/roadmap.md`、`docs/deploy.md`、`docs/designs/`。
 
 ## §1 未歸檔結論
 
