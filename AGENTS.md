@@ -15,7 +15,7 @@
 - 累加式整合與驗收：`docs/verify.md`
 - 開發交接：`STATUS.md`
 
-B0–B5 的核心程式已完成並通過 `mise run fmt/lint/test`：schema/store、profile、crawler（Yourator adapter 與 104 列表／內頁解析）、pipeline（排程抓取編排、常駐 worker、條件篩選、每日預算）、agents（Scorer／Drafter／Reviewer 與 `llm.roles` primary／fallback 路由）、localhost API、Chrome 原生 Side Panel 與 systemd unit。求職信按需生成（`letter_requested` 取件）、verdict 導出與 104 清單就地標記均已落地。執行模型為「排程只驅動 fetch，filter／score／letter 由 API service 內常駐 worker 非同步消化」，`runs` 只記抓取事實、判定分布於檢視時即時查詢。
+B0–B5 的核心程式已完成並通過 `mise run fmt/lint/test`：schema/store、profile、crawler（Yourator adapter 與 104 列表／內頁解析）、pipeline（排程抓取編排、常駐 worker、條件篩選、每日預算）、agents（Scorer／Drafter／Reviewer 與 `llm.roles` primary／fallback 路由）、localhost API、Chrome 原生 Side Panel 與 systemd unit。求職信按需生成（`letter_requested` 取件）、verdict 導出、cursor 清單分頁、推薦職缺載入更多與 104 清單就地標記均已落地。單筆職缺重新評分（`POST /api/v1/jobs/{id}/rescore`）與處理進度讀取面（`GET /api/v1/status`：各處理狀態筆數、當日評分預算、最近 Agent 呼叫）已具備；pipeline 各階段以 `log/slog` 輸出結構化執行記錄，正式部署由 `journalctl --user -u jobfinder-api` 檢視。執行模型為「排程只驅動 fetch，filter／score／letter 由 API service 內常駐 worker 非同步消化」，`runs` 只記抓取事實、判定分布於檢視時即時查詢。
 
 e2e 驗收 harness（`scripts/verify/`、`assert-positive.mjs`）已對齊非同步／按需模型：`run` 只 fetch、手動 `--stage` 或常駐 worker 消化 filter／score／letter、`runs.stats` 只記抓取事實、求職信「未要求不生成 → `RequestLetter` 後生成」、轉換經 `letter_requested`、`schema_version=3`。`mise run e2e-mock` 的 V1／V2／V4／V5／V7 S30–S36 全綠（32 步，詳見 `docs/verify.md` §4）。真 Yourator live（V3）、`scripts/deploy/` 安裝／更新／回滾與既有 Side Panel 的實際 Chrome 人工 gate 均已通過。
 
@@ -46,9 +46,9 @@ Go 不保證在裸 PATH；以 `mise run <task>` 或 `mise exec -- go <args>` 執
 | SQLite schema、migration、實體 CRUD、狀態轉換 | `docs/designs/design-schema.md` | `internal/store/` |
 | 匿名 Profile、PII 檢核、canonical serialization、ETag／revision、runtime provider、校準建議 | `docs/designs/design-profile.md` | `internal/profile/` |
 | Source adapter、去重、內容變更偵測、104 payload 解析 | `docs/designs/design-crawler.md` | `internal/crawler/` |
-| fetch/filter/score/letter 編排、Profile activation／重新處理、revision-aware CAS、每日預算與鎖 | `docs/designs/design-pipeline.md` | `internal/pipeline/` |
+| fetch/filter/score/letter 編排、Profile activation／重新處理、單筆重評入隊、執行記錄、revision-aware CAS、每日預算與鎖 | `docs/designs/design-pipeline.md` | `internal/pipeline/` |
 | CLI Runner、Scorer、Drafter、Reviewer 與輸出驗證 | `docs/designs/design-agents.md` | `internal/agents/` |
-| Profile GET／PUT／手動 reprocess、Job stale viewmodel、Job／Run／狀態／verdict／求職信要求／手動 run 與 104 capture API | `docs/designs/design-api.md` | `internal/api/` |
+| Profile GET／PUT／手動 reprocess、Job stale viewmodel、Job／Run／狀態／verdict／求職信要求／單筆重評／處理進度／手動 run 與 104 capture API | `docs/designs/design-api.md` | `internal/api/` |
 | Side Panel、全頁 Profile editor、104 列表就地標記與內頁擷取 | `docs/designs/design-extension.md` | `extension/` |
 | CLI 命令樹 | 本檔 §4 與各模組的 CLI 介面 | `cmd/jobfinder/cli/` |
 

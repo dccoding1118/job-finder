@@ -31,6 +31,7 @@ type Processor interface {
 	IngestList(context.Context, []crawler.RawJob) ([]pipeline.IngestResult, error)
 	IngestJob(context.Context, crawler.RawJob) (pipeline.IngestResult, error)
 	RequestLetter(context.Context, int64) error
+	RequestRescore(context.Context, int64) error
 	ScoreBudgetRemaining(context.Context) (int, bool, error)
 }
 
@@ -81,6 +82,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("/api/v1/jobs/", s.job)
 	mux.HandleFunc("/api/v1/queue", s.queue)
 	mux.HandleFunc("/api/v1/runs", s.runs)
+	mux.HandleFunc("/api/v1/status", s.status)
 	mux.HandleFunc("/api/v1/capture/list", s.captureList)
 	mux.HandleFunc("/api/v1/capture/job", s.captureJob)
 	mux.HandleFunc("/api/v1/profile", s.profile)

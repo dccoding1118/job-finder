@@ -2,12 +2,16 @@ package api
 
 import (
 	"context"
+	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
 
+	"github.com/dccoding1118/job-finder/internal/agents"
 	"github.com/dccoding1118/job-finder/internal/crawler"
 	"github.com/dccoding1118/job-finder/internal/profile"
 	"github.com/dccoding1118/job-finder/internal/store"
@@ -23,12 +27,21 @@ func (s *Server) jobs(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
+	if _, pageErr := parsePagination(r); pageErr != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", pageErr.Error())
+		return
+	}
 	jobs, err := s.store.ListJobs(r.Context(), filter, store.JobSortScore)
 	if err != nil {
 		writeError(w, 500, "internal", "unable to list jobs")
 		return
 	}
-	writeJSON(w, 200, pageJobs(jobs, r, s.currentProfileRevision()))
+	page, err := pageJobs(jobs, r, s.currentProfileRevision())
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	writeJSON(w, 200, page)
 }
 
 func (s *Server) job(w http.ResponseWriter, r *http.Request) {
@@ -45,6 +58,8 @@ func (s *Server) job(w http.ResponseWriter, r *http.Request) {
 		s.applyJob(w, r, id)
 	case len(parts) == 2 && parts[1] == "letter" && r.Method == http.MethodPost:
 		s.requestLetter(w, r, id)
+	case len(parts) == 2 && parts[1] == "rescore" && r.Method == http.MethodPost:
+		s.rescoreJob(w, r, id)
 	default:
 		writeError(w, http.StatusNotFound, "not_found", "route was not found")
 	}
@@ -103,9 +118,105 @@ func (s *Server) requestLetter(w http.ResponseWriter, r *http.Request, id int64)
 	writeJSON(w, 200, map[string]any{"status": "requested", "job": jobView(detail, s.currentProfileRevision())})
 }
 
+// rescoreJob redoes the score of a single job. It exists so a score produced
+// under an incomplete reading of the JD can be corrected on its own, without
+// spending Agent budget on every other job.
+func (s *Server) rescoreJob(w http.ResponseWriter, r *http.Request, id int64) {
+	if !s.requireProfile(w) {
+		return
+	}
+	if s.pipeline == nil {
+		writeError(w, 500, "internal", "rescore requests are unavailable")
+		return
+	}
+	switch err := s.pipeline.RequestRescore(r.Context(), id); {
+	case errors.Is(err, store.ErrRescoreNotAllowed):
+		writeError(w, http.StatusConflict, "rescore_not_allowed", "only a scored job that has no letter history can be rescored")
+		return
+	case errors.Is(err, sql.ErrNoRows):
+		writeError(w, http.StatusNotFound, "not_found", "job was not found")
+		return
+	case err != nil:
+		s.transitionError(w, err)
+		return
+	}
+	detail, _, err := s.store.GetJobDetail(r.Context(), id)
+	if err != nil {
+		writeError(w, 500, "internal", "unable to read job")
+		return
+	}
+	writeJSON(w, 200, map[string]any{"status": "queued", "job": jobView(detail, s.currentProfileRevision())})
+}
+
+// status reports what the resident worker is doing: the backlog per process
+// state, today's remaining score budget, and the newest audited Agent calls.
+func (s *Server) status(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method is not allowed")
+		return
+	}
+	counts, err := s.store.CountJobsByState(r.Context())
+	if err != nil {
+		writeError(w, 500, "internal", "unable to read job states")
+		return
+	}
+	calls, err := s.store.RecentAgentCalls(r.Context(), recentAgentCallLimit)
+	if err != nil {
+		writeError(w, 500, "internal", "unable to read agent calls")
+		return
+	}
+	value := map[string]any{"jobs": counts, "agent_calls": agentCallViews(calls)}
+	if s.pipeline != nil {
+		remaining, limited, err := s.pipeline.ScoreBudgetRemaining(r.Context())
+		if err == nil {
+			value["score_budget"] = map[string]any{"remaining": remaining, "limited": limited}
+		}
+	}
+	writeJSON(w, 200, value)
+}
+
+// recentAgentCallLimit keeps the progress view to the recent past.
+const recentAgentCallLimit = 20
+
+// maxAgentCallDetail bounds how much of a rejected response the progress view
+// quotes. The classified failure kind, not the quote, is what the view reads.
+const maxAgentCallDetail = 400
+
+// agentCallViews reports each audited call with the reason it was rejected. A
+// call is ok when the runner answered and the answer passed validation, so a
+// low score is a successful call: only runner errors and rejected responses are
+// failures, and the kind says which.
+func agentCallViews(calls []store.AgentCall) []map[string]any {
+	views := make([]map[string]any, 0, len(calls))
+	for _, call := range calls {
+		view := map[string]any{
+			"id": call.ID, "job_id": call.JobID, "role": call.Role, "runner": call.Runner,
+			"ok": call.OK, "duration_ms": call.DurationMS, "created_at": call.CreatedAt,
+		}
+		if !call.OK {
+			view["failure_kind"] = agents.ClassifyFailure(call.Role, call.Output)
+			view["detail"] = truncateDetail(call.Output, maxAgentCallDetail)
+		}
+		views = append(views, view)
+	}
+	return views
+}
+
+func truncateDetail(value string, max int) string {
+	runes := []rune(value)
+	if len(runes) <= max {
+		return value
+	}
+	return string(runes[:max]) + "…"
+}
+
 func (s *Server) queue(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeError(w, 405, "method_not_allowed", "method is not allowed")
+		return
+	}
+	if _, pageErr := parsePagination(r); pageErr != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", pageErr.Error())
 		return
 	}
 	jobs, err := s.store.ListJobs(r.Context(), store.JobFilter{ProcessState: "discovered"}, store.JobSortNewest)
@@ -113,12 +224,21 @@ func (s *Server) queue(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "internal", "unable to list queue")
 		return
 	}
-	writeJSON(w, 200, pageJobs(jobs, r, s.currentProfileRevision()))
+	page, err := pageJobs(jobs, r, s.currentProfileRevision())
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	writeJSON(w, 200, page)
 }
 
 func (s *Server) runs(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
+		if _, pageErr := parsePagination(r); pageErr != nil {
+			writeError(w, http.StatusBadRequest, "invalid_request", pageErr.Error())
+			return
+		}
 		runs, err := s.store.ListRuns(r.Context())
 		if err != nil {
 			writeError(w, 500, "internal", "unable to list runs")
@@ -126,6 +246,10 @@ func (s *Server) runs(w http.ResponseWriter, r *http.Request) {
 		}
 		page, err := s.pageRuns(r, runs)
 		if err != nil {
+			if errors.Is(err, errInvalidPagination) {
+				writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+				return
+			}
 			writeError(w, 500, "internal", "unable to summarize runs")
 			return
 		}
@@ -412,28 +536,63 @@ func parseFilter(r *http.Request) (store.JobFilter, error) {
 	return f, nil
 }
 
-func pageSlice[T any](items []T, r *http.Request) []T {
-	limit := 20
+var errInvalidPagination = errors.New("invalid pagination")
+
+type pagination struct {
+	limit  int
+	offset int
+}
+
+func parsePagination(r *http.Request) (pagination, error) {
+	page := pagination{limit: 20}
 	if raw := r.URL.Query().Get("limit"); raw != "" {
 		parsed, err := strconv.Atoi(raw)
 		if err != nil || parsed < 1 || parsed > 100 {
-			return []T{}
+			return pagination{}, fmt.Errorf("%w: limit must be between 1 and 100", errInvalidPagination)
 		}
-		limit = parsed
+		page.limit = parsed
 	}
-	if len(items) > limit {
-		return items[:limit]
+	if raw := r.URL.Query().Get("cursor"); raw != "" {
+		decoded, err := base64.RawURLEncoding.DecodeString(raw)
+		if err != nil {
+			return pagination{}, fmt.Errorf("%w: cursor is invalid", errInvalidPagination)
+		}
+		parsed, err := strconv.Atoi(string(decoded))
+		if err != nil || parsed < 1 {
+			return pagination{}, fmt.Errorf("%w: cursor is invalid", errInvalidPagination)
+		}
+		page.offset = parsed
 	}
-	return items
+	return page, nil
 }
 
-func pageJobs(jobs []store.Job, r *http.Request, revisions ...string) map[string]any {
-	selected := pageSlice(jobs, r)
+func pageSlice[T any](items []T, r *http.Request) ([]T, *string, error) {
+	page, err := parsePagination(r)
+	if err != nil {
+		return nil, nil, err
+	}
+	if page.offset >= len(items) {
+		return []T{}, nil, nil
+	}
+	end := min(page.offset+page.limit, len(items))
+	selected := items[page.offset:end]
+	if end == len(items) {
+		return selected, nil, nil
+	}
+	next := base64.RawURLEncoding.EncodeToString([]byte(strconv.Itoa(end)))
+	return selected, &next, nil
+}
+
+func pageJobs(jobs []store.Job, r *http.Request, revisions ...string) (map[string]any, error) {
+	selected, next, err := pageSlice(jobs, r)
+	if err != nil {
+		return nil, err
+	}
 	values := make([]any, 0, len(selected))
 	for _, job := range selected {
 		values = append(values, jobListView(job, revisions...))
 	}
-	return map[string]any{"items": values, "next_cursor": nil}
+	return map[string]any{"items": values, "next_cursor": next}, nil
 }
 
 func (s *Server) currentProfileRevision() string {
@@ -448,7 +607,10 @@ func (s *Server) currentProfileRevision() string {
 }
 
 func (s *Server) pageRuns(r *http.Request, runs []store.Run) (map[string]any, error) {
-	selected := pageSlice(runs, r)
+	selected, next, err := pageSlice(runs, r)
+	if err != nil {
+		return nil, err
+	}
 	values := make([]any, 0, len(selected))
 	for _, run := range selected {
 		states, err := s.store.SummarizeRunJobs(r.Context(), run.ID)
@@ -457,5 +619,5 @@ func (s *Server) pageRuns(r *http.Request, runs []store.Run) (map[string]any, er
 		}
 		values = append(values, runView(run, states))
 	}
-	return map[string]any{"items": values, "next_cursor": nil}, nil
+	return map[string]any{"items": values, "next_cursor": next}, nil
 }

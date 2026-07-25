@@ -53,7 +53,9 @@
 | 欄位 | 型別 | 約束 |
 |---|---|---|
 | `hard_skill` / `domain` / `seniority` / `condition` / `direction` | int | 0–100 |
-| `reason` | string | ≤50 中文字，說明推薦或不推薦 |
+| `reason` | string | ≤100 中文字，說明推薦或不推薦 |
+
+每次嘗試的稽核結果只有兩種：runner 有回應且回應通過上述契約（成功），或未通過（失敗）。分數高低不影響此判定。失敗者由 `ClassifyFailure(role, output)` 分為 `runner_error`（CLI 自報錯誤，優先於內容驗證）、`empty_output`、`no_json`、`invalid_json`、`reason_too_long`、`score_out_of_range`、`invalid_content`，供 API 的處理進度呈現失敗原因而不外洩原始輸出。
 
 加權總分由 Go 依設定檔權重計算（PRD R4.2），Agent 不回總分。
 
@@ -77,7 +79,7 @@ Profile 輸入一律來自 provider snapshot 的 canonical YAML。Scorer、Draft
 
 | 角色 | 輸入 | 規則要點 |
 |---|---|---|
-| Scorer | Profile YAML 全文＋Job（title/company/JD/薪資/地點/remote） | 逐維給分；條件契合須對照 preferences；方向契合對照 directions 關鍵字；理由 ≤50 字 |
+| Scorer | Profile YAML 全文＋Job（title/company/JD/薪資/地點/remote） | 逐維給分；條件契合須對照 preferences；方向契合對照 directions 關鍵字；理由 ≤100 字 |
 | Drafter | Profile＋Job＋（重寫輪）Reviewer issues | 只可使用 Profile 存在的技能與成就；引用量化數據；遵守 `honesty_bounds`；精煉（300–450 字）；佔位符落款；繁體中文（JD 為英文則英文） |
 | Reviewer | Profile＋Job＋草稿 | 毒舌審查：任何 Profile 無根據的技能/經歷/數字＝幻覺必挑；空泛形容詞（「熱情」「抗壓」等無實據修飾）要求刪除；可直接給 `edited_letter`；檢查佔位符落款 |
 

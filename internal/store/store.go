@@ -518,7 +518,8 @@ func validProcessTransition(from, to string) bool {
 		"discovered":       {"filtered_out": true, "new": true},
 		"new":              {"filtered_out": true, "queued": true},
 		"queued":           {"scored": true, "shortlisted": true},
-		"shortlisted":      {"letter_requested": true},
+		"scored":           {"queued": true},
+		"shortlisted":      {"letter_requested": true, "queued": true},
 		"letter_requested": {"letter_ready": true, "letter_failed": true},
 		"letter_failed":    {"letter_requested": true},
 	}[from][to]
@@ -607,8 +608,12 @@ func scanJobRow(row rowScanner) (Job, error) {
 	return job, nil
 }
 
+// maxScoreReason mirrors the Scorer contract in internal/agents: a reason the
+// Agent is allowed to produce must be storable.
+const maxScoreReason = 100
+
 func validateScore(input ScoreInput) error {
-	if input.JobID <= 0 || !validRunner(input.Runner) || len([]rune(input.Reason)) > 50 {
+	if input.JobID <= 0 || !validRunner(input.Runner) || len([]rune(input.Reason)) > maxScoreReason {
 		return errors.New("store: invalid score")
 	}
 	for _, value := range []int{input.HardSkill, input.Domain, input.Seniority, input.Condition, input.Direction} {

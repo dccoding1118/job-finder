@@ -36,7 +36,7 @@
 
 | 編號 | 測試情境 | 預期結果 |
 |---|---|---|
-| CT-10 | 單頁合法列表與可取得的全文資料 | 每筆資料映射為完整 `RawJob`；`source`、`external_id` 與 canonical URL 穩定，HTML 全文已轉為保留換行的純文字 |
+| CT-10 | 單頁合法列表與可取得的 Yourator 全文資料；外層 `section.job-description` 含巢狀工作內容、條件要求與加分條件 | 每筆資料映射為完整 `RawJob`；`source`、`external_id` 與 canonical URL 穩定；三個區段的標題與內容均進入保留換行的純文字 `description` |
 | CT-11 | 列表僅含可識別欄位、無全文 | 產生 partial `RawJob`；`description` 為空，其他列表可得欄位保留，不自行杜撰內容 |
 | CT-12 | 多頁回應以 `hasMore`／`nextPage` 指示下一頁 | 依序抓取至無下一頁或 `MaxPages`，合併結果且每一頁只請求一次 |
 | CT-13 | 回應仍有下一頁但已達 `MaxPages` | 停止抓取，不請求超出上限的頁面 |

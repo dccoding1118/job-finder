@@ -6,13 +6,18 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/dccoding1118/job-finder/internal/crawler"
 	"github.com/dccoding1118/job-finder/internal/pipeline"
 	"github.com/dccoding1118/job-finder/internal/store"
 )
+
+// testRevision is the Profile revision the fake processor scores under.
+const testRevision = "sha256:test-revision"
 
 // fakeProcessor records the calls the API forwards so the handlers can be
 // tested without the real pipeline.
@@ -24,6 +29,7 @@ type fakeProcessor struct {
 	scoreRemain   int
 	scoreLimited  bool
 	requestLetter func(int64) error
+	rescored      []int64
 }
 
 func (f *fakeProcessor) IngestList(context.Context, []crawler.RawJob) ([]pipeline.IngestResult, error) {
@@ -40,6 +46,11 @@ func (f *fakeProcessor) RequestLetter(_ context.Context, id int64) error {
 		return f.requestLetter(id)
 	}
 	return f.store.TransitionProcess(context.Background(), id, "letter_requested")
+}
+
+func (f *fakeProcessor) RequestRescore(ctx context.Context, id int64) error {
+	f.rescored = append(f.rescored, id)
+	return f.store.RequeueScore(ctx, id, testRevision)
 }
 
 func (f *fakeProcessor) ScoreBudgetRemaining(context.Context) (int, bool, error) {
@@ -218,5 +229,71 @@ func TestJobsVerdictFilterMapsToStates(t *testing.T) {
 	}
 	if len(body.Items) != 1 || body.Items[0].Verdict != "recommended" {
 		t.Fatalf("verdict filter items = %#v", body.Items)
+	}
+}
+
+func TestJobsCursorPagination(t *testing.T) {
+	server, data := newTestServer(t, nil)
+	ctx := context.Background()
+	description := "Synthetic job description"
+	for index := 1; index <= 3; index++ {
+		_, err := data.UpsertJob(ctx, store.JobInput{
+			Source:      "yourator",
+			ExternalID:  "page-" + strconv.Itoa(index),
+			URL:         "https://example.test/jobs/page-" + strconv.Itoa(index),
+			Title:       "Synthetic Engineer",
+			CompanyName: "Example",
+			CompanyInfo: "software",
+			Description: &description,
+			Location:    "Taipei",
+			RemoteType:  "hybrid",
+		}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	type pageBody struct {
+		Items []struct {
+			ID int64 `json:"id"`
+		} `json:"items"`
+		NextCursor *string `json:"next_cursor"`
+	}
+	readPage := func(path string) pageBody {
+		t.Helper()
+		response := httptest.NewRecorder()
+		server.Handler().ServeHTTP(response, authedRequest(http.MethodGet, path, nil))
+		if response.Code != http.StatusOK {
+			t.Fatalf("GET %s status = %d, body = %s", path, response.Code, response.Body.String())
+		}
+		var body pageBody
+		if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		return body
+	}
+
+	first := readPage("/api/v1/jobs?limit=2")
+	if len(first.Items) != 2 || first.NextCursor == nil {
+		t.Fatalf("first page = %#v", first)
+	}
+	second := readPage("/api/v1/jobs?limit=2&cursor=" + url.QueryEscape(*first.NextCursor))
+	if len(second.Items) != 1 || second.NextCursor != nil {
+		t.Fatalf("second page = %#v", second)
+	}
+	seen := map[int64]bool{}
+	for _, item := range append(first.Items, second.Items...) {
+		if seen[item.ID] {
+			t.Fatalf("job %d appeared on more than one page", item.ID)
+		}
+		seen[item.ID] = true
+	}
+
+	for _, path := range []string{"/api/v1/jobs?limit=0", "/api/v1/jobs?cursor=not-a-cursor"} {
+		response := httptest.NewRecorder()
+		server.Handler().ServeHTTP(response, authedRequest(http.MethodGet, path, nil))
+		if response.Code != http.StatusBadRequest {
+			t.Fatalf("GET %s status = %d, want %d", path, response.Code, http.StatusBadRequest)
+		}
 	}
 }

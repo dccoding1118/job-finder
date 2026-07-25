@@ -23,9 +23,11 @@ const defaultYouratorBaseURL = "https://www.yourator.co"
 const defaultRequestTimeout = 30 * time.Second
 
 var (
-	tagPattern        = regexp.MustCompile(`(?s)<[^>]*>`)
-	jobSectionPattern = regexp.MustCompile(`(?is)<section[^>]*job-description[^>]*>(.*?)</section>`)
-	salaryPattern     = regexp.MustCompile(`(?i)(?:NT\$\s*)?([\d,]+)\s*-\s*([\d,]+)`)
+	tagPattern             = regexp.MustCompile(`(?s)<[^>]*>`)
+	blockTagPattern        = regexp.MustCompile(`(?is)</?(?:br|div|h[1-6]|hr|li|ol|p|section|ul)\b[^>]*>`)
+	jobSectionStartPattern = regexp.MustCompile(`(?is)<section[^>]*\bjob-description\b[^>]*>`)
+	sectionTagPattern      = regexp.MustCompile(`(?is)</?section\b[^>]*>`)
+	salaryPattern          = regexp.MustCompile(`(?i)(?:NT\$\s*)?([\d,]+)\s*-\s*([\d,]+)`)
 )
 
 type Yourator struct {
@@ -253,12 +255,42 @@ func robotsDisallow(source, target string) bool {
 }
 
 func extractJobDescription(source string) string {
-	m := jobSectionPattern.FindStringSubmatch(source)
-	if len(m) != 2 {
+	outer := jobSectionStartPattern.FindStringIndex(source)
+	if outer == nil {
 		return ""
 	}
-	value := tagPattern.ReplaceAllString(m[1], " ")
-	return strings.Join(strings.Fields(html.UnescapeString(value)), " ")
+	fragment := source[outer[0]:]
+	depth := 0
+	bodyStart := -1
+	for _, bounds := range sectionTagPattern.FindAllStringIndex(fragment, -1) {
+		tag := strings.ToLower(fragment[bounds[0]:bounds[1]])
+		if strings.HasPrefix(tag, "</") {
+			depth--
+			if depth == 0 && bodyStart >= 0 {
+				return htmlToText(fragment[bodyStart:bounds[0]])
+			}
+			continue
+		}
+		depth++
+		if bodyStart < 0 {
+			bodyStart = bounds[1]
+		}
+	}
+	return ""
+}
+
+func htmlToText(source string) string {
+	value := blockTagPattern.ReplaceAllString(source, "\n")
+	value = tagPattern.ReplaceAllString(value, " ")
+	value = html.UnescapeString(html.UnescapeString(value))
+	lines := make([]string, 0)
+	for _, line := range strings.Split(value, "\n") {
+		line = strings.Join(strings.Fields(line), " ")
+		if line != "" {
+			lines = append(lines, line)
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 func parseSalary(value string) (*int, *int) {

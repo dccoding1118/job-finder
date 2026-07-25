@@ -71,7 +71,7 @@
 | 編號 | 測試情境 | 預期結果 |
 |---|---|---|
 | ST-40 | 為同一 Job 連續儲存不同 revision 的 score | 兩筆皆保留；取得現行評分時只回與 `jobs.profile_revision` 相同的最新一筆 |
-| ST-41 | 儲存 score 的任一維度超出 0–100、reason 超過 50 字、runner 非法 | 被拒絕且不寫入資料 |
+| ST-41 | 儲存 score 的任一維度超出 0–100、reason 超過 100 字、runner 非法 | 被拒絕且不寫入資料 |
 | ST-42 | 儲存 approved 或 failed letter | 完整保留內容、輪數、審查紀錄、draft/review runner 與建立時間 |
 | ST-43 | 儲存 letter 時 status、rounds、runner 或內容不合法 | 被拒絕且不寫入資料 |
 | ST-44 | `ListJobs` 以 process state、apply state、source 篩選與評分排序 | 僅回傳符合篩選的 Job，排序與指定條件一致 |
@@ -101,6 +101,9 @@
 | ST-63 | 新 revision activation 狀態矩陣 | partial 與 full Job 依設計重設；letter_requested／ready／failed、Letter 與 apply 歷史完全不變 |
 | ST-64 | 同 revision activation | no-op；不新增狀態事件、不重設狀態 |
 | ST-65 | 舊 worker 以舊 revision 寫 filter／Score／transition | expected state＋revision CAS 拒絕；現行 Job 與 Score 不變 |
+| ST-66 | `scored`／`shortlisted` Job 呼叫 `RequeueScore` | 狀態改為 `queued`、採用傳入 revision、寫 `manual rescore` 事件；舊 Score 保留且仍是現行分數；該 Job 可被 score 階段取件 |
+| ST-67 | 重複 requeue、對信件階段 Job 或不存在的 Job requeue | 已 `queued` 為 no-op；信件階段回 `ErrRescoreNotAllowed` 且狀態不變；不存在的 Job 回無資料錯誤 |
+| ST-68 | 查詢處理進度 | 各處理狀態筆數正確；最近 Agent 呼叫依時間新到舊，失敗附截斷輸出、成功不附任何輸出；非正整數 limit 被拒 |
 
 ## 4. 模組驗收
 

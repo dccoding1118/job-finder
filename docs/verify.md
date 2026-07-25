@@ -109,7 +109,7 @@ mock 一趟用固定合成測資；下表即「標準答案」，逐值由 `asse
 | S20 | Side Panel 判定篩選、copy、apply | 四頁籤與 light／dark theme 正常；filters_verified、detail_verified、clipboard==核准合成信、`#1002` apply pending→applied 並寫回 SQLite | V4·R6 | ✅ |
 | S21 | Side Panel 求職信生成入口 | 對 `#1001`（letter_failed）再次產生→受理轉 `letter_requested`；狀態事件永久記錄第 2 次 `letter_requested`，worker 隨後取件 | V4·R6 | ✅ |
 | S22 | Side Panel 手動抓取與 Run history | manual fetch 完成；API `runs` 出現 `trigger=manual-extension`；Run history 呈現 fetch stats 與 verdict 分布；存 screenshot | V4·R7 | ✅ |
-| S23 | extension mock browser L1 | 專案鎖定 Playwright 7 tests 全 pass：Side Panel／Profile editor／Options／service worker 的 mock Chrome API 互動，及 content script 於 104 search／notification／detail fixture 上的標記與 active-tab context（搜尋頁 `.jobfinder-mark` 依 verdict 標記、跳過 hotjob 廣告、title／data-gtm 地區薪資照 live selector 讀取；通知頁無 data-gtm 依位置與格式讀取；內頁由 JobPosting JSON-LD 擷取且不注入完整評分 overlay） | V4·R6／R9 | ✅ |
+| S23 | extension mock browser L1 | 專案鎖定 Playwright 10 tests 全 pass：Side Panel（含單筆重新評分與系統頁處理進度）／Profile editor／Options／service worker 的 mock Chrome API 互動，及 content script 於 104 search／notification／detail fixture 上的標記與 active-tab context（搜尋頁 `.jobfinder-mark` 依 verdict 標記、跳過 hotjob 廣告、title／data-gtm 地區薪資照 live selector 讀取；通知頁無 data-gtm 依位置與格式讀取；內頁由 JobPosting JSON-LD 擷取且不注入完整評分 overlay） | V4·R6／R9 | ✅ |
 | S24 | 104 清單就地判定且列表路徑零 Agent | v5intern→`unfit/filtered_out`、v5senior→`discovered/pending_detail`；列表路徑 Agent 呼叫數不變 | V5·R2/R3/R9 | ✅ |
 | S25 | 104 既有職缺回判定、內頁 capture 非同步 | 重複 list 對既有職缺 `created=false` 回現行判定；v5senior 進待看 queue；`capture/job`→`queued/pending_score`、score=null | V5·R9 | ✅ |
 
@@ -124,7 +124,8 @@ mock 一趟用固定合成測資；下表即「標準答案」，逐值由 `asse
 | S34 | 外部修改 YAML 後以舊 ETag 儲存 | 回 412；磁碟與 active snapshot 不被舊資料覆蓋；editor 保留草稿 | V7·R1/R6 | ✅ |
 | S35 | 送入 unknown field 與合成 PII | 回 422 safe issues；檔案與 snapshot 不變；log／evidence 不含 payload 或 denylist 值 | V7·R1/R8 | ✅ |
 | S36 | score worker 執行中更新 Profile 並手動 reprocess | 舊 call 保留實際 revision；activation 切換 Job revision 後，舊結果 CAS 失敗，不成為現行 Score | V7·R1/R7 | ✅ |
-| S37 | Chrome 人工 Profile gate | 系統頁四群組、Options 入口、批次時間、手動 reprocess、整數評分與 revision 燈號、全頁表單新增定位、衝突、離頁提醒及 light／dark 可用 | V7·R6 | ⏳ |
+| S37 | Chrome 人工 Profile gate | 系統頁各群組、Options 入口、批次時間、手動 reprocess、整數評分與 revision 燈號、全頁表單新增定位、衝突、離頁提醒及 light／dark 可用 | V7·R6 | ⏳ |
+| S38 | 單筆重新評分與處理進度 | 對已評分職缺按「重新評分」後只該筆回 `queued`、worker 重評並附加新 Score，其他職缺 Agent 呼叫數不變；系統頁處理進度與 Agent 呼叫紀錄反映該次執行 | V7·R6/R7 | ⏳ |
 
 ## 5. 負向案例 N（骨架，待正向穩定後累加）
 
@@ -188,4 +189,4 @@ mise run e2e-live
 3. 完成 **V5** 的真 104 頁人工 Chrome gate；真頁面只驗證使用者已載入的內容，確認清單就地標記與既有職缺判定一致。
 4. 完成 **V6** 的 Cake adapter 與校準 diff，再將 V1–V6 彙整為完整日常求職迴圈。
 5. 依 §5 骨架累加負向案例 N，沿用相同需求對照與 evidence 格式。
-6. 將同一 extension artifact 載入實際 Chrome，完成 **V7 S37** Profile editor 人工 gate。
+6. 將同一 extension artifact 載入實際 Chrome，完成 **V7 S37** Profile editor 與 **S38** 單筆重新評分／處理進度的人工 gate。

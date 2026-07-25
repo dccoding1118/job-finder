@@ -42,6 +42,9 @@ func (w *Worker) Run(ctx context.Context) error {
 		if err != nil && ctx.Err() == nil {
 			w.logger().Error("worker stage failed", "error", err)
 		}
+		if stats.total() > 0 {
+			w.logger().Info("worker pass consumed jobs", "filtered", stats.Filtered, "scored", stats.Scored, "lettered", stats.Lettered)
+		}
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}

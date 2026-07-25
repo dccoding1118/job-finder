@@ -50,6 +50,8 @@ test("Side Panel loads, filters, shows a job, persists theme, updates apply stat
   expect(await page.evaluate(() => window.__storage.theme)).toBe("dark");
   await page.getByRole("button", { name: "更新投遞狀態" }).click();
   await page.getByRole("tab", { name: /推薦/ }).click();
+  await expect(page.getByRole("button", { name: /Synthetic job/ })).toHaveClass(/is-viewed/);
+  await expect(page.getByRole("button", { name: /Synthetic job/ })).toContainText("已看");
   await page.getByText("進階篩選").click();
   await page.locator("#source-filter").selectOption("yourator");
   await page.locator("#process").selectOption("letter_ready");
@@ -71,6 +73,51 @@ test("Side Panel loads, filters, shows a job, persists theme, updates apply stat
   expect(calls.some((call) => call.path?.includes("source=yourator"))).toBeTruthy();
 });
 
+test("a scored job can be rescored on its own and the system tab shows processing progress", async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 900 });
+  await page.addInitScript(() => {
+    const scored = { id: 5, source: "yourator", url: "https://www.yourator.co/jobs/5", title: "Synthetic scored job", company_name: "Example", location: "Taipei", score_total: 55, process_state: "scored", apply_state: "pending", verdict: "not_recommended" };
+    const queued = { ...scored, process_state: "queued", verdict: "pending_score", score_total: null };
+    window.__calls = [];
+    window.chrome = {
+      storage: { local: {
+        get: (defaults, callback) => callback(defaults),
+        set: (values, callback) => callback?.(values),
+      } },
+      runtime: {
+        onMessage: { addListener: () => {} },
+        openOptionsPage: () => Promise.resolve(),
+        sendMessage: (request) => {
+          window.__calls.push(request);
+          if (request.type === "profile-api") return Promise.resolve({ ok: true, data: { status: "ready", profile_revision: `sha256:${"a".repeat(64)}`, summary: { years_of_experience: 8, skill_count: 3, experience_count: 1, directions: ["cloud architecture"] }, issues: [], reprocess_estimate: {} } });
+          if (request.type === "current-page") return Promise.resolve({ ok: true, context: { kind: "unsupported", status: "unsupported" } });
+          if (request.path === "/api/v1/jobs/5/rescore") return Promise.resolve({ ok: true, data: { status: "queued", job: { ...queued, description: "Synthetic description", status_events: [] } } });
+          if (request.path === "/api/v1/jobs/5") return Promise.resolve({ ok: true, data: { ...scored, description: "Synthetic description", score: { hard_skill: 5, domain: 5, seniority: 5, condition: 5, direction: 5, total: 55, reason: "Synthetic" }, status_events: [] } });
+          if (request.path?.startsWith("/api/v1/jobs?")) return Promise.resolve({ ok: true, data: { items: [scored], next_cursor: null } });
+          if (request.path === "/api/v1/status") return Promise.resolve({ ok: true, data: { jobs: { queued: 3, new: 1 }, score_budget: { remaining: 0, limited: true }, agent_calls: [{ id: 9, job_id: 5, role: "scorer", runner: "claude", ok: false, duration_ms: 90000, created_at: "2026-07-25T09:12:00+08:00", failure_kind: "reason_too_long", detail: "{\"reason\":\"…\"}" }, { id: 8, job_id: 5, role: "scorer", runner: "claude", ok: true, duration_ms: 8000, created_at: "2026-07-25T09:10:00+08:00" }] } });
+          return Promise.resolve({ ok: true, data: { items: [], next_cursor: null } });
+        },
+      },
+    };
+  });
+  await page.goto(dashboardPath);
+  await page.getByRole("tab", { name: /推薦/ }).click();
+  await page.getByRole("button", { name: /Synthetic scored job/ }).click();
+  await page.getByRole("button", { name: "重新評分這筆職缺" }).click();
+  await expect(page.locator("#verdict-label")).toContainText("評分中");
+  await expect(page.getByRole("button", { name: "重新評分這筆職缺" })).toHaveCount(0);
+  await page.getByRole("tab", { name: "系統" }).click();
+  await expect(page.locator(".system-card").nth(2)).toContainText("待評分");
+  await expect(page.locator(".system-card").nth(2)).toContainText("剩 0");
+  await expect(page.locator("#agent-calls")).toContainText("理由超過 100 字上限");
+  await expect(page.locator("#agent-calls")).toContainText("90s");
+  await expect(page.locator("#agent-calls .run-item").nth(1)).toContainText("呼叫成功");
+  await expect(page.locator("#agent-calls .run-item").nth(1)).not.toContainText("失敗");
+  const calls = await page.evaluate(() => window.__calls);
+  expect(calls.some((call) => call.path === "/api/v1/jobs/5/rescore" && call.method === "POST")).toBeTruthy();
+  expect(calls.some((call) => call.path === "/api/v1/status")).toBeTruthy();
+});
+
 test("options accepts a loopback endpoint and stores its token", async ({ page }) => {
   const saved = {};
   await page.addInitScript(() => {
@@ -86,6 +133,54 @@ test("options accepts a loopback endpoint and stores its token", async ({ page }
   await expect(page.getByRole("status")).toHaveText("已儲存");
   Object.assign(saved, await page.evaluate(() => window.__savedOptions));
   expect(saved).toEqual({ endpoint: "http://127.0.0.1:18786", token: "synthetic-token" });
+});
+
+test("recommendations append the next cursor page without duplicate jobs", async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 900 });
+  await page.addInitScript(() => {
+    const firstPage = Array.from({ length: 12 }, (_, index) => ({ id: index + 1, source: "yourator", title: `First synthetic job ${index + 1}`, company_name: "Example", score_total: 90 - index, process_state: "shortlisted", apply_state: "pending", verdict: "recommended" }));
+    const second = { id: 99, source: "yourator", title: "Second synthetic job", company_name: "Example", score_total: 70, process_state: "shortlisted", apply_state: "pending", verdict: "recommended" };
+    window.__calls = [];
+    window.chrome = {
+      storage: { local: {
+        get: (defaults, callback) => callback(defaults),
+        set: (_values, callback) => callback?.(),
+      } },
+      runtime: {
+        onMessage: { addListener: () => {} },
+        sendMessage: (request) => {
+          window.__calls.push(request);
+          if (request.type === "current-page") return Promise.resolve({ ok: true, context: { kind: "unsupported", status: "unsupported" } });
+          if (request.type === "profile-api") return Promise.resolve({ ok: true, data: { status: "missing" } });
+          if (request.path === "/api/v1/jobs/99") return Promise.resolve({ ok: true, data: { ...second, description: "Synthetic full JD", score: { total: 70 }, status_events: [] } });
+          if (request.path?.startsWith("/api/v1/jobs?") && request.path.includes("cursor=MjA")) return Promise.resolve({ ok: true, data: { items: [firstPage[0], second], next_cursor: null } });
+          if (request.path?.startsWith("/api/v1/jobs?")) return Promise.resolve({ ok: true, data: { items: firstPage, next_cursor: "MjA" } });
+          if (request.path === "/api/v1/queue" || request.path === "/api/v1/runs") return Promise.resolve({ ok: true, data: { items: [], next_cursor: null } });
+          return Promise.resolve({ ok: false, error: "unexpected request" });
+        },
+      },
+    };
+  });
+  await page.goto(dashboardPath);
+  await page.getByRole("tab", { name: /推薦/ }).click();
+  await expect(page.getByRole("button", { name: "載入更多" })).toBeVisible();
+  await page.getByRole("button", { name: "載入更多" }).scrollIntoViewIfNeeded();
+  const scrollBeforeLoad = await page.evaluate(() => window.scrollY);
+  expect(scrollBeforeLoad).toBeGreaterThan(0);
+  await page.getByRole("button", { name: "載入更多" }).click();
+  await expect(page.locator("#jobs .job-row")).toHaveCount(13);
+  await expect(page.getByRole("button", { name: /First synthetic job 1 / })).toHaveCount(1);
+  await expect(page.getByRole("button", { name: /Second synthetic job/ })).toHaveCount(1);
+  await expect(page.getByRole("button", { name: "載入更多" })).toHaveCount(0);
+  const scrollAfterLoad = await page.evaluate(() => window.scrollY);
+  expect(Math.abs(scrollAfterLoad - scrollBeforeLoad)).toBeLessThanOrEqual(2);
+  await page.getByRole("button", { name: /Second synthetic job/ }).click();
+  await page.getByRole("tab", { name: /推薦/ }).click();
+  const scrollAfterReturn = await page.evaluate(() => window.scrollY);
+  expect(Math.abs(scrollAfterReturn - scrollAfterLoad)).toBeLessThanOrEqual(2);
+  await expect(page.getByRole("button", { name: /Second synthetic job/ })).toHaveClass(/is-viewed/);
+  const calls = await page.evaluate(() => window.__calls);
+  expect(calls.some((call) => call.path?.includes("verdict=recommended") && call.path?.includes("cursor=MjA"))).toBeTruthy();
 });
 
 test("service worker forwards API requests and reads current tab context", async () => {

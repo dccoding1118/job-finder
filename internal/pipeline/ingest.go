@@ -140,3 +140,22 @@ func (p Pipeline) RequestLetter(ctx context.Context, jobID int64) error {
 	}
 	return p.Store.TransitionProcess(ctx, jobID, "letter_requested")
 }
+
+// RequestRescore returns one already scored job to the score stage under the
+// active Profile revision, so a single wrong score can be redone without
+// reprocessing every job. It returns as soon as the state is stored; the worker
+// picks the job up on its own and appends a new score beside the old one.
+func (p Pipeline) RequestRescore(ctx context.Context, jobID int64) error {
+	if p.Store == nil {
+		return fmt.Errorf("pipeline: store is required")
+	}
+	snapshot, err := p.snapshot()
+	if err != nil {
+		return err
+	}
+	if err := p.Store.RequeueScore(ctx, jobID, snapshot.Revision); err != nil {
+		return err
+	}
+	p.logger().Info("job requeued for rescore", "stage", "score", "job_id", jobID, "profile_revision", snapshot.Revision)
+	return nil
+}

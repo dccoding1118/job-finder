@@ -909,6 +909,29 @@ svg {
   gap: 9px;
 }
 
+.load-more-button {
+  width: 100%;
+  min-height: 42px;
+  margin-top: 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--primary);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.load-more-button:hover:not(:disabled) {
+  border-color: #bec9e5;
+  background: var(--muted);
+}
+
+.load-more-button:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+
 .job-row {
   width: 100%;
   gap: 12px;
@@ -927,6 +950,15 @@ svg {
 .job-row:hover {
   border-color: #bec9e5;
   background: #fbfcff;
+}
+
+.job-row.is-viewed {
+  background: var(--surface-muted);
+  box-shadow: none;
+}
+
+.job-row.is-viewed:hover {
+  background: var(--muted);
 }
 
 .job-row-copy {
@@ -1160,12 +1192,43 @@ svg {
   font-size: 10px;
 }
 
+.row-meta .viewed-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  background: var(--primary-soft);
+  color: var(--primary);
+  font-weight: 750;
+}
+
+.viewed-badge svg {
+  width: 11px;
+  height: 11px;
+}
+
 .run-stats {
   display: flex;
   flex-wrap: wrap;
   gap: 7px;
   color: var(--ink-muted);
   font-size: 11px;
+}
+
+.run-item.is-failed {
+  border-color: var(--warning);
+}
+
+.run-detail {
+  display: block;
+  margin-top: 6px;
+  color: var(--ink-muted);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.metric-value.is-warning {
+  background: transparent;
+  color: var(--warning);
 }
 
 .prototype-panel {

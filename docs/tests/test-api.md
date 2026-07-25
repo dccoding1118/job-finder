@@ -26,7 +26,7 @@
 | 編號 | 測試情境 | 預期結果 |
 |---|---|---|
 | AT-01 | 正確 token 與 extension origin 查詢 Job，含各 process state 與分數 | 僅回符合篩選的資料，依現行分數降冪；空值為 `null`；每筆附 verdict |
-| AT-02 | 非法篩選、limit、cursor 或 Job ID | 回 400；不查詢或寫入猜測資料 |
+| AT-02 | 第一頁、下一頁、末頁，以及非法篩選、limit、cursor 或 Job ID | 每頁維持排序且不重複；有後續資料才回 `next_cursor`；末頁為 `null`；非法輸入回 400，不查詢或寫入猜測資料 |
 | AT-03 | 單筆 `letter_ready` Job | 回 JD、評分、核准信件與 StatusEvent；特殊字元維持 JSON 安全編碼 |
 | AT-04 | 不存在 Job | 回 404；不洩漏內部錯誤 |
 | AT-05 | 各 process state 的 Job 導出 verdict 與 `letter_state` | 逐項符合 [design-api](../designs/design-api.md) §3.1：`filtered_out`⇒`unfit`＋filter hits、`scored`⇒`not_recommended`、`shortlisted`／`letter_requested`／`letter_ready`／`letter_failed`⇒`recommended` 且 `letter_state` 依序為 `none`／`requested`／`ready`／`failed`、`discovered`⇒`pending_detail`、`new`／`queued`⇒`pending_score` |
@@ -87,3 +87,6 @@ extension 的實機互動不由 API L1 取代，最終以 [verify](../verify.md)
 | AT-65 | Job 的 Score／Letter revision 與 active revision 相同或不同 | 四個 revision 欄位與 `score_stale`／`letter_stale` 正確；verdict 與 apply state 不變 |
 | AT-66 | Profile missing 或 ready 時 POST reprocess | missing 回 409 且不呼叫 activator；ready 只在 POST 時以 active snapshot 呼叫一次並回統計 |
 | AT-66 | Profile CORS 與觀測安全 | preflight 允許 PUT／If-Match；observer、log、錯誤與 evidence 不含 Profile body、薪資、經歷或 YAML |
+| AT-70 | 對 `scored` Job POST rescore | 呼叫 pipeline 一次；回 `queued` 與更新後 Job（`process_state=queued`、verdict `pending_score`）|
+| AT-71 | 對信件階段 Job 或不存在的 Job POST rescore | 分別回 409 `rescore_not_allowed` 與 404；狀態不變 |
+| AT-72 | GET status | 回各處理狀態筆數、評分預算餘額與最近 Agent 呼叫；失敗呼叫附失敗類別與截斷回應、成功呼叫不附任何一者（低分仍是成功）；非 GET 回 405 |

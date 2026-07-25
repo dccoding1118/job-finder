@@ -375,7 +375,7 @@ func parseReview(raw string) (ReviewResult, error) {
 }
 
 func scorePrompt(profile string, j Job) string {
-	return "你是求職媒合評分器。僅輸出單一 JSON 物件，不要說明。\nProfile YAML:\n" + profile + "\nJob:\ntitle: " + j.Title + "\ncompany: " + j.CompanyName + "\ndescription: " + j.Description + "\nlocation: " + j.Location + "\n請回傳 hard_skill、domain、seniority、condition、direction（皆為 0-100 整數）與 reason（最多50字）。不要計算 total。"
+	return "你是求職媒合評分器。僅輸出單一 JSON 物件，不要說明。\nProfile YAML:\n" + profile + "\nJob:\ntitle: " + j.Title + "\ncompany: " + j.CompanyName + "\ndescription: " + j.Description + "\nlocation: " + j.Location + "\n請回傳 hard_skill、domain、seniority、condition、direction（皆為 0-100 整數）與 reason（最多100字）。不要計算 total。"
 }
 
 // extractObject returns the last balanced top-level JSON object in raw, ignoring
@@ -431,7 +431,7 @@ func parseScore(raw string) (ScoreResult, error) {
 			return r, fmt.Errorf("agents: score out of range")
 		}
 	}
-	if strings.TrimSpace(r.Reason) == "" || len([]rune(r.Reason)) > 50 {
+	if strings.TrimSpace(r.Reason) == "" || len([]rune(r.Reason)) > maxScoreReason {
 		return r, fmt.Errorf("agents: invalid reason")
 	}
 	return r, nil
