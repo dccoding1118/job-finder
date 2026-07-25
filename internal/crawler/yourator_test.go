@@ -66,6 +66,34 @@ func TestYouratorGroupsDirectionQueriesAndDeduplicatesDetails(t *testing.T) {
 	}
 }
 
+func TestExtractJobDescriptionIncludesNestedYouratorSections(t *testing.T) {
+	source := `<html><body>
+<section class="relative job-description row main-info">
+  <div class="job__content">
+    <div><h2 class="job-heading">工作內容</h2><section class="content__area"><p>Build cloud services.</p></section></div>
+    <div><h2 class="job-heading">條件要求</h2><section class="content__area"><p>Requires Node.js &amp;amp; TypeScript.</p></section></div>
+    <div><h2 class="job-heading">加分條件</h2><section class="content__area"><p>Experience with containers.</p></section></div>
+  </div>
+</section>
+</body></html>`
+
+	description := extractJobDescription(source)
+	for _, expected := range []string{"工作內容\nBuild cloud services.", "條件要求\nRequires Node.js & TypeScript.", "加分條件\nExperience with containers."} {
+		if !strings.Contains(description, expected) {
+			t.Fatalf("description %q does not contain %q", description, expected)
+		}
+	}
+	if strings.Contains(description, "</section>") {
+		t.Fatalf("description contains HTML: %q", description)
+	}
+}
+
+func TestExtractJobDescriptionRejectsIncompleteOuterSection(t *testing.T) {
+	if description := extractJobDescription(`<section class="job-description"><section>incomplete</section>`); description != "" {
+		t.Fatalf("description = %q, want empty", description)
+	}
+}
+
 func TestYouratorRetriesAndUsesInjectedDelay(t *testing.T) {
 	attempts := 0
 	delays := []time.Duration{}

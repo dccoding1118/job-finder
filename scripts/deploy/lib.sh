@@ -188,35 +188,20 @@ smoke_api() {
   ok "API smoke passed (authenticated 200, unauthenticated 401)"
 }
 
-# smoke_run triggers the one-shot fetch service and confirms the run mechanism:
-# the service starts without failing and a run row is recorded. It does not block
-# on the fetch completing — a full fetch walks every job detail page under polite
-# delays and takes minutes — so it starts with --no-block and, after a bounded
-# wait, accepts either a completed success or an in-progress run that is already
-# recorded. A failed unit is the only hard failure.
-smoke_run() {
-  local addr token deadline state result count
-  addr="$(config_value api addr)"
-  token="$(config_value api token)"
-  need_cmd curl
-  systemctl --user start --no-block "${RUN_SERVICE}"
-  deadline=$(( $(now_epoch) + 90 ))
-  while (( $(now_epoch) < deadline )); do
-    state="$(systemctl --user show "${RUN_SERVICE}" -p ActiveState --value)"
-    [[ "${state}" == "inactive" || "${state}" == "failed" ]] && break
-    sleep 3
-  done
-  state="$(systemctl --user show "${RUN_SERVICE}" -p ActiveState --value)"
-  result="$(systemctl --user show "${RUN_SERVICE}" -p Result --value)"
-  [[ "${state}" == "failed" ]] && die "${RUN_SERVICE} failed (Result=${result})"
-  count="$(curl -s -m 10 -H "Authorization: Bearer ${token}" \
-    "http://${addr}/api/v1/runs" | grep -o '"trigger"' | wc -l)"
-  [[ "${count}" -ge 1 ]] || die "no run recorded after triggering ${RUN_SERVICE}"
-  if [[ "${state}" == "inactive" && "${result}" == "success" ]]; then
-    ok "run one-shot completed (Result=success); ${count} run(s) recorded"
-  else
-    ok "run triggered and recorded (${count} run(s)); fetch still in progress under polite delays"
-  fi
+# assert_run_armed proves the scheduled fetch is wired without fetching: the
+# one-shot unit loads cleanly and the timer is active with a future trigger.
+# Deployment never performs a fetch — the operator triggers one on demand or
+# waits for the timer.
+assert_run_armed() {
+  local load state next
+  load="$(systemctl --user show "${RUN_SERVICE}" -p LoadState --value)"
+  [[ "${load}" == "loaded" ]] || die "${RUN_SERVICE} LoadState=${load}, want loaded"
+  state="$(systemctl --user show "${RUN_TIMER}" -p ActiveState --value)"
+  [[ "${state}" == "active" ]] || die "${RUN_TIMER} ActiveState=${state}, want active"
+  next="$(systemctl --user show "${RUN_TIMER}" -p NextElapseUSecRealtime --value)"
+  [[ -n "${next}" && "${next}" != "0" && "${next}" != "n/a" ]] \
+    || die "${RUN_TIMER} has no scheduled next trigger"
+  ok "fetch is armed: ${RUN_SERVICE} loaded, ${RUN_TIMER} active (next ${next})"
 }
 
 # write_manifest records what was installed so an operator can prove the running

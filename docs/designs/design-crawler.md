@@ -100,7 +100,7 @@
 |---|---|---|
 | 列表 JSON `id` | `external_id` | 轉為十進位字串。 |
 | 列表 JSON `name`、`path`、`company.brand`、`salary`、`location` | `title`、`url`、`company_name`、薪資、`location` | URL 為 `https://www.yourator.co` 加 `path`；薪資僅在 `NT$ min - max` 月薪格式時解析，其他格式為 NULL。 |
-| 公開職缺 HTML `section.job-description` | `description` | 擷取區段、移除 HTML tag、解碼 entity 並正規化空白；區段不存在時保留 partial 職缺。 |
+| 公開職缺 HTML 外層 `section.job-description` | `description` | 依巢狀 `section` 平衡邊界擷取完整容器，包含工作內容、條件要求、遠端型態、加分條件與其他職缺資訊；移除 HTML tag、解碼 entity 並保留標題與段落換行。容器不存在或結構不完整時保留 partial 職缺。 |
 | 職稱與 JD 中的 `remote`／`遠端`／`hybrid`／`混合` | `remote_type` | 依序判定 remote、hybrid，其他為 onsite。 |
 
 ## 4. Cake adapter（B6）
@@ -141,11 +141,11 @@
 | robots.txt | 每輪來源抓取前確認目標搜尋與職缺路徑未被禁止；無法取得或規則禁止時停止來源，不發送資料請求 |
 | 驗證頁 | 回應顯示登入、人機驗證或驗證碼時停止來源並回傳合規錯誤，不切換參數或嘗試繞過 |
 | UA / header | 設定檔指定；預設一般瀏覽器 UA ＋必要 Referer |
-| 內容純文字化 | HTML JD 一律轉純文字（strip tags、保留換行），DB 不存原始 HTML |
+| 內容純文字化 | HTML JD 一律轉純文字（strip tags、保留區段標題與換行），DB 不存原始 HTML |
 
 ## 7. 測試
 
-- 各 adapter／解析器以 `httptest` 假伺服器或本地 fixture 餵**結構仿真、內容合成**的回應，驗證欄位映射與分頁；不使用真實 JD 內容。
+- 各 adapter／解析器以 `httptest` 假伺服器或本地 fixture 餵**結構仿真、內容合成**的回應，驗證欄位映射與分頁；不使用真實 JD 內容。Yourator fixture 的外層 `section.job-description` 含巢狀工作內容、條件要求與加分條件，三個區段均須進入 `description`。
 - 104 解析器：搜尋頁與通知頁兩套 fixture 各自映射至同一組 partial `RawJob`；廣告職缺被排除；職稱取自 `title` 屬性而非含 `text-highlight` 的節點文字；列表 `description` 恆為 NULL。
 - 104 內頁：JSON-LD 兩層跳脫的 `description` 解碼為含全部區段的純文字；`baseSalary` 為面議 placeholder 時 `salary_min/max` 為 NULL；`TELECOMMUTE` ＋部分遠端內文映射為 `hybrid`；空 `skills`／`educationRequirements` 不映射。
 - 負向：非 200、JSON 結構變更（缺欄位時報 error 而非靜默略過）、空結果、內頁缺 JSON-LD。

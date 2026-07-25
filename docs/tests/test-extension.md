@@ -9,6 +9,7 @@
 | ET-01 | B4 | Options 儲存 loopback endpoint 與 token | 僅接受 loopback HTTP URL；token 存入 `chrome.storage.local`，不回顯於 dashboard |
 | ET-02 | B4 | service worker 收到 Side Panel 的 API 請求 | 加入 Bearer token，回傳已標準化成功或錯誤結果 |
 | ET-03 | B4 | Side Panel 四頁籤、Job 清單、判定篩選、五維對照、待看清單與 Run 歷史 | 正確轉譯 API response；判定直接取用 `verdict`，不自行從 `process_state` 推導；Run stats 顯示 `key=value`；空值顯示「—」，錯誤有可理解訊息 |
+| ET-21 | B4 | 推薦清單回應含下一頁 cursor，並在清單與目前職缺間往返 | 顯示「載入更多」並以相同篩選取得下一頁；追加且不重複既有 Job、不改變捲動位置；末頁隱藏按鈕；開啟職缺後標示「已看」，返回推薦頁恢復原位置；變更篩選或重新整理從第一頁開始 |
 | ET-04 | B4 | 複製求職信成功與失敗 | 成功有文字確認且 clipboard 等於核准信件；失敗時信件仍可選取並顯示說明 |
 | ET-05 | B4 | 投遞狀態與手動 run | 對應正確 API 路由與 payload；`already_running` 不重複送出 |
 | ET-06 | B4 | 對照區依 `letter_state` 呈現求職信入口 | `none` 顯示產生按鈕、`requested` 顯示處理中且按鈕停用、`ready` 顯示信件與複製、`failed` 顯示未過審與再次產生 |
@@ -33,7 +34,9 @@
 | ET-34 | Profile | 412 conflict／422 validation／離線 | 保留草稿、顯示安全問題與重新載入；不提供強制覆蓋 |
 | ET-35 | Profile | storage、log 與 service worker 路由 | Profile／草稿／API body 不進 storage 或 log；content script 不可讀取，所有 request 經 service worker |
 | ET-36 | Profile | Job stale 標示與主題切換 | 分數只顯示整數；Score revision 以綠色最新／黃色待重評辨識，Letter stale 另提示；不改 verdict/apply，切換主題不清除 editor 狀態 |
-| ET-37 | 系統 | 群組、Options、排程與手動 reprocess | 依連線、Profile、批次、歷程排序；可開 Options；顯示每日 08:30；只有按下更新才 POST reprocess |
+| ET-37 | 系統 | 群組、Options、排程與手動 reprocess | 依連線、Profile、批次、進度、歷程排序；可開 Options；顯示每日 08:30；只有按下更新才 POST reprocess |
+| ET-38 | 目前職缺 | `scored` 職缺按下「重新評分」 | 送出一次 `POST /api/v1/jobs/{id}/rescore`；該筆立即顯示為評分中且按鈕消失；信件階段職缺不顯示此按鈕 |
+| ET-39 | 系統 | 處理進度與 Agent 呼叫紀錄 | 顯示各待處理狀態筆數與當日評分額度餘額；未完成呼叫顯示角色、耗時與失敗類別說明；低分的成功呼叫顯示為呼叫成功且不顯示失敗字樣；不輪詢 |
 
 測資不得含真實 JD、Profile、token 或 104 頁面內容。
 

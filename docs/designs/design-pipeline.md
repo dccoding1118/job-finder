@@ -49,6 +49,8 @@ filter、score 與 letter 每筆工作開始時各自從 Profile provider 取得
 
 `RequestLetter(jobID)`：pipeline 提供此入口供 API 呼叫——經 store 將 `shortlisted` 或 `letter_failed` 轉為 `letter_requested` 後即回。worker 自然取件，呼叫端不等待 Agent 完成。
 
+`RequestRescore(jobID)`：pipeline 提供此入口供 API 呼叫——取當下 active snapshot，經 store 將 `scored` 或 `shortlisted` 轉回 `queued` 並寫入該 revision 後即回，worker 隨後以最新 Profile 重新評分該筆。scores 為 append-only，舊 score 保留為歷史，新 score 寫入後才成為現行分數。已進入求職信階段的職缺不得重評，因此單筆重評不改寫求職信與投遞歷史。它的成本是一次 Agent 呼叫，與整批 activation 重新處理互不取代。
+
 `jobfinder run --stage filter|score|letter [--job ID]` 是**除錯用**的第二 process 入口，以 DB 同目錄 lock file（flock）與常駐 worker 互斥。worker 常駐時該鎖多半被占用，此入口僅供 worker 停止時的人工重跑，不是常態路徑。
 
 - **冪等**：狀態即進度。中斷後重啟自然從殘留狀態續作；已完成的 Agent 呼叫不重複（該 job 已離開取件狀態）。
@@ -133,6 +135,24 @@ activation 本身只做本地篩選與重新入隊，不呼叫 LLM。重新評�
 | Profile 缺少或無效 | setup／invalid 模式；抓取、ingest 與 worker 暫停，Profile 讀寫 API 保持可用 |
 | 舊 revision worker 寫回 | store CAS 拒絕，保留 Agent call 稽核，不改現行狀態或 Score |
 | activation transaction 失敗 | Profile snapshot 與既有 Job revision 均不變；API 回錯誤，使用者可重試 |
+
+### 6.1 執行可觀測性
+
+worker 與各階段以 `log/slog` 輸出結構化記錄至 stderr，由 systemd 收進 journald（`journalctl --user -u jobfinder-api`）。每筆 Agent 呼叫另有 `agent_calls` 稽核列，經 [design-api](design-api.md) 的 `GET /api/v1/status` 對外呈現。
+
+| 事件 | 級別 | 欄位 |
+|---|---|---|
+| 取得一批待評分職缺 | Info | `stage`、`jobs`、`budget_remaining`、`budget_limited` |
+| 單筆評分開始／完成 | Info | `stage`、`job_id`、`source`、`profile_revision`；完成另附 `total`、`state`、`runner`、`duration_ms` |
+| 單筆評分失敗 | Error | `stage`、`job_id`、`duration_ms`、`error` |
+| 評分結果因 revision 過期被丟棄 | Info | `stage`、`job_id`、`profile_revision` |
+| 單筆重評入隊 | Info | `stage`、`job_id`、`profile_revision` |
+| 單筆求職信開始／完成／失敗 | Info／Error | `stage`、`job_id`、`state`、`rounds`、`duration_ms`、`error` |
+| filter 階段完成一批 | Info | `stage`、`processed`、`filtered_out` |
+| worker 單次消化 | Info | `filtered`、`scored`、`lettered` |
+| 每日預算用盡而略過取件 | Debug | `stage`、`reason`、`max_per_day` |
+
+log 不得含 JD、Profile、薪資、求職信內容或 Agent 原始輸入輸出；只記識別子、狀態與計量。無待處理件的空轉不產生記錄。
 
 ## 7. 設定檔（`config.yaml`）
 

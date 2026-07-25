@@ -89,6 +89,7 @@
 | PT-74 | score worker 持舊 snapshot 執行時，儲存新 Profile 後手動 reprocess | 舊 Agent call 保留實際 revision；activation 切換 Job revision後，舊結果 CAS 失敗，不成為現行 Score |
 | PT-75 | letter worker 執行時啟用新 revision | 工作以起始 snapshot 完成並保存其 revision；Letter 保留且導出 stale，不自動重跑 |
 | PT-76 | Profile missing／invalid／degraded | worker、run 與 ingest 處理暫停或回 profile_not_ready；provider ready 後自動喚醒 |
+| PT-77 | 對已評分 Job 呼叫 `RequestRescore` | 以當下 active revision 排回 `queued` 並立即回；worker 下一輪重評該筆並附加新 Score，其他 Job 不產生 Agent 呼叫 |
 
 ## 6. 模組驗收
 

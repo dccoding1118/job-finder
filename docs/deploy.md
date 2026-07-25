@@ -27,7 +27,7 @@
 |---|---|---|
 | `jobfinder-api.service` | 長駐服務；`Restart=on-failure` | `<binary> serve --config <config>`；僅監聽 `api.addr`；`WorkingDirectory` 為資料根。**同時承載 pipeline 常駐 worker**（初篩／評分／求職信的唯一消化者），因此此服務停止時處理即停止，僅抓取仍會依 timer 進行 |
 | `jobfinder-run.service` | `Type=oneshot` | `<binary> run --config <config>`；只執行抓取，抓完即退出，不等待 LLM 階段 |
-| `jobfinder-run.timer` | 每日觸發 | `OnCalendar=*-*-* 08:30:00 Asia/Taipei`、`Persistent=true`、`Unit=jobfinder-run.service` |
+| `jobfinder-run.timer` | 每日觸發 | `OnCalendar=*-*-* 08:30:00 Asia/Taipei`、`Persistent=false`、`Unit=jobfinder-run.service`；錯過的排程不補跑 |
 
 所有 unit 的 `Environment=PATH=` 必須是完整白名單，至少包含 `~/.local/bin`、`~/.local/share/mise/shims`、`/usr/local/bin`、`/usr/bin`、`/bin`，使 headless `claude`／`codex` 與其相依可被執行。不得依賴 interactive shell 的 `mise activate` 或 `bash -lc`。
 
@@ -39,11 +39,13 @@
 
 | 腳本 | 動作 | 生效面驗證 |
 |---|---|---|
-| `install.sh` | preflight（`fmt`／`lint`／`test`＋`build`）→ 建立 §2 目錄與 owner-only 設定／Profile／denylist（既有者不覆寫）→ `profile lint` 閘門 → 安裝 binary 與渲染後 unit → `daemon-reload`、enable 並啟動 API service 與 timer | API service `MainPID` 的 `/proc/<pid>/exe` 指向安裝的 binary；只有 loopback listener；帶 token 的 Job API 回 200、未帶回 401；`run` one-shot `Result=success` |
+| `install.sh` | preflight（`fmt`／`lint`／`test`＋`build`）→ 建立 §2 目錄與 owner-only 設定／Profile／denylist（既有者不覆寫）→ `profile lint` 閘門 → 安裝 binary 與渲染後 unit → `daemon-reload`、enable 並啟動 API service 與 timer | API service `MainPID` 的 `/proc/<pid>/exe` 指向安裝的 binary；只有 loopback listener；帶 token 的 Job API 回 200、未帶回 401；`jobfinder-run.service` 可載入且 timer active 並有下一次觸發時間 |
 | `update.sh` | 重跑 preflight 與 build → 保留現行 binary 至 `jobfinder.prev`、替換 binary 與 unit → `daemon-reload` 後對 API service `try-restart` | 執行中 process 為新 binary 且啟動時間晚於替換點；loopback-only；API smoke 通過 |
 | `rollback.sh` | 由 `jobfinder.prev` 與 `units.prev/` 還原前一版 binary 與 unit → `daemon-reload` 後 `try-restart`；SQLite **不自動更動**，僅在確認毀損時由 `~/.local/share/jobfinder/backups/` 手動還原 | 執行中 process 為還原版；loopback-only；API smoke 通過 |
 
 第一次安裝時若無設定檔，`install.sh` 由 `configs/config.example.yaml` 渲染出絕對路徑與隨機 token 的 `config.yaml`；`api.extension_origin` 仍為佔位，須在載入 extension 前替換為實際 `chrome-extension://` id。既有設定檔一律不覆寫；unit 為渲染後的靜態副本，安裝前會比對並將差異吵出（template 改版或人工修改都不靜默吞掉）。
+
+部署腳本一律不觸發抓取：`install.sh` 只確認 one-shot unit 可載入且 timer 已排定下一次觸發，`update.sh` 與 `rollback.sh` 完全不碰抓取路徑；抓取只由每日 timer 或操作者手動 `systemctl --user start jobfinder-run.service`（或 Side Panel 的重新整理動作）啟動。
 
 `systemctl --user enable --now` 不會重啟已在執行的舊 process；更新與回滾一律使用 `try-restart`。不得將驗收部署（`.local-dev/verify/`）的 binary、設定或 state 直接覆蓋日常使用目錄。
 

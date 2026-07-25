@@ -100,12 +100,13 @@ assert_api_effective "${marker}"
 assert_loopback_only
 smoke_api
 
-log "manual run smoke (oneshot fetch)"
-smoke_run
+log "check the scheduled fetch is armed"
+assert_run_armed
 
 write_manifest install
 log "install complete"
 printf '\nInstalled:\n  binary : %s\n  config : %s\n  data   : %s\n  units  : %s\n' \
   "${BINARY}" "${CONFIG}" "${DATA_DIR}" "${UNIT_DIR}"
-printf '\nThe API service and daily fetch timer are now enabled and running.\n'
+printf '\nThe API service and the daily fetch timer are enabled. No fetch runs at install time.\n'
+printf 'Fetch on demand: systemctl --user start %s\n' "${RUN_SERVICE}"
 printf 'Diagnostics: journalctl --user -u %s\n' "${API_SERVICE}"

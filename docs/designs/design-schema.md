@@ -46,7 +46,7 @@
 | `job_id` | INTEGER FK→jobs | 一 Job 可有多筆（JD 變更重評時新增，不覆蓋） |
 | `dim_hard_skill` / `dim_domain` / `dim_seniority` / `dim_condition` / `dim_direction` | INTEGER | 五維各 0–100 |
 | `total` | REAL | Go 依權重計算的加權總分 |
-| `reason` | TEXT | ≤50 字推薦/不推薦理由 |
+| `reason` | TEXT | ≤100 字推薦/不推薦理由 |
 | `runner` | TEXT | 產出此評分的 runner（`claude` / `codex`） |
 | `profile_revision` | TEXT NULL | 產生此 Score 的 Profile revision；新資料必填，legacy 可為 NULL |
 | `created_at` | TEXT | RFC3339 |
@@ -120,13 +120,15 @@
 | `new` | `queued` | 通過條件篩選 |
 | `queued` | `scored` | 評分完成且 total < 75 |
 | `queued` | `shortlisted` | 評分完成且 total ≥ 75 |
+| `scored` | `queued` | **使用者**要求重新評分單筆職缺（Side Panel） |
+| `shortlisted` | `queued` | **使用者**要求重新評分單筆職缺（Side Panel） |
 | `shortlisted` | `letter_requested` | **使用者**要求生成求職信（Side Panel／CLI） |
 | `letter_requested` | `letter_ready` | Reviewer 過審 |
 | `letter_requested` | `letter_failed` | 重寫上限仍不過審 |
 | `letter_failed` | `letter_requested` | 使用者再次要求生成（Side Panel／CLI） |
 | 任一非終態 | `new` | JD 內容雜湊變更（重新走流程；既有 scores/letters 保留為歷史） |
 
-終態：`filtered_out`、`scored`、`letter_ready`（處理軸而言）。`shortlisted` 與 `letter_failed` 是**停留狀態**——系統不會自行推進，只有使用者要求才轉入 `letter_requested`（PRD R5.0）。`letter_requested` 是 letter 階段的唯一取件狀態。
+終態：`filtered_out`、`letter_ready`（處理軸而言）。`scored` 只由使用者明確要求的單筆重評離開。`shortlisted` 與 `letter_failed` 是**停留狀態**——系統不會自行推進，只有使用者要求才轉入 `letter_requested`（PRD R5.0）。`letter_requested` 是 letter 階段的唯一取件狀態。
 
 ### 3.2 Profile activation 專用轉換
 
@@ -160,6 +162,8 @@ activation、filter 結果、Score 保存與 process transition 均以 expected 
 | `TransitionProcess(jobID, to, meta)` / `TransitionApply(jobID, to, note)` | 驗證合法轉換 → 更新欄位 → 寫 `status_events`（同一交易） |
 | `ListJobs(filter, sort)` | UI/CLI 查詢：依狀態、來源、分數排序 |
 | `PickForStage(stage, limit)` | 常駐 worker 各階段取件（`new`→filter、`queued`→score、`letter_requested`→letter）；`shortlisted` 不是任何階段的取件狀態 |
+| `RequeueScore(jobID, revision)` | 單筆重評：`scored`／`shortlisted` 於單一交易改為 `queued`、寫入 active revision 與 `manual rescore` 事件；`queued` 為 no-op，其餘狀態回 `ErrRescoreNotAllowed` |
+| `CountJobsByState()` / `RecentAgentCalls(limit)` | 處理進度查詢：各處理狀態的職缺筆數、最近的 Agent 呼叫稽核（失敗才附截斷輸出） |
 | `ActivateProfile(fromRevision, toRevision)` | 依 §3.2 在單一交易內切換可重新處理的 Job；回傳 partial screened、requeued、protected、unchanged 統計 |
 | revision-aware CAS | filter／score／transition 寫入皆驗證 expected state 與 expected revision；舊 snapshot 結果不得成為現行判定 |
 | `CountAgentCallsSince(role, since)` | 每日預算計數（見 [design-pipeline](design-pipeline.md) §5） |

@@ -53,6 +53,7 @@ Job viewmodel 另回 `current_profile_revision`、`evaluation_profile_revision`�
 | `GET /api/v1/jobs` | 選填 `process_state`、`verdict`、`apply_state`、`source`、`limit`、`cursor` | 分數降冪的 Job page（含 verdict）與下一頁 cursor | 非法篩選或分頁回 400 |
 | `GET /api/v1/jobs/{id}` | Job ID | Job、verdict、現行 Score、核准 Letter、StatusEvent | ID 非法 400；不存在 404 |
 | `POST /api/v1/jobs/{id}/letter` | Job ID | `shortlisted` 或 `letter_failed` 經 store 轉為 `letter_requested`；回 `{ "status": "requested" }` 與更新後 Job | 非法來源狀態或不存在 4xx |
+| `POST /api/v1/jobs/{id}/rescore` | Job ID | `scored` 或 `shortlisted` 經 store 轉為 `queued` 並採用 active revision；回 `{ "status": "queued" }` 與更新後 Job | 有求職信歷史或非可重評狀態 409 `rescore_not_allowed`；不存在 404；Profile 未 ready 409 |
 | `POST /api/v1/jobs/{id}/apply` | `apply_state`、選填 `note` | 更新後 Job 狀態與新 StatusEvent | 非法轉換或不存在 4xx |
 | `GET /api/v1/queue` | 選填 `limit`、`cursor` | `discovered` Job page 與原始連結 | 非法分頁 400 |
 | `POST /api/v1/runs` | 無 | `{ "status": "started" }` 或 `{ "status": "already_running" }` | 啟動失敗 500 |
@@ -62,12 +63,19 @@ Job viewmodel 另回 `current_profile_revision`、`evaluation_profile_revision`�
 | `GET /api/v1/profile` | 無 | `status`、結構化 `profile`、revision、摘要、issues、重新處理預估；header 帶 ETag | 認證或檔案 I/O 失敗 |
 | `PUT /api/v1/profile` | `If-Match`＋完整 Profile JSON | 新 ETag、revision、`semantic_changed` | 缺條件 428；衝突 412；驗證 422；儲存失敗 500 |
 | `POST /api/v1/profile/reprocess` | 無 | active revision 與重新篩選／排隊／受保護統計 | Profile 未 ready 409；重新處理失敗 500 |
+| `GET /api/v1/status` | 無 | 各 `process_state` 的職缺筆數、當日評分預算餘額、最近 20 筆 Agent 呼叫摘要 | 讀取失敗 500；非 GET 405 |
+
+清單 endpoint 預設每頁 20 筆，`limit` 可設為 1–100。`next_cursor` 是 API 產生的不透明字串；有後續資料時回傳字串，末頁回 `null`。client 只能原樣帶回 `cursor`，不得解析或自行產生；非法 `limit` 或 `cursor` 回 `400 invalid_request`。Job cursor 沿用當次篩選與分數排序，篩選條件變更時必須從第一頁重新查詢。
 
 `GET /api/v1/profile` 的 `status` 為 `missing`／`invalid`／`ready`；只有可安全解析時才回完整結構化 Profile。正常授權 GET 是唯一可回 Profile 內容的 response；錯誤、observer、log 與 evidence 不得包含 Profile、薪資、經歷、denylist 命中值或 YAML。
 
 `PUT` 必須先通過 ETag、strict schema 與 PII 驗證，再原子寫入並切換 active snapshot；不得修改既有 Job revision 或呼叫 activation。語意相同時回 `semantic_changed=false`。`POST /api/v1/profile/reprocess` 取得當下 ready snapshot，經 pipeline 專用入口將可更新的 stale Job 切至該 revision；求職信狀態與投遞歷史受保護。Profile 未 ready 時，手動 run、reprocess 與 capture 等處理型 route 回 `409 profile_not_ready`；Profile API 與既有 Job／Run 讀取仍可用。
 
 `POST /api/v1/jobs/{id}/letter` 是使用者表達投遞意願的唯一 API 入口（PRD R5.0），對 `shortlisted` 與 `letter_failed` 皆適用——因此它同時取代了「重試求職信」這個獨立動作。handler 只呼叫 pipeline 的 `RequestLetter`，立即回應且不等待 Agent 完成；對已是 `letter_requested` 的 Job 重複呼叫為冪等（回 `requested`，不重複啟動工作）。
+
+`POST /api/v1/jobs/{id}/rescore` 是單筆評分重做的唯一入口：handler 呼叫 pipeline 的 `RequestRescore`，立即回應且不等待 Agent 完成，該筆由常駐 worker 以 active revision 重新評分。可重評來源狀態只有 `scored` 與 `shortlisted`；對已是 `queued` 的 Job 重複呼叫為冪等。已進入求職信階段（`letter_requested`／`letter_ready`／`letter_failed`）或其他狀態一律回 `409 rescore_not_allowed`，因此重評不會改寫求職信與投遞歷史。舊 score 於新 score 寫入前仍是該 Job 的現行分數。
+
+`GET /api/v1/status` 是處理進度的唯一讀取面：回 `jobs`（各 `process_state` 筆數，即常駐 worker 的待消化量）、`score_budget`（`remaining`、`limited`）與 `agent_calls`（最近 20 筆的 `role`、`runner`、`ok`、`duration_ms`、`job_id`、`created_at`）。`ok` 表示「runner 有回應且回應通過契約驗證」，與評分高低無關——低分或不推薦仍是成功呼叫。成功呼叫不附任何 Agent 輸出；未通過的呼叫附 `failure_kind` 與截斷至 400 字元的 `detail`。`failure_kind` 由 agents 模組分類：`runner_error`（CLI 自報錯誤，含額度、認證與逾時，優先於內容驗證）、`empty_output`、`no_json`、`invalid_json`、`reason_too_long`、`score_out_of_range`、`invalid_content`。此 route 不含 Profile 內容、JD、薪資與信件內容。
 
 `POST /api/v1/runs` 觸發一次**抓取**（fetch），建立 request context 以外的背景工作，trigger 記為 `manual-extension`；server shutdown 時停止未完成工作。filter／score／letter 不由此觸發——那三階段由常駐 worker 持續消化，無需手動啟動（見 [design-pipeline](design-pipeline.md) §2.2）。
 

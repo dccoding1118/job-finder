@@ -1,6 +1,6 @@
 # STATUS — job-finder（MVP 開發）
 
-> 最後更新：2026-07-23。規劃文件見 `docs/PRD.md`、`docs/design.md`、`docs/roadmap.md`、`docs/deploy.md`、`docs/designs/`。
+> 最後更新：2026-07-25。規劃文件見 `docs/PRD.md`、`docs/design.md`、`docs/roadmap.md`、`docs/deploy.md`、`docs/designs/`。
 
 ## §1 未歸檔結論
 
@@ -8,7 +8,8 @@
 
 ## §2 未完成任務
 
-- [ ] 完成 V7 S37 實際 Chrome 人工 gate，PR 合併後以 `mise run deploy-install` 重新部署；目前正式 `jobfinder-api.service` 與 `jobfinder-run.timer` 已停用，`deploy-update` 不會重新 enable 已停用的 units。契約與驗收見 `docs/changes/change-profile-editor.md` 及 `docs/verify.md`。
+- [ ] 完成 V7 S38 實際 Chrome 人工 gate（單筆重新評分與系統頁處理進度）；契約見 `docs/changes/change-job-rescore-and-progress.md`。
+- [ ] 完成 V7 S37 實際 Chrome 人工 gate，PR 合併後以 `mise run deploy-install` 重新部署（既有機器需重新部署才會套用 timer `Persistent=false`）；目前正式 `jobfinder-api.service` 與 `jobfinder-run.timer` 已停用，`deploy-update` 不會重新 enable 已停用的 units。契約與驗收見 `docs/changes/change-profile-editor.md` 及 `docs/verify.md`。
 
 **Roadmap — Profile 能力（暫不實作）**
 

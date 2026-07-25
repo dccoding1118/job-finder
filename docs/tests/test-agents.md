@@ -33,7 +33,7 @@
 | AT-18 | prompt 經 stdin 傳入，stdout 為 JSON envelope | 取 envelope 的 `result` 欄位為回覆；`is_error` 為真或 `subtype` 非 `success` 時視為 Invoke 失敗 |
 | AT-19 | CLI 將最終訊息寫入 `-o` 指定的暫存檔，stdout 另含 transcript | 以該檔內容為回覆，不受 stdout transcript 影響；暫存檔隨 invocation 暫存目錄清除 |
 | AT-20 | CLI 在 transcript 中回音 prompt，並將同一答案輸出兩次 | 解析取最後一個完整物件，不把兩份答案之間的雜訊併入 |
-| AT-05 | Scorer 回傳五維 0–100 整數與 50 字內理由 | 解析為合法 `ScoreResult`，五維與理由完整保留 |
+| AT-05 | Scorer 回傳五維 0–100 整數與 100 字內理由 | 解析為合法 `ScoreResult`，五維與理由完整保留 |
 | AT-06 | Scorer 缺少任一維度、分數超出範圍、分數非整數或理由過長 | 拒絕輸出，回傳契約錯誤 |
 
 ### 3.2 呼叫策略與稽核
@@ -78,6 +78,9 @@
 | AT-37 | 以合成 Profile、Job 與 Reviewer issues 產生 Drafter／Reviewer prompt | Drafter prompt 限制可用事實、語言、字數與佔位符；Reviewer prompt 要求檢查幻覺、誇大與空泛詞 |
 | AT-38 | 初稿或 Reviewer `edited_letter` 未通過防線 | 不呼叫 Reviewer，或不接受其 `approve`；以具體防線問題要求 Drafter 重寫，並計入兩次重寫上限 |
 | AT-39 | Drafter 或 Reviewer 的 primary、重試與 fallback 呼叫交錯發生 | 每次嘗試都以正確 role 和 runner 寫稽核資料；成功結果只採用通過契約驗證者 |
+| AT-40 | 分類被拒回應：CLI 自報錯誤（含 rate limit）、空輸出、無 JSON、JSON 無法解析、`reason` 超過上限、五維超出範圍、其他內容不合法 | 各回對應失敗類別；CLI 自報錯誤優先於內容驗證 |
+| AT-41 | 五維皆為低分但格式合法的評分回應 | 通過驗證並視為成功呼叫；低分不得被判定為失敗 |
+| AT-42 | `reason` 恰為 100 字與 101 字 | 前者通過驗證；後者被拒 |
 
 ## 5. 模組驗收
 

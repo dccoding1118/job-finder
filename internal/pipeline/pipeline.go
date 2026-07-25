@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 	_ "time/tzdata" // daily budgets reset on the Taipei day boundary regardless of host tz data
@@ -98,8 +99,18 @@ type Pipeline struct {
 	MaxLetterPerDay int
 	MaxLetterLength int
 	MinInterval     time.Duration
+	// Logger receives one structured record per Agent-backed unit of work, which
+	// is what makes a long or failing stage observable while it runs.
+	Logger *slog.Logger
 	// Now supplies the clock the Taipei day boundary is derived from.
 	Now func() time.Time
+}
+
+func (p Pipeline) logger() *slog.Logger {
+	if p.Logger != nil {
+		return p.Logger
+	}
+	return slog.Default()
 }
 
 type workProfile struct {
@@ -235,11 +246,14 @@ func (p Pipeline) LetterWithStats(ctx context.Context, limit int) (StageStats, e
 		if job.Description != nil {
 			desc = *job.Description
 		}
+		p.logger().Info("drafting letter", "stage", "letter", "job_id", jobID, "profile_revision", snapshot.Revision)
+		startedAt := time.Now()
 		result, e := agents.GenerateLetter(ctx, drafter, reviewer, snapshot.YAML, snapshot.Value, agents.Job{Title: job.Title, CompanyName: job.CompanyName, Description: desc, Location: job.Location, RemoteType: job.RemoteType, SalaryMin: job.SalaryMin, SalaryMax: job.SalaryMax}, p.Denylist, p.MaxLetterLength)
 		if e != nil {
 			if ctx.Err() != nil {
 				return stats, e
 			}
+			p.logger().Error("letter failed", "stage", "letter", "job_id", jobID, "duration_ms", time.Since(startedAt).Milliseconds(), "error", e)
 			failures = append(failures, fmt.Errorf("letter job %d: %w", job.ID, e))
 			continue
 		}
@@ -259,6 +273,7 @@ func (p Pipeline) LetterWithStats(ctx context.Context, limit int) (StageStats, e
 		if err := p.Store.TransitionProcess(ctx, job.ID, state); err != nil {
 			return stats, err
 		}
+		p.logger().Info("letter completed", "stage", "letter", "job_id", jobID, "state", state, "rounds", result.Rounds, "duration_ms", time.Since(startedAt).Milliseconds())
 		stats.Processed++
 	}
 	return stats, errors.Join(failures...)
@@ -338,6 +353,9 @@ func (p Pipeline) FilterJobsWithStats(ctx context.Context, limit int) (StageStat
 		}
 		stats.Processed++
 	}
+	if stats.Processed > 0 {
+		p.logger().Info("filter stage completed", "stage", "filter", "processed", stats.Processed, "filtered_out", stats.FilteredOut)
+	}
 	return stats, nil
 }
 
@@ -356,6 +374,7 @@ func (p Pipeline) ScoreWithStats(ctx context.Context, limit int) (StageStats, er
 	}
 	limit, ok := stageLimit(limit, remaining, limited)
 	if !ok {
+		p.logger().Debug("score stage skipped", "stage", "score", "reason", "daily budget exhausted", "max_per_day", p.MaxScorePerDay)
 		return StageStats{}, nil
 	}
 	jobs, err := p.Store.PickForStage(ctx, "score", limit)
@@ -364,6 +383,10 @@ func (p Pipeline) ScoreWithStats(ctx context.Context, limit int) (StageStats, er
 	}
 	stats := StageStats{}
 	var failures []error
+	log := p.logger()
+	if len(jobs) > 0 {
+		log.Info("score stage picked jobs", "stage", "score", "jobs", len(jobs), "budget_remaining", remaining, "budget_limited", limited)
+	}
 	for i, job := range jobs {
 		snapshot, snapshotErr := p.snapshot()
 		if snapshotErr != nil {
@@ -388,11 +411,14 @@ func (p Pipeline) ScoreWithStats(ctx context.Context, limit int) (StageStats, er
 		scorer.Audit = func(role, runner, input, output string, ok bool, duration time.Duration) error {
 			return p.Store.SaveAgentCall(ctx, store.AgentCallInput{JobID: &jobID, Role: role, Runner: runner, Input: input, Output: output, OK: ok, DurationMS: duration.Milliseconds(), ProfileRevision: snapshot.Revision})
 		}
+		log.Info("scoring job", "stage", "score", "job_id", jobID, "source", job.Source, "profile_revision", snapshot.Revision)
+		startedAt := time.Now()
 		score, e := scorer.Score(ctx, snapshot.YAML, agents.Job{Title: job.Title, CompanyName: job.CompanyName, Description: desc, Location: job.Location, RemoteType: job.RemoteType, SalaryMin: job.SalaryMin, SalaryMax: job.SalaryMax})
 		if e != nil {
 			if ctx.Err() != nil {
 				return stats, e
 			}
+			log.Error("score failed", "stage", "score", "job_id", jobID, "duration_ms", time.Since(startedAt).Milliseconds(), "error", e)
 			failures = append(failures, fmt.Errorf("score job %d: %w", job.ID, e))
 			continue
 		}
@@ -403,10 +429,12 @@ func (p Pipeline) ScoreWithStats(ctx context.Context, limit int) (StageStats, er
 			stats.Shortlisted++
 		}
 		if err := p.Store.CommitScore(ctx, store.ScoreInput{JobID: job.ID, HardSkill: score.HardSkill, Domain: score.Domain, Seniority: score.Seniority, Condition: score.Condition, Direction: score.Direction, Total: total, Reason: score.Reason, Runner: score.Runner, ProfileRevision: snapshot.Revision}, state); errors.Is(err, store.ErrStaleRevision) {
+			log.Info("score discarded as stale", "stage", "score", "job_id", jobID, "profile_revision", snapshot.Revision)
 			continue
 		} else if err != nil {
 			return stats, err
 		}
+		log.Info("job scored", "stage", "score", "job_id", jobID, "total", total, "state", state, "runner", score.Runner, "duration_ms", time.Since(startedAt).Milliseconds())
 		stats.Processed++
 	}
 	return stats, errors.Join(failures...)

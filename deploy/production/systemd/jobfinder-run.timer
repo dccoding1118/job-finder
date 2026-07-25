@@ -3,7 +3,7 @@ Description=Fetch jobs daily
 
 [Timer]
 OnCalendar=*-*-* 08:30:00 Asia/Taipei
-Persistent=true
+Persistent=false
 Unit=jobfinder-run.service
 
 [Install]
