@@ -39,6 +39,6 @@ func newRootCmd() *cobra.Command {
 			return fmt.Errorf("a subcommand is required")
 		},
 	}
-	root.AddCommand(newProfileCmd(), newJobsCmd(), newRunCmd(), newLetterCmd(), newServeCmd(), newVerifyCmd())
+	root.AddCommand(newProfileCmd(), newJobsCmd(), newQueriesCmd(), newRunCmd(), newLetterCmd(), newServeCmd(), newVerifyCmd())
 	return root
 }

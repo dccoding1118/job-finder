@@ -18,7 +18,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const schemaVersion = 3
+const schemaVersion = 5
 
 //go:embed schema.sql
 var schemaSQL string
@@ -33,6 +33,44 @@ var upgrades = map[int]string{
 	ALTER TABLE scores ADD COLUMN profile_revision TEXT;
 	ALTER TABLE letters ADD COLUMN profile_revision TEXT;
 	ALTER TABLE agent_calls ADD COLUMN profile_revision TEXT;`,
+	// Every existing job becomes its own single-member group, which is the state a
+	// job is in until another source turns out to carry the same listing. The
+	// grouping key is normalized in Go, so it is left NULL here and filled in the
+	// first time each job is seen again.
+	3: `CREATE TABLE job_groups (
+		id INTEGER PRIMARY KEY,
+		canonical_job_id INTEGER NOT NULL REFERENCES jobs(id),
+		dedupe_key TEXT,
+		created_at TEXT NOT NULL,
+		updated_at TEXT NOT NULL
+	);
+	CREATE INDEX IF NOT EXISTS job_groups_dedupe_key_idx ON job_groups(dedupe_key);
+	CREATE TABLE job_dupe_candidates (
+		id INTEGER PRIMARY KEY,
+		group_a_id INTEGER NOT NULL REFERENCES job_groups(id),
+		group_b_id INTEGER NOT NULL REFERENCES job_groups(id),
+		similarity REAL NOT NULL,
+		reason TEXT NOT NULL,
+		state TEXT NOT NULL,
+		created_at TEXT NOT NULL,
+		UNIQUE(group_a_id, group_b_id)
+	);
+	CREATE INDEX IF NOT EXISTS job_dupe_candidates_state_idx ON job_dupe_candidates(state);
+	ALTER TABLE jobs ADD COLUMN group_id INTEGER REFERENCES job_groups(id);
+	CREATE INDEX IF NOT EXISTS jobs_group_idx ON jobs(group_id);
+	INSERT INTO job_groups (canonical_job_id, dedupe_key, created_at, updated_at)
+		SELECT id, NULL, first_seen_at, updated_at FROM jobs;
+	UPDATE jobs SET group_id = (SELECT id FROM job_groups WHERE canonical_job_id = jobs.id);`,
+	// `jobs.profile_revision` names the Profile revision the job's current
+	// processing belongs to, so a job that kept its assessment through a content
+	// change must still carry the revision that produced it. Rows whose recorded
+	// revision has no score are re-pointed at the revision of the score they do
+	// carry, which is what the assessment on screen was computed from.
+	4: `UPDATE jobs SET profile_revision = (
+		SELECT profile_revision FROM scores WHERE job_id = jobs.id ORDER BY created_at DESC, id DESC LIMIT 1
+	)
+	WHERE EXISTS (SELECT 1 FROM scores WHERE job_id = jobs.id)
+	  AND NOT EXISTS (SELECT 1 FROM scores WHERE job_id = jobs.id AND profile_revision IS jobs.profile_revision);`,
 }
 
 var piiPattern = regexp.MustCompile(`(?i)[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}|(?:\+886|0)9\d{8}`)
@@ -255,6 +293,11 @@ func (s *Store) UpsertJob(ctx context.Context, input JobInput, runID *int64) (Up
 		if err := insertEvent(ctx, tx, id, "process", "", state, "", now); err != nil {
 			return UpsertResult{}, err
 		}
+		// Every job starts in a group of its own; cross-source grouping only ever
+		// moves members between groups, so a job is never without one.
+		if err := s.createGroupTx(ctx, tx, id, NewDedupeKey(input.CompanyName, input.Title, input.Location, input.RemoteType), now); err != nil {
+			return UpsertResult{}, err
+		}
 		if err := tx.Commit(); err != nil {
 			return UpsertResult{}, fmt.Errorf("commit inserted job: %w", err)
 		}
@@ -284,10 +327,20 @@ func (s *Store) UpsertJob(ctx context.Context, input JobInput, runID *int64) (Up
 	}
 
 	newState := existing.ProcessState
-	if existing.ContentHash == nil || canReset(existing.ProcessState) {
+	// An alias keeps its content current but never returns to the pipeline: only
+	// the user's own unmerge takes a job out of `merged`.
+	if existing.ProcessState != StateMerged && (existing.ContentHash == nil || canReset(existing.ProcessState)) {
 		newState = "new"
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE jobs SET url=?, title=?, company_name=?, company_info=?, description=?, salary_min=?, salary_max=?, location=?, remote_type=?, content_hash=?, process_state=?, profile_revision=?, updated_at=?, last_seen_at=? WHERE id=?`, input.URL, input.Title, input.CompanyName, input.CompanyInfo, *input.Description, input.SalaryMin, input.SalaryMax, input.Location, input.RemoteType, hash, newState, nullableString(input.ProfileRevision), now, now, existing.ID); err != nil {
+	// The revision follows the processing, not the content: only a job returning
+	// to `new` will be assessed under the ingesting revision. A job that keeps its
+	// state keeps the revision its score was produced under, because that is the
+	// revision every reader pairs the job with its score by.
+	revision := nullableString(input.ProfileRevision)
+	if newState == existing.ProcessState {
+		revision = nullableRevision(existing.ProfileRevision)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE jobs SET url=?, title=?, company_name=?, company_info=?, description=?, salary_min=?, salary_max=?, location=?, remote_type=?, content_hash=?, process_state=?, profile_revision=?, updated_at=?, last_seen_at=? WHERE id=?`, input.URL, input.Title, input.CompanyName, input.CompanyInfo, *input.Description, input.SalaryMin, input.SalaryMax, input.Location, input.RemoteType, hash, newState, revision, now, now, existing.ID); err != nil {
 		return UpsertResult{}, fmt.Errorf("update changed job: %w", err)
 	}
 	if newState != existing.ProcessState {
@@ -301,8 +354,10 @@ func (s *Store) UpsertJob(ctx context.Context, input JobInput, runID *int64) (Up
 	existing.URL, existing.Title, existing.CompanyName, existing.CompanyInfo = input.URL, input.Title, input.CompanyName, input.CompanyInfo
 	existing.Description, existing.SalaryMin, existing.SalaryMax = input.Description, input.SalaryMin, input.SalaryMax
 	existing.Location, existing.RemoteType = input.Location, input.RemoteType
+	if newState != existing.ProcessState {
+		existing.ProfileRevision = stringPtr(input.ProfileRevision, input.ProfileRevision != "")
+	}
 	existing.ContentHash, existing.ProcessState = stringPtr(hash, true), newState
-	existing.ProfileRevision = stringPtr(input.ProfileRevision, input.ProfileRevision != "")
 	return UpsertResult{Job: existing, Changed: true}, nil
 }
 
@@ -529,8 +584,11 @@ func validApplyTransition(from, to string) bool {
 	return map[string]map[string]bool{"pending": {"applied": true, "dropped": true}, "applied": {"interview": true, "ghosted": true, "dropped": true}, "interview": {"offer": true, "ghosted": true, "dropped": true}}[from][to]
 }
 
+// canReset reports whether changed source content may send a job back through
+// the pipeline. An alias is excluded: a merged copy must stay out of every stage
+// however often its own platform reprints it.
 func canReset(state string) bool {
-	return state != "filtered_out" && state != "scored" && state != "letter_ready"
+	return state != "filtered_out" && state != "scored" && state != "letter_ready" && state != StateMerged
 }
 func validRunner(runner string) bool { return runner == "claude" || runner == "codex" }
 func validTrigger(trigger string) bool {
@@ -549,6 +607,15 @@ func nullableString(value string) any {
 		return nil
 	}
 	return value
+}
+
+// nullableRevision binds an optional revision back unchanged, so a job that had
+// none keeps none.
+func nullableRevision(value *string) any {
+	if value == nil {
+		return nil
+	}
+	return *value
 }
 
 func insertEvent(ctx context.Context, tx *sql.Tx, jobID int64, axis, from, to, note, createdAt string) error {

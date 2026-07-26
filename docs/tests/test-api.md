@@ -73,7 +73,22 @@
 | AT-57 | capture job 的 Job 被條件篩選淘汰 | 同步回傳 `unfit` 與 `filter_hits`，不進入待評分 |
 | AT-58 | capture job 通過篩選但當日評分預算已用盡 | 回傳 `pending_score` 且 `budget_exhausted` 為真 |
 
-extension 的實機互動不由 API L1 取代，最終以 [verify](../verify.md) 的 B5 手動 Chrome gate 驗收。
+| AT-59 | capture payload 的 `source` 為 `104`、`cake`、未知值或缺漏 | 前兩者分派至對應解析器；後兩者回 `400 invalid_request`，不猜測平台 |
+| AT-87 | `capture/job` 帶 `source=cake` 與 `cake_dom` 素材 | 走 Cake 內頁 DOM 解析並正常入庫；回應形態與其他 capture 路徑一致 |
+
+extension 的實機互動不由 API L1 取代，最終以 [verify](../verify.md) 的 V5／V6 手動 Chrome gate 驗收。
+
+## 5.1 B6 重複職缺案例
+
+| 編號 | 測試情境 | 預期結果 |
+|---|---|---|
+| AT-80 | GET jobs／queue 中存在 `merged` Job | 清單只含各群組 canonical；`merged` 不出現、不導出 verdict |
+| AT-81 | GET 單筆 Job | 回 `group`：`group_id`、`canonical_job_id`、成員的 job id／來源／連結／external_id、候選筆數；單成員群組亦回傳 |
+| AT-82 | GET duplicates | 只回 `pending` 候選，含雙方職稱、公司、地區、來源、相似度與原因；支援 limit／cursor 與非法分頁 400 |
+| AT-83 | POST duplicates/{id}/merge | 呼叫 store 合併一次並回更新後的 canonical Job；重複裁決回 409；候選不存在回 404 |
+| AT-84 | POST duplicates/{id}/ignore | 候選轉 `ignored` 且不再出現於清單；重複呼叫回 409 |
+| AT-85 | POST jobs/{id}/unmerge | `merged` Job 還原為獨立群組與合併前狀態；非 `merged` 回 409、不存在回 404 |
+| AT-86 | 合併與裁決 route 的回應 | 皆為同步回應，不建立背景工作、不呼叫 Agent；不含 JD、求職信或 Agent 輸出 |
 
 ## 6. Profile、setup 與 stale 案例
 

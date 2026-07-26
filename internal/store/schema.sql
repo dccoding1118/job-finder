@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     filter_hits TEXT,
     profile_revision TEXT,
     apply_state TEXT,
+    group_id INTEGER REFERENCES job_groups(id),
     discovered_by_run_id INTEGER REFERENCES runs(id),
     first_seen_at TEXT NOT NULL,
     last_seen_at TEXT NOT NULL,
@@ -26,6 +27,7 @@ CREATE TABLE IF NOT EXISTS jobs (
 CREATE INDEX IF NOT EXISTS jobs_process_state_idx ON jobs(process_state);
 CREATE INDEX IF NOT EXISTS jobs_apply_state_idx ON jobs(apply_state);
 CREATE INDEX IF NOT EXISTS jobs_discovered_by_run_idx ON jobs(discovered_by_run_id);
+CREATE INDEX IF NOT EXISTS jobs_group_idx ON jobs(group_id);
 
 CREATE TABLE IF NOT EXISTS scores (
     id INTEGER PRIMARY KEY,
@@ -88,3 +90,26 @@ CREATE TABLE IF NOT EXISTS agent_calls (
 );
 
 CREATE INDEX IF NOT EXISTS agent_calls_role_created_idx ON agent_calls(role, created_at);
+
+CREATE TABLE IF NOT EXISTS job_groups (
+    id INTEGER PRIMARY KEY,
+    canonical_job_id INTEGER NOT NULL REFERENCES jobs(id),
+    dedupe_key TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS job_groups_dedupe_key_idx ON job_groups(dedupe_key);
+
+CREATE TABLE IF NOT EXISTS job_dupe_candidates (
+    id INTEGER PRIMARY KEY,
+    group_a_id INTEGER NOT NULL REFERENCES job_groups(id),
+    group_b_id INTEGER NOT NULL REFERENCES job_groups(id),
+    similarity REAL NOT NULL,
+    reason TEXT NOT NULL,
+    state TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE(group_a_id, group_b_id)
+);
+
+CREATE INDEX IF NOT EXISTS job_dupe_candidates_state_idx ON job_dupe_candidates(state);

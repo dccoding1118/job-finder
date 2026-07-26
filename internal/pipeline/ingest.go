@@ -48,7 +48,11 @@ func (p Pipeline) IngestList(ctx context.Context, rows []crawler.RawJob) ([]Inge
 				return nil, err
 			}
 		}
-		result, err := p.result(ctx, job, upsert.Created, false)
+		job, redirected, err := p.canonical(ctx, job)
+		if err != nil {
+			return nil, err
+		}
+		result, err := p.result(ctx, job, upsert.Created, redirected)
 		if err != nil {
 			return nil, err
 		}
@@ -81,7 +85,32 @@ func (p Pipeline) IngestJob(ctx context.Context, row crawler.RawJob) (IngestResu
 			return IngestResult{}, err
 		}
 	}
-	return p.result(ctx, job, upsert.Created, !upsert.Created && !upsert.Changed)
+	job, redirected, err := p.canonical(ctx, job)
+	if err != nil {
+		return IngestResult{}, err
+	}
+	return p.result(ctx, job, upsert.Created, redirected || (!upsert.Created && !upsert.Changed))
+}
+
+// canonical resolves a captured job to the copy that carries the verdict. When
+// another source already covers the same listing, the user is shown that copy's
+// existing assessment: the same job is never scored twice.
+func (p Pipeline) canonical(ctx context.Context, job store.Job) (store.Job, bool, error) {
+	canonicalID, err := p.link(ctx, job.ID)
+	if err != nil {
+		return job, false, err
+	}
+	if canonicalID == job.ID {
+		return job, false, nil
+	}
+	detail, found, err := p.Store.GetJobDetail(ctx, canonicalID)
+	if err != nil {
+		return job, false, err
+	}
+	if !found {
+		return job, false, fmt.Errorf("pipeline: canonical job %d of job %d is missing", canonicalID, job.ID)
+	}
+	return detail.Job, true, nil
 }
 
 // screen applies the screening rules a job's available fields support and moves

@@ -16,6 +16,7 @@
 |---|---|---|
 | `id` | INTEGER PK | 內部流水號 |
 | `source` | TEXT | 來源代碼：`yourator` / `cake` / `104` |
+| `group_id` | INTEGER NULL FK→job_groups | 所屬職缺群組（§2.7）；每筆入庫即歸屬一個群組，legacy 可為 NULL |
 | `external_id` | TEXT | 平台端職缺 ID；`UNIQUE(source, external_id)` |
 | `url` | TEXT | 原始職缺連結 |
 | `title` | TEXT | 職稱 |
@@ -34,7 +35,7 @@
 | `first_seen_at` / `last_seen_at` | TEXT | RFC3339 |
 | `updated_at` | TEXT | RFC3339 |
 
-索引：`(process_state)`、`(apply_state)`、`(discovered_by_run_id)`、`(source, external_id)` UNIQUE。
+索引：`(process_state)`、`(apply_state)`、`(discovered_by_run_id)`、`(group_id)`、`(source, external_id)` UNIQUE。
 
 `discovered_by_run_id` 只在新建時寫入，後續 upsert 不更動——它記錄「這筆是哪一輪抓進來的」，供 Run 歷史即時查出該輪職缺的現行判定分布（R8.1）。
 
@@ -106,6 +107,28 @@
 | `profile_revision` | TEXT NULL | score／draft／review 呼叫開始時的 Profile revision；與 Profile 無關的呼叫為 NULL |
 | `created_at` | TEXT | RFC3339 |
 
+### 2.7 `job_groups`（跨來源同一職缺）
+
+| 欄位 | 型別 | 說明 |
+|---|---|---|
+| `id` | INTEGER PK | |
+| `canonical_job_id` | INTEGER FK→jobs | 承載處理、評分、求職信與投遞的那一筆 |
+| `dedupe_key` | TEXT NULL | §4.1 的正規化比對鍵；人工合併產生的群組為 NULL |
+| `created_at` / `updated_at` | TEXT | RFC3339 |
+
+索引：`(dedupe_key)`。單成員群組是常態——每筆 Job 入庫即建立自己的群組，合併只是把成員收斂到同一個。
+
+### 2.8 `job_dupe_candidates`（疑似重複，待使用者裁決）
+
+| 欄位 | 型別 | 說明 |
+|---|---|---|
+| `id` | INTEGER PK | |
+| `group_a_id` / `group_b_id` | INTEGER FK→job_groups | 以較小 id 為 a；`UNIQUE(group_a_id, group_b_id)` |
+| `similarity` | REAL | 正規化職稱的 token Jaccard |
+| `reason` | TEXT | `title_similar` / `location_mismatch` / `has_output` |
+| `state` | TEXT | `pending` / `merged` / `ignored` |
+| `created_at` | TEXT | RFC3339 |
+
 ## 3. 狀態機（權威定義）
 
 ### 3.1 `process_state`（系統擁有）
@@ -127,8 +150,10 @@
 | `letter_requested` | `letter_failed` | 重寫上限仍不過審 |
 | `letter_failed` | `letter_requested` | 使用者再次要求生成（Side Panel／CLI） |
 | 任一非終態 | `new` | JD 內容雜湊變更（重新走流程；既有 scores/letters 保留為歷史） |
+| 任一狀態 | `merged` | 該筆被判定為其他 Job 的重複刊登，成為 alias（§4.2）；事件 note 記錄合併前狀態與 canonical job id |
+| `merged` | 合併前狀態 | 使用者取消合併，依合併事件還原 |
 
-終態：`filtered_out`、`letter_ready`（處理軸而言）。`scored` 只由使用者明確要求的單筆重評離開。`shortlisted` 與 `letter_failed` 是**停留狀態**——系統不會自行推進，只有使用者要求才轉入 `letter_requested`（PRD R5.0）。`letter_requested` 是 letter 階段的唯一取件狀態。
+終態：`filtered_out`、`letter_ready`（處理軸而言）、`merged`（僅由使用者取消合併離開）。`merged` 的 Job 不被任何階段取件、不導出 verdict、不出現在任何清單，因此不產生 LLM 費用。`scored` 只由使用者明確要求的單筆重評離開。`shortlisted` 與 `letter_failed` 是**停留狀態**——系統不會自行推進，只有使用者要求才轉入 `letter_requested`（PRD R5.0）。`letter_requested` 是 letter 階段的唯一取件狀態。
 
 ### 3.2 Profile activation 專用轉換
 
@@ -149,10 +174,39 @@ activation、filter 結果、Score 保存與 process transition 均以 expected 
 
 ## 4. 去重與變更偵測
 
+### 4.1 同來源去重與變更偵測
+
 - 唯一鍵 `(source, external_id)`：已存在則更新 `last_seen_at`。
 - `content_hash = sha256(title + "\n" + description + "\n" + salary_min/max + location + remote_type)`——**只含來源端內容欄位，不含 `profile_revision` 或任何本系統回寫欄位**。Job 內容與 Profile 是兩個獨立變動軸。partial 職缺不計 hash（NULL），補入全文時才首次計算。
 - 雜湊變更 ⇒ 更新內容欄位並將 `process_state` 重置為 `new`（§3.1）；僅適用已有全文的職缺。
+- `profile_revision` 跟隨**處理**而非內容：只有重置回 `new` 的職缺才寫入本次 ingest 的 revision。狀態不變者（`scored`／`filtered_out`／`letter_ready` 等終端狀態）保留其現行判定所屬的 revision——該欄位是所有讀取面把 Job 與 Score 配對的依據，覆寫它會使既有評分讀不出來。
 - partial upsert（列表收割）遇既有職缺（任何狀態）只更新 `last_seen_at`，不覆蓋內容、不改狀態——待看清單天然為增量。
+
+### 4.2 跨來源同一職缺（R2.8）
+
+同一職缺常同時刊登於三個來源。辨識**一律為程式規則，不呼叫 LLM**：
+
+| 對象 | 正規化 |
+|---|---|
+| 公司名 | 全形轉半形 → 小寫 → 去空白與標點 → 去法人與分支尾綴（`股份有限公司`／`有限公司`／`公司`／`台灣分公司`／`inc`／`ltd`／`co`／`corp`／`limited`） |
+| 職稱 | 全形轉半形 → 小寫 → 去括號補述 → 去資歷修飾（`senior`／`sr`／`junior`／`jr`／`資深`／`中高階`；`實習`／`intern` **不得**去除，屬不同職缺）→ 中英同義詞對照正規化 → 去空白與標點 |
+| 地區 | 取縣市層級；`remote` 或未知與任何地區相容 |
+
+`dedupe_key = sha256(正規化公司 + "|" + 正規化職稱 + "|" + 縣市)`。分群鍵是正規化公司——不同公司一律不比較。
+
+**比較對象限跨來源**：只與**尚未涵蓋本群組任一來源**的群組比較。去重要解決的是同一則職缺刊登在兩個平台（例如 104 與 Cake 各有一筆），同平台上的兩筆是兩個不同的職位開口——平台不會把同一則職缺刊兩次——比較它們只會產生使用者必然否決的裁決。群組已因合併涵蓋多個來源時，這些來源全部排除。
+
+| 判定 | 條件 | 動作 |
+|---|---|---|
+| 高信心 | 來源未重疊 ＋ 公司相等 ＋ 職稱**完全相等** ＋ 地區相容 ＋ 雙方皆無 score／letter／apply 產出 | 合併為同一群組 |
+| 灰帶 | 來源未重疊 ＋ 公司相等，且（職稱 Jaccard ≥ `dedupe.title_similarity_threshold`、或地區不相容、或任一方已有產出） | 寫入 `job_dupe_candidates` 待使用者裁決 |
+| 不同 | 其餘（含來源重疊） | 不建立關聯 |
+
+已有評分、求職信或投遞歷史的 Job **不自動合併**（`reason='has_output'`），避免自動動作吃掉既有產出。
+
+**canonical 選擇順序**：有 JD 全文者 → `description` 較長者 → 設定檔 `dedupe.source_priority`（預設 `104` > `cake` > `yourator`）→ `first_seen_at` 較早者。其餘成員轉入 `merged`。
+
+capture 或 fetch 命中 alias 時，回傳的一律是 **canonical 的 job id 與 verdict**——使用者在某平台看到的職缺若已由另一來源評過分，就地標記直接顯示既有判定，不重跑也不重複計費。
 
 ## 5. store 介面（概念）
 
@@ -160,8 +214,11 @@ activation、filter 結果、Score 保存與 process transition 均以 expected 
 |---|---|
 | `UpsertJob(raw, runID)` | 去重、變更偵測、狀態初始/重置（partial→`discovered`、全文→`new`、既有 partial 補全文→`new`），新建時寫入 `discovered_by_run_id`（capture 入庫傳 NULL），回傳是否新增/變更 |
 | `TransitionProcess(jobID, to, meta)` / `TransitionApply(jobID, to, note)` | 驗證合法轉換 → 更新欄位 → 寫 `status_events`（同一交易） |
-| `ListJobs(filter, sort)` | UI/CLI 查詢：依狀態、來源、分數排序 |
-| `PickForStage(stage, limit)` | 常駐 worker 各階段取件（`new`→filter、`queued`→score、`letter_requested`→letter）；`shortlisted` 不是任何階段的取件狀態 |
+| `ListJobs(filter, sort)` | UI/CLI 查詢：依狀態、來源、分數排序；預設只回各群組的 canonical，`merged` 不出現 |
+| `PickForStage(stage, revision, limit)` | 常駐 worker 各階段取件（`new`→filter、`queued`→score、`letter_requested`→letter）；`shortlisted` 不是任何階段的取件狀態，`merged` 一律排除。`revision` 非空時只取 `profile_revision` 相符者——filter／score 傳入 active revision，letter 傳空值（不要求相符） |
+| `LinkOrSuggestDuplicate(jobID)` | upsert 後依 §4.2 計算 `dedupe_key`：高信心則於單一交易合併（選定 canonical、alias 轉 `merged`、收斂 `group_id`），灰帶則 upsert 一筆 `pending` 候選；回傳實際動作 |
+| `MergeGroups(a, b)` / `UnmergeJob(jobID)` | 使用者裁決：前者依 canonical 選擇順序合併並將候選標記 `merged`；後者依合併事件還原 alias 狀態與獨立群組，不刪除既有 score／letter |
+| `ListDuplicateCandidates(limit, cursor)` / `IgnoreCandidate(id)` | 疑似重複清單與忽略 |
 | `RequeueScore(jobID, revision)` | 單筆重評：`scored`／`shortlisted` 於單一交易改為 `queued`、寫入 active revision 與 `manual rescore` 事件；`queued` 為 no-op，其餘狀態回 `ErrRescoreNotAllowed` |
 | `CountJobsByState()` / `RecentAgentCalls(limit)` | 處理進度查詢：各處理狀態的職缺筆數、最近的 Agent 呼叫稽核（失敗才附截斷輸出） |
 | `ActivateProfile(fromRevision, toRevision)` | 依 §3.2 在單一交易內切換可重新處理的 Job；回傳 partial screened、requeued、protected、unchanged 統計 |
@@ -172,10 +229,12 @@ activation、filter 結果、Score 保存與 process transition 均以 expected 
 
 migration 新增 revision 欄位時全部允許 legacy NULL，不猜測歷史資料使用的 Profile。升級與服務啟動不自動 activation；legacy Job 維持 stale，直到使用者明確要求更新過時評分。migration 本身不呼叫 Agent。
 
+**資料修復型 migration**：`jobs.profile_revision` 記錄的 revision 下查不到任何 Score、但該 Job 確實有 Score 時，將該欄位改為其最新一筆 Score 的 revision。這是把欄位指回畫面上那份評分實際的產生來源，不新增也不刪除任何評分。
+
 ## 6. 交付物
 
 - `internal/store/`：schema.sql（embedded）、migration、上述介面實作與單元測試（暫存目錄真 SQLite）。
-- 測試涵蓋：唯一鍵去重、雜湊變更重置、非法狀態轉換被拒、事件寫入與交易一致性。
+- 測試涵蓋：唯一鍵去重、雜湊變更重置、非法狀態轉換被拒、事件寫入與交易一致性、跨來源正規化與合併／取消合併的交易一致性。
 
 ## 7. 待決
 

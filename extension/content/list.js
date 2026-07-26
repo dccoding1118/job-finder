@@ -2,14 +2,8 @@
 // the API returns. Everything here is triggered by the user's own navigation:
 // no page is opened, no request reaches 104.
 (() => {
-  const VERDICTS = {
-    unfit: { label: "不適合", background: "#fde8e8", color: "#8a1c1c", icon: "✕" },
-    recommended: { label: "推薦", background: "#e6f6ea", color: "#0f5132", icon: "★" },
-    not_recommended: { label: "不推薦", background: "#eceff1", color: "#5f6368", icon: "·" },
-    pending_detail: { label: "待看", background: "#eef2ff", color: "#31407a", icon: "→" },
-    pending_score: { label: "評分中", background: "#eef2ff", color: "#31407a", icon: "…" },
-  };
   const HARVEST_DEBOUNCE_MS = 400;
+  const mark = globalThis.jobfinder.mark;
 
   // The search page recycles the nodes it scrolls past, so an item can come
   // back with its mark gone; results stay cached by external id and are
@@ -90,32 +84,6 @@
     return (new URL(href, location.href).searchParams.get("jobsource") || "").startsWith("hotjob");
   }
 
-  function mark(node, decision) {
-    const verdict = VERDICTS[decision.verdict];
-    if (!verdict) return;
-    let host = node.querySelector(":scope > .jobfinder-mark");
-    if (!host) {
-      host = document.createElement("div");
-      host.className = "jobfinder-mark";
-      host.attachShadow({ mode: "open" });
-      node.prepend(host);
-    }
-    const detail = decision.filter_hits?.length
-      ? `命中 ${decision.filter_hits.join("、")}`
-      : decision.score_total != null
-        ? `總分 ${decision.score_total}`
-        : decision.verdict === "pending_detail"
-          ? "點開內頁可取得完整評估"
-          : "";
-    // The mark never relies on color alone: the icon and the wording carry it.
-    host.shadowRoot.innerHTML = `<style>
-      .badge { display: inline-flex; gap: .4em; align-items: center; margin: .2em 0; padding: .15em .5em;
-               border-radius: .4em; font: 600 12px/1.4 system-ui, sans-serif;
-               background: ${verdict.background}; color: ${verdict.color}; }
-    </style><p class="badge"><span aria-hidden="true">${verdict.icon}</span><span>jobfinder：${verdict.label}${detail ? `｜${detail}` : ""}</span></p>`;
-    node.style.opacity = decision.verdict === "unfit" || decision.verdict === "not_recommended" ? "0.55" : "";
-  }
-
   function harvest() {
     for (const node of document.querySelectorAll(page().itemSelector)) {
       const item = page().read(node);
@@ -147,7 +115,7 @@
       type: "api",
       path: "/api/v1/capture/list",
       method: "POST",
-      body: { items: [...batch.values()] },
+      body: { source: "104", url: location.href, items: [...batch.values()] },
     });
     if (!response?.ok) {
       // A failed capture must not retry in the background: the items are

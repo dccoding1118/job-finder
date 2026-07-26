@@ -43,11 +43,11 @@ Profile 儲存：原子寫入 YAML ──► provider snapshot 切換
 |---|---|---|---|
 | schema/store | `internal/store` | SQLite schema、migration、實體 CRUD、狀態轉換的唯一入口 | [design-schema](designs/design-schema.md) |
 | profile | `internal/profile` | strict 載入/驗證與 PII 檢核、canonical YAML／ETag／revision、原子寫入、runtime snapshot provider、（B6）校準建議 | [design-profile](designs/design-profile.md) |
-| crawler | `internal/crawler` | Source adapter 介面與全自動平台實作、104 解析器（輸入來自插件擷取）、去重與變更偵測輸入 | [design-crawler](designs/design-crawler.md) |
-| pipeline | `internal/pipeline` | 抓取排程編排、revision-aware 常駐 worker、Profile activation 與既有 Job 重新處理、ingest、條件篩選、rate limit、每日預算與冪等 | [design-pipeline](designs/design-pipeline.md) |
-| agents | `internal/agents` | Runner 抽象（CLI subprocess）、Scorer/Drafter/Reviewer、輸出驗證與防幻覺防線 | [design-agents](designs/design-agents.md) |
-| api | `internal/api` | localhost JSON API：Profile 條件式讀寫、Job／Run 查詢、狀態變更、手動 run、104 capture；驗證 extension origin 與 token | [design-api](designs/design-api.md) |
-| extension | `extension/` | Chrome MV3 插件：原生 Side Panel、全頁 Profile 編輯器、service worker、104 列表收割與內頁擷取 | [design-extension](designs/design-extension.md) |
+| crawler | `internal/crawler` | Source adapter 介面與全自動平台實作（Yourator）、104／Cake 半被動解析器（輸入來自插件擷取）、去重與變更偵測輸入 | [design-crawler](designs/design-crawler.md) |
+| pipeline | `internal/pipeline` | 抓取排程編排、revision-aware 常駐 worker、Profile activation 與既有 Job 重新處理、ingest、條件篩選、跨來源分群鉤點、rate limit、每日預算與冪等 | [design-pipeline](designs/design-pipeline.md) |
+| agents | `internal/agents` | Runner 抽象（CLI subprocess）、Scorer/Drafter/Reviewer/Calibrator、輸出驗證與防幻覺防線 | [design-agents](designs/design-agents.md) |
+| api | `internal/api` | localhost JSON API：Profile 條件式讀寫、Job／Run 查詢、狀態變更、手動 run、重複裁決、各平台 capture；驗證 extension origin 與 token | [design-api](designs/design-api.md) |
+| extension | `extension/` | Chrome MV3 插件：原生 Side Panel、全頁 Profile 編輯器、service worker、104／Cake 列表收割與內頁擷取 | [design-extension](designs/design-extension.md) |
 | cli | `cmd/jobfinder/cli` | cobra 命令樹，薄殼呼叫各模組 | 各模組文件的「CLI 介面」節 |
 
 依賴方向：`cli / api → pipeline → (crawler, agents, profile) → store`；extension 僅經 api 對接；store 不依賴任何上層。**契約先行**：schema、agents JSON 輸出與 API 契約先定，其餘模組依賴之。
@@ -66,7 +66,8 @@ Profile 儲存：原子寫入 YAML ──► provider snapshot 切換
 |---|---|---|
 | 抓取範圍 | 依 Profile directions 導出的搜尋條件抓取，非全量；再依 Profile 求職條件排除不合適職缺 | 平台量體過大且不禮貌；Profile 是使用者求職條件的單一真相，來源設定僅處理平台專屬覆寫或增補 |
 | Agent 路由與模型 | `config.yaml` 的 `llm.roles.<role>.primary/fallback` 各自指定 agent CLI 與 model | 下一輪 one-shot run 重新讀取設定；每個角色與 fallback 的 agent、model 均明確傳入 CLI，不依賴 CLI 預設值 |
-| 104 供給方式 | 半被動：插件於使用者瀏覽時擷取（列表收割＋內頁擷取），不做伺服器端抓取 | 104 全站在 Cloudflare 防護後，零繞過原則下伺服器端抓取不可行；插件只記錄使用者已載入的頁面（剪藏定位），判斷仍全在 pipeline，人的介入退化為點開頁面 |
+| 104／Cake 供給方式 | 半被動：插件於使用者瀏覽時擷取（列表收割＋內頁擷取），不做伺服器端抓取 | 104 全站在 Cloudflare 防護後；Cake 內容開放但搜尋路徑同樣在人機驗證後，伺服器端無法以求職條件挑出目標職缺。零繞過原則下兩者的自動抓取皆不可行；插件只記錄使用者已載入的頁面（剪藏定位），判斷仍全在 pipeline，人的介入退化為點開頁面。**半被動是多平台擴充的主路線，全自動是例外** |
+| 跨來源重複職缺 | 程式規則分群（公司＋職稱正規化＋地區），高信心自動合併、灰帶交使用者裁決；群組內只有 canonical 承載處理與投遞，alias 轉 `merged` | 同一職缺重複刊登是常態，不合併就是重複評分、重複生成信件與投遞狀態分裂。規則法可測試、零 LLM 成本；自動只做確定的部分，不確定的交人，符合 Human-in-the-Loop。選 canonical＋alias 而非把狀態搬到 group，是為了不動既有狀態機與 revision CAS 契約 |
 | 抓取合規邊界 | 只碰免登入公開頁、遵守 robots.txt、零繞過、fixture 內容一律合成 | 工具須可作為公開 repo 與作品集；法律風險集中在「繞過防護」與「重散布內容」兩點，皆從設計上排除 |
 | 智能層串接方式 | headless CLI（claude 主 / codex 輔）而非直串 API | 訂閱內零邊際成本；Runner 介面抽象保留日後換直串 API 的空間 |
 | 資料層 | SQLite 而非 PostgreSQL/YAML | 單人單機零維運；職缺量、狀態追蹤與排序查詢非檔案型儲存所長 |
@@ -89,6 +90,7 @@ Profile 儲存：原子寫入 YAML ──► provider snapshot 切換
 
 ```
 process_state：discovered ─►（內頁擷取補全文）─► new    ※ discovered 亦可 ─► filtered_out（可用條件命中）
+               任一狀態 ─►（判定為重複刊登）─► merged ─►（使用者取消合併）─► 合併前狀態
                new ─► filtered_out
                 └──► queued ─► scored（<75，不推薦）
                           └──► shortlisted（≥75，推薦；停留待使用者決定）
@@ -117,7 +119,7 @@ Profile activation 是一般狀態機之外、僅由使用者手動要求的 sto
 4. **B3**：agents（Drafter＋Reviewer）→ pipeline 接上 letter 階段
 5. **B4**：api → extension Side Panel dashboard → systemd timer 部署（[deploy](deploy.md)）
 6. **B5**：104 半被動組——`queries urls` 生成、crawler 104 解析器、pipeline ingest＋`discovered` 流程、capture API 與判定回傳、Chrome extension content script 與清單就地標記
-7. **B6**：crawler（Cake）→ profile 校準
+7. **B6**：crawler（Cake 解析器）→ extension Cake content script → store／pipeline／api 跨來源分群與裁決 → profile 校準
 
 介面若需變動，回頭改本文件的模組邊界，不只改單一模組文件。
 
@@ -131,4 +133,4 @@ Profile activation 是一般狀態機之外、僅由使用者手動要求的 sto
 | 人工 gate | 驗收者在實際 Chrome 載入同一 extension artifact；自動隔離 Chromium 不取代安裝、權限、origin 與相容性結論 |
 | 負向 | Agent 輸出非法 JSON、缺欄位、幻覺技能、缺佔位符；來源回應被擋/改版；capture payload 缺欄位；`run` 中斷重跑冪等 |
 
-`docs/tests/test-<module>.md` 與 `docs/deploy.md` 依交付節奏維護；B0–B4 已有對應測試規格，B4 部署步驟見 [deploy](deploy.md)。
+`docs/tests/test-<module>.md` 與 `docs/deploy.md` 依交付節奏維護；B0–B6 已有對應測試規格，B4 部署步驟見 [deploy](deploy.md)。

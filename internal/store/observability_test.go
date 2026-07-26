@@ -49,7 +49,7 @@ func TestRequeueScoreReturnsJobToScoreStageAndKeepsOldScore(t *testing.T) {
 	if detail.Score == nil || detail.Score.Reason != "first pass" {
 		t.Fatalf("previous score must stay readable until the new one lands: %+v", detail.Score)
 	}
-	picked, err := store.PickForStage(ctx, "score", 10)
+	picked, err := store.PickForStage(ctx, "score", "", 10)
 	if err != nil || len(picked) != 1 || picked[0].ID != jobID {
 		t.Fatalf("requeued job must be picked for score: %v %+v", err, picked)
 	}
@@ -149,5 +149,42 @@ func TestCountJobsByStateAndRecentAgentCalls(t *testing.T) {
 	}
 	if _, err := store.RecentAgentCalls(ctx, 0); err == nil {
 		t.Fatal("non-positive limit must be rejected")
+	}
+}
+
+// A job left behind on an older Profile revision must not occupy the stage's
+// pick: it sorts first and the stage can only discard it, so an unfiltered pick
+// would keep every eligible job waiting forever.
+func TestPickForStageSkipsOtherRevisionsSoQueueDoesNotStarve(t *testing.T) {
+	t.Parallel()
+	store := openTestStore(t, filepath.Join(t.TempDir(), "jobs.db"))
+	defer closeTestStore(t, store)
+	ctx := context.Background()
+	const stale, active = "sha256:rev-stale", "sha256:rev-active"
+
+	queued := func(externalID, revision string) int64 {
+		t.Helper()
+		input := fullJob("a full description")
+		input.ExternalID = externalID
+		input.URL = "https://example.test/jobs/" + externalID
+		input.ProfileRevision = revision
+		created, err := store.UpsertJob(ctx, input, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := store.CommitFilter(ctx, created.Job.ID, revision, nil); err != nil {
+			t.Fatal(err)
+		}
+		return created.Job.ID
+	}
+	queued("stale-1", stale)
+	fresh := queued("active-1", active)
+
+	picked, err := store.PickForStage(ctx, "score", active, 1)
+	if err != nil {
+		t.Fatalf("pick: %v", err)
+	}
+	if len(picked) != 1 || picked[0].ID != fresh {
+		t.Fatalf("picked %+v, want only the job on the active revision", picked)
 	}
 }

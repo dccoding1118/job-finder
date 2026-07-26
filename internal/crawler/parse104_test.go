@@ -126,3 +126,20 @@ func TestParseJobCaptureMissingContentIsError(t *testing.T) {
 		t.Fatal("an empty description was accepted")
 	}
 }
+
+// A card the list page does not describe well enough must not cost every other
+// item on that page its mark: the capture answers for what it could read.
+func TestParseListItemsSkipsUnreadableEntries(t *testing.T) {
+	jobs, err := ParseListItems([]ListItem{
+		{Href: "https://www.104.com.tw/job/aa1", Title: "Backend Engineer", CompanyName: "Example", Location: "台北市"},
+		{Href: "https://www.104.com.tw/job/aa2", Title: "No Location", CompanyName: "Example"},
+		{Href: "https://www.104.com.tw/job/aa3", Title: "", CompanyName: "Example", Location: "台北市"},
+		{Href: "https://www.104.com.tw/company/aa4", Title: "Not A Job", CompanyName: "Example", Location: "台北市"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(jobs) != 1 || jobs[0].ExternalID != "aa1" {
+		t.Fatalf("parsed %+v, want only the readable item", jobs)
+	}
+}

@@ -37,6 +37,7 @@
     viewedJobIDs: new Set(),
     queue: [],
     runs: [],
+    duplicates: [],
     progress: null,
     profile: null,
     filters: { verdict: "recommended", process: "", apply: "", source: "" },
@@ -200,6 +201,22 @@
       <details><summary class="helper-text">狀態記錄</summary><div id="events" class="event-list">${(job.status_events || []).map((event) => `<p>${escapeHTML(event.axis)}：${escapeHTML(event.from_state || "—")} → ${escapeHTML(event.to_state)}</p>`).join("") || "<p>尚無狀態記錄</p>"}</div></details>`;
   }
 
+  const SOURCE_LABELS = { "104": "104", cake: "Cake", yourator: "Yourator" };
+
+  // groupCard lists the other platforms the same listing appeared on, so the user
+  // can pick where to apply. Assessment and letter exist once per group: the other
+  // members are links, not separate jobs.
+  function groupCard(job) {
+    const group = job.group;
+    if (!group || (group.members || []).length < 2) return "";
+    const rows = group.members
+      .filter((member) => member.job_id !== job.id)
+      .map((member) => `<div class="system-row"><span class="system-copy"><strong>${escapeHTML(SOURCE_LABELS[member.source] || member.source)}</strong><span>${escapeHTML(member.external_id)}</span></span><span class="dupe-actions"><a class="button is-secondary" href="${escapeHTML(member.url)}" target="_blank" rel="noreferrer">${icon("external")}開啟</a><button class="button is-secondary" type="button" data-unmerge="${Number(member.job_id)}" ${state.connected === false || state.busy.has("unmerge") ? "disabled" : ""}>取消合併</button></span></div>`)
+      .join("");
+    if (!rows) return "";
+    return `<section class="card system-group" aria-labelledby="group-title"><div class="card-heading"><h2 id="group-title">其他來源</h2><span>同一職缺的重複刊登</span></div><div class="system-card">${rows}</div><p class="helper-text">評分與求職信只保留一份。若其實是不同職缺，取消合併會還原該筆的原本狀態。</p></section>`;
+  }
+
   function letterCard(job) {
     const letterReady = job.letter_state === "ready" && job.letter?.status === "approved";
     const requested = job.letter_state === "requested";
@@ -271,7 +288,7 @@
         <div class="job-hero"><div><h1 class="job-title">${escapeHTML(text(job.title))}</h1><p class="company-name">${escapeHTML(text(job.company_name))}</p>${scoreRevisionBadge(job)}</div>${total == null ? "" : `<div class="score-total"><strong>${escapeHTML(displayScore(total))}</strong><span>總分 / 100</span></div>`}</div>
         <p class="meta-line"><span class="meta-item">${icon("pin")}${escapeHTML(text(job.location))}</span><span class="meta-item">${icon("wallet")}${escapeHTML(salary(job))}</span></p>
         <section class="reason-card ${job.verdict === "unfit" ? "is-negative" : ""}"><strong>${job.verdict === "unfit" ? "排除理由" : job.verdict === "pending_score" ? "目前進度" : "判定理由"}</strong><p>${escapeHTML(reason)}</p></section>
-        ${hits}${scoreCard(job)}
+        ${hits}${scoreCard(job)}${groupCard(job)}
         <details class="card details-card"><summary>職缺內容摘要</summary><div class="details-content"><p id="description">${escapeHTML(text(job.description))}</p></div></details>
         ${letterCard(job)}
       </div>
@@ -359,6 +376,25 @@
       <section aria-labelledby="agent-calls-title"><div class="card-heading"><h2 id="agent-calls-title">Agent 呼叫紀錄</h2><span>最近 20 筆</span></div><div id="agent-calls" class="run-list">${calls || emptyState("尚無 Agent 呼叫", "評分或求職信執行後會顯示在這裡。")}</div></section>`;
   }
 
+  // duplicatesSection presents each suspected pair side by side. It reports the
+  // similarity and the reason so the user can see why the rules stopped short of
+  // merging, and it offers exactly the two decisions they can make.
+  function duplicatesSection() {
+    const reasons = { title_similar: "職稱相似但不相同", location_mismatch: "職稱相同但地區不同", has_output: "已有評分或求職信，不自動合併" };
+    if (!state.duplicates.length) {
+      return `<section aria-labelledby="duplicates-title"><div class="card-heading"><h2 id="duplicates-title">疑似重複</h2><span>待裁決</span></div>${emptyState("沒有待裁決的疑似重複", "跨來源判定明確的重複職缺會自動合併。")}</section>`;
+    }
+    const items = state.duplicates.map((candidate) => {
+      const side = (entry) => `<div class="dupe-side"><strong>${escapeHTML(text(entry.title))}</strong><span>${escapeHTML(text(entry.company_name))}</span><span class="row-meta"><span>${escapeHTML(SOURCE_LABELS[entry.source] || entry.source)}</span><span>${escapeHTML(text(entry.location))}</span></span><a href="${escapeHTML(entry.url)}" target="_blank" rel="noreferrer">開啟原始職缺</a></div>`;
+      const busy = state.busy.has(`duplicate-${candidate.id}`);
+      const percent = Math.round(Number(candidate.similarity || 0) * 100);
+      return `<article class="run-item"><div class="run-heading"><strong>${escapeHTML(reasons[candidate.reason] || candidate.reason)}</strong><span>職稱相似度 ${percent}%</span></div>
+        <div class="dupe-compare">${side(candidate.a)}${side(candidate.b)}</div>
+        <div class="dupe-actions"><button class="button is-primary" type="button" data-merge="${Number(candidate.id)}" ${state.connected === false || busy ? "disabled" : ""}>合併為同一職缺</button><button class="button is-secondary" type="button" data-ignore="${Number(candidate.id)}" ${state.connected === false || busy ? "disabled" : ""}>忽略</button></div></article>`;
+    }).join("");
+    return `<section aria-labelledby="duplicates-title"><div class="card-heading"><h2 id="duplicates-title">疑似重複</h2><span>${state.duplicates.length} 組待裁決</span></div><div id="duplicates" class="run-list">${items}</div></section>`;
+  }
+
   function renderSystem() {
     const root = document.querySelector("#screen-system");
     const runs = state.runs.map((run) => `<article class="run-item"><div class="run-heading"><strong>${escapeHTML(text(run.trigger))}</strong><span>${escapeHTML(text(run.started_at))}</span></div><div class="run-stats">${runStats(run).map((value) => `<span>${escapeHTML(value)}</span>`).join("")}${run.error ? `<span>${escapeHTML(run.error)}</span>` : ""}</div></article>`).join("");
@@ -381,11 +417,18 @@
       <section class="card profile-card" aria-labelledby="profile-title"><div class="card-heading"><h2 id="profile-title">Profile</h2><span class="profile-state is-${escapeHTML(profileStatus)}">${escapeHTML(profileStatus)}</span></div><p>${profileCopy}</p>${profileStatus === "ready" ? `<p class="reprocess-copy">${staleJobs ? `${staleJobs} 筆職缺使用舊版 Profile，等待手動更新。` : "所有可更新職缺均使用目前 Profile。"}${protectedJobs ? `另有 ${protectedJobs} 筆求職信歷史受保護。` : ""}</p>` : ""}<div class="button-stack"><button id="open-profile" class="button is-secondary is-full" type="button" ${profileStatus === "offline" || profileStatus === "loading" ? "disabled" : ""}>${escapeHTML(profileAction)}</button><button id="reprocess-profile" class="button is-primary is-full" type="button" ${profileStatus !== "ready" || staleJobs === 0 || state.busy.has("reprocess") ? "disabled" : ""}>${state.busy.has("reprocess") ? '<span class="spinner" aria-hidden="true"></span>正在排入更新' : `${icon("refresh")}更新過時評分職缺`}</button></div></section>
       <section class="card system-group" aria-labelledby="batch-title"><div class="card-heading"><h2 id="batch-title">自動與手動批次</h2></div><div class="system-card"><div class="system-row"><span class="system-copy"><strong>自動抓取時間</strong><span>每日 08:30（Asia/Taipei）</span></span><span class="metric-value">每日</span></div></div><button id="run" class="button is-primary is-full" type="button" ${state.connected === false || state.busy.has("run") || runUnavailable ? "disabled" : ""}>${state.busy.has("run") ? '<span class="spinner" aria-hidden="true"></span>抓取已開始' : `${icon("play")}立即手動抓取`}</button></section>
       ${progressSection()}
+      ${duplicatesSection()}
       <section aria-labelledby="runs-title"><div class="card-heading"><h2 id="runs-title">批次歷程</h2><span>只記抓取事實</span></div><div id="runs" class="run-list">${runs || emptyState("尚無執行記錄", "手動抓取或排程執行後會顯示在這裡。")}</div></section></div>`;
     document.querySelector("#run").addEventListener("click", startRun);
     document.querySelector("#open-profile")?.addEventListener("click", () => chrome.tabs.create({ url: chrome.runtime.getURL("profile/index.html") }));
     document.querySelector("#open-options")?.addEventListener("click", () => chrome.runtime.openOptionsPage());
     document.querySelector("#reprocess-profile")?.addEventListener("click", reprocessProfile);
+    for (const button of document.querySelectorAll("[data-merge]")) {
+      button.addEventListener("click", () => decideDuplicate(Number(button.dataset.merge), "merge"));
+    }
+    for (const button of document.querySelectorAll("[data-ignore]")) {
+      button.addEventListener("click", () => decideDuplicate(Number(button.dataset.ignore), "ignore"));
+    }
   }
 
   function renderAll() {
@@ -412,9 +455,9 @@
   async function loadCollections() {
     const request = ++state.collectionRequest;
     const query = queryString();
-    const [jobs, queue, runs, progress, profile] = await Promise.all([api(`/api/v1/jobs?${query}`), api("/api/v1/queue"), api("/api/v1/runs"), api("/api/v1/status"), chrome.runtime.sendMessage({ type: "profile-api", path: "/api/v1/profile", method: "GET" })]);
+    const [jobs, queue, runs, progress, duplicates, profile] = await Promise.all([api(`/api/v1/jobs?${query}`), api("/api/v1/queue"), api("/api/v1/runs"), api("/api/v1/status"), api("/api/v1/duplicates"), chrome.runtime.sendMessage({ type: "profile-api", path: "/api/v1/profile", method: "GET" })]);
     if (request !== state.collectionRequest) return false;
-    const connected = [jobs, queue, runs, progress, profile].some((result) => result?.ok);
+    const connected = [jobs, queue, runs, progress, duplicates, profile].some((result) => result?.ok);
     setConnection(connected);
     if (jobs?.ok) {
       state.jobs = jobs.data.items || [];
@@ -422,6 +465,7 @@
     }
     if (queue?.ok) state.queue = queue.data.items || [];
     if (runs?.ok) state.runs = runs.data.items || [];
+    if (duplicates?.ok) state.duplicates = duplicates.data.items || [];
     state.progress = progress?.ok ? progress.data : null;
     state.profile = profile?.ok ? profile.data : null;
     if (!connected) announce(jobs?.error || queue?.error || runs?.error || "無法連線到 jobfinder API");
@@ -508,6 +552,51 @@
     document.querySelector("#rescore")?.addEventListener("click", rescoreJob);
     document.querySelector("#save-apply")?.addEventListener("click", saveApply);
     document.querySelector("#next-job")?.addEventListener("click", () => switchTab("queue"));
+    for (const button of document.querySelectorAll("[data-unmerge]")) {
+      button.addEventListener("click", () => unmergeJob(Number(button.dataset.unmerge)));
+    }
+  }
+
+  // unmergeJob undoes one grouping decision. The alias returns to the state it
+  // had before the merge; nothing that was already produced is deleted.
+  async function unmergeJob(jobID) {
+    if (state.busy.has("unmerge")) return;
+    state.busy.add("unmerge");
+    renderAll();
+    const result = await api(`/api/v1/jobs/${jobID}/unmerge`, "POST");
+    state.busy.delete("unmerge");
+    if (!result?.ok) {
+      renderAll();
+      return showToast(result?.error || "無法取消合併");
+    }
+    // The current job keeps carrying the group, so it is re-read rather than
+    // patched: after an unmerge it has one member fewer.
+    if (state.currentJob) {
+      const job = await api(`/api/v1/jobs/${state.currentJob.id}`);
+      if (job?.ok) state.currentJob = job.data;
+    }
+    await loadCollections();
+    renderAll();
+    showToast("已取消合併");
+  }
+
+  // decideDuplicate applies the user's ruling on one suspected pair. Nothing is
+  // ever decided automatically here: the program rules only merge what they are
+  // certain of, and this is where the rest is settled.
+  async function decideDuplicate(candidateID, decision) {
+    const key = `duplicate-${candidateID}`;
+    if (state.busy.has(key)) return;
+    state.busy.add(key);
+    renderAll();
+    const result = await api(`/api/v1/duplicates/${candidateID}/${decision}`, "POST");
+    state.busy.delete(key);
+    if (!result?.ok) {
+      renderAll();
+      return showToast(result?.error || (decision === "merge" ? "無法合併" : "無法忽略"));
+    }
+    await loadCollections();
+    renderAll();
+    showToast(decision === "merge" ? "已合併為同一職缺" : "已忽略這組疑似重複");
   }
 
   async function copyLetter() {

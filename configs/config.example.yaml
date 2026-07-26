@@ -13,6 +13,13 @@ sources:
     retry_backoff: 1s
     request_timeout: 30s
     check_robots: true
+dedupe:
+  enabled: true
+  title_similarity_threshold: 0.6
+  source_priority:
+    - "104"
+    - cake
+    - yourator
 scoring:
   hard_skill_weight: 0.30
   domain_weight: 0.15
