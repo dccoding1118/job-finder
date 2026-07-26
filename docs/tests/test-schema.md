@@ -76,6 +76,7 @@
 | ST-43 | 儲存 letter 時 status、rounds、runner 或內容不合法 | 被拒絕且不寫入資料 |
 | ST-44 | `ListJobs` 以 process state、apply state、source 篩選與評分排序 | 僅回傳符合篩選的 Job，排序與指定條件一致 |
 | ST-45 | `PickForStage` 分別取得 filter、score、letter 階段工作 | 僅選取 `new`、`queued`、`letter_requested` Job，並遵守 limit；`shortlisted` Job 不被任何階段取件 |
+| ST-80 | `PickForStage` 帶 revision，佇列中同時有舊 revision（`updated_at` 較早）與 active revision 的 Job | 只取得 active revision 者；舊 revision 的 Job 不佔用取件上限 |
 
 ### 3.6 Run 與 Agent 稽核紀錄
 
@@ -87,9 +88,9 @@
 | ST-53 | `UpsertJob` 以 NULL runID 新建職缺（capture 入庫） | `discovered_by_run_id` 為 NULL |
 | ST-54 | `SummarizeRunJobs(runID)` | 依 `discovered_by_run_id` 回傳該輪職缺的現行判定分布；不含其他輪次與 capture 入庫的職缺 |
 | ST-55 | `CountAgentCallsSince(role, since)` | 只計該 role 於區間內的成功呼叫；失敗呼叫不計入每日預算 |
-| ST-52 | 儲存成功與失敗的 Job 相關 agent call | 保留角色、runner、input/output、ok、duration 與時間；Job 外鍵正確 |
-| ST-53 | 儲存校準用途的 agent call | `job_id` 可為 NULL；其餘必填欄位仍受驗證 |
-| ST-54 | agent call 含非法 role、runner、ok 值、負 duration 或 PII 命中 | 被拒絕且不寫入資料 |
+| ST-56 | 儲存成功與失敗的 Job 相關 agent call | 保留角色、runner、input/output、ok、duration 與時間；Job 外鍵正確 |
+| ST-57 | 儲存校準用途的 agent call | `role` 為 `calibrator`、`job_id` 可為 NULL；其餘必填欄位仍受驗證 |
+| ST-58 | agent call 含非法 role、runner、ok 值、負 duration 或 PII 命中 | 被拒絕且不寫入資料 |
 
 ### 3.7 Profile revision 與 activation
 
@@ -104,6 +105,24 @@
 | ST-66 | `scored`／`shortlisted` Job 呼叫 `RequeueScore` | 狀態改為 `queued`、採用傳入 revision、寫 `manual rescore` 事件；舊 Score 保留且仍是現行分數；該 Job 可被 score 階段取件 |
 | ST-67 | 重複 requeue、對信件階段 Job 或不存在的 Job requeue | 已 `queued` 為 no-op；信件階段回 `ErrRescoreNotAllowed` 且狀態不變；不存在的 Job 回無資料錯誤 |
 | ST-68 | 查詢處理進度 | 各處理狀態筆數正確；最近 Agent 呼叫依時間新到舊，失敗附截斷輸出、成功不附任何輸出；非正整數 limit 被拒 |
+
+### 3.8 跨來源分群與合併（B6）
+
+| 編號 | 測試情境 | 預期結果 |
+|---|---|---|
+| ST-70 | 公司名分別為「○○股份有限公司」「○○ Co., Ltd.」「○○台灣分公司」 | 三者正規化後相等，落入同一分群鍵 |
+| ST-71 | 職稱為「資深後端工程師」與「Senior Backend Engineer」 | 正規化後相等（去資歷修飾＋中英同義詞對照）；「後端實習生」不與兩者相等 |
+| ST-72 | 同公司、同正規化職稱、地區分別為同縣市／不同縣市／一方為 remote | 同縣市與 remote 相容者自動合併；不同縣市寫入 `location_mismatch` 候選，不自動合併 |
+| ST-73 | 高信心合併 | 單一交易內：canonical 依「有全文 → 較長 → 來源優先序 → 較早」選出、alias 轉 `merged` 並寫事件（note 含合併前狀態與 canonical id）、成員 `group_id` 收斂 |
+| ST-74 | alias 已有 score／letter／apply 歷史 | 不自動合併；寫入 `has_output` 候選，雙方狀態與產出皆不變 |
+| ST-75 | 職稱 Jaccard 落在門檻上下 | ≥ 門檻且不完全相等 ⇒ `title_similar` 候選；< 門檻 ⇒ 不建立任何關聯 |
+| ST-76 | 重複觸發同一組合併或候選 | 候選唯一鍵不重複寫入；已合併的再次呼叫為 no-op，不新增事件 |
+| ST-77 | `PickForStage` 與 `ListJobs` 遇 `merged` | 一律排除；alias 不被任何階段取件、不出現在清單 |
+| ST-81 | 同一來源的兩筆職缺，公司相同且職稱完全相等／高度相似 | 皆不合併也不寫入候選；跨來源的同一職缺仍正常合併，且合併後該群組涵蓋的來源全部排除於後續比較 |
+| ST-82 | 已 `scored` 的職缺以新 revision 重新 ingest 且內容雜湊變更 | 內容欄位更新、狀態維持 `scored`、`profile_revision` 保留該評分所屬 revision；`ListJobs` 與 `CurrentScore` 仍讀得到該評分 |
+| ST-83 | 資料庫的 `jobs.profile_revision` 下查無 Score、但該 Job 有 Score（舊版寫入的損壞列） | migration 將該欄位改為最新一筆 Score 的 revision；清單重新讀得到分數，且不新增或刪除任何評分 |
+| ST-78 | `UnmergeJob` | alias 還原為合併事件記錄的合併前狀態與獨立群組；既有 score／letter 不被刪除 |
+| ST-79 | `dedupe.enabled` 為 false | 完全不建立群組關聯與候選；既有已合併資料不受影響 |
 
 ## 4. 模組驗收
 

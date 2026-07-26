@@ -30,7 +30,7 @@ func newServeCmd() *cobra.Command {
 			}
 			_ = runErr
 		}}
-		server, err := api.New(api.Config{Addr: rt.cfg.API.Addr, Token: rt.cfg.API.Token, ExtensionOrigin: rt.cfg.API.ExtensionOrigin}, rt.store, trigger, rt.pipeline, api.ProfileConfig{Provider: rt.provider, Activate: rt.pipeline.ActivateProfile})
+		server, err := api.New(api.Config{Addr: rt.cfg.API.Addr, Token: rt.cfg.API.Token, ExtensionOrigin: rt.cfg.API.ExtensionOrigin, Dedupe: rt.pipeline.Dedupe}, rt.store, trigger, rt.pipeline, api.ProfileConfig{Provider: rt.provider, Activate: rt.pipeline.ActivateProfile})
 		if err != nil {
 			return err
 		}

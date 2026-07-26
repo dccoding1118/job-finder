@@ -47,7 +47,10 @@ func ClassifyFailure(role, output string) string {
 	return FailureInvalidContent
 }
 
-// maxScoreReason is the reason length the Scorer contract allows.
+// maxScoreReason is the reason length the Scorer contract tolerates. It sits
+// well above the 40~60 characters the prompt asks for: a rejected response costs
+// a whole second call, so the wording carries the target and this bound only
+// catches an answer that ignored it outright.
 const maxScoreReason = 100
 
 func classifyScore(match string) string {

@@ -1627,6 +1627,41 @@ svg {
   }
 }
 
+
+/* Suspected duplicates: the two copies are compared side by side, and the two
+   decisions the user can make sit under them. */
+.dupe-compare {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
+  margin: 10px 0;
+}
+
+.dupe-side {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 11px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface-muted);
+  font-size: 12px;
+}
+
+.dupe-side strong {
+  font-size: 13px;
+}
+
+.dupe-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.dupe-actions .button {
+  flex: 1 1 auto;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

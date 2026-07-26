@@ -409,7 +409,7 @@ browser_summary="$(tr '\n' ';' <"${output_file}" | sed 's/;$//')"
 record "- Playwright：${browser_summary}"
 pass_step
 
-list_payload='{"items":[{"href":"https://www.104.com.tw/job/v5intern","title":"backend intern engineer","company_name":"Alpha Co","location":"Taipei","salary_text":"month 90000","remote":false},{"href":"https://www.104.com.tw/job/v5senior","title":"Senior backend engineer","company_name":"Beta Co","location":"Taipei","salary_text":"month 120000","remote":true}]}'
+list_payload='{"source":"104","items":[{"href":"https://www.104.com.tw/job/v5intern","title":"backend intern engineer","company_name":"Alpha Co","location":"Taipei","salary_text":"month 90000","remote":false},{"href":"https://www.104.com.tw/job/v5senior","title":"Senior backend engineer","company_name":"Beta Co","location":"Taipei","salary_text":"month 120000","remote":true}]}'
 begin_step 'S24' 'V5·R2/R3/R9' '驗證 104 清單就地判定且列表路徑零 Agent 呼叫'
 calls_before="$(agent_call_total)"
 curl --fail --silent "${auth[@]}" -X POST "${api_url}/capture/list" -d "${list_payload}" >"${output_file}" || fail '104 list capture failed'
@@ -425,7 +425,7 @@ assert_node capture-list "${output_file}" repeat || fail '104 re-capture did not
 curl --fail --silent "${auth[@]}" "${api_url}/queue" >"${output_file}" || fail 'API queue is unreadable after list capture'
 grep -Fq '"Senior backend engineer"' "${output_file}" || fail 'discovered list job is absent from the sidebar queue'
 curl --fail --silent "${auth[@]}" -X POST "${api_url}/capture/job" \
-  -d '{"url":"https://www.104.com.tw/job/v5senior","dom":{"title":"Senior backend engineer","company_name":"Beta Co","location":"Taipei","description":"Build Go backend and cloud platform services","salary_text":"month 120000~150000","remote":true}}' \
+  -d '{"source":"104","url":"https://www.104.com.tw/job/v5senior","dom":{"title":"Senior backend engineer","company_name":"Beta Co","location":"Taipei","description":"Build Go backend and cloud platform services","salary_text":"month 120000~150000","remote":true}}' \
   >"${output_file}" || fail '104 job capture failed'
 assert_node capture-job "${output_file}" queued || fail '104 job capture did not screen synchronously and defer scoring'
 record '- 既有職缺 re-capture 直接回現行判定且不重建；discovered 職缺進入 sidebar 待看清單；內頁補全文後同步過篩並停留 queued 待 worker 評分。'

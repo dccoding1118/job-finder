@@ -52,7 +52,7 @@
 
 ## 4. B5 單元測試案例：ingest 入口
 
-以合成的 104 解析結果直接呼叫 ingest 入口；不啟動 HTTP server、不解析真實頁面。
+以合成的解析結果直接呼叫 ingest 入口；不啟動 HTTP server、不解析真實頁面。104 與 Cake 共用同一入口與同一組案例，差異只在解析器產出的 `source`。
 
 ### 4.1 列表 ingest（PRD R9.1、R3.4）
 
@@ -76,6 +76,15 @@
 | PT-64 | Job 已有評分但內頁全文的內容雜湊已變 | 依 store 語意重置為 `new` 後重走篩選與評分，新增一筆 score；既有 score 保留為歷史 |
 | PT-65 | 內頁 ingest 使一筆 Job 成為 `shortlisted` | 不呼叫 Drafter 或 Reviewer、不建立 letter；Job 停留 `shortlisted` 等待使用者要求 |
 | PT-66 | 內頁 ingest 的 Scorer 經重試與 fallback 後仍失敗 | Job 維持 `queued` 留待下輪 run 評分；回傳安全錯誤且不含 Agent 原始輸出 |
+
+## 4.3 跨來源分群鉤點（B6，PRD R2.8）
+
+| 編號 | 測試情境 | 預期結果 |
+|---|---|---|
+| PT-70 | fetch 與兩個 capture 入口各 upsert 一筆職缺 | 三條路徑都在 upsert 之後、回傳判定之前呼叫一次分群；回傳的 job id 與 verdict 皆為群組 canonical |
+| PT-71 | capture 命中已與其他來源合併的 alias | 同步回傳 canonical 的既有 verdict 與分數；不建立新 Job、不重跑篩選或評分、零 Agent 呼叫 |
+| PT-72 | 合併發生後 worker 取件 | `merged` 的 alias 不被 filter／score／letter 任一階段取件 |
+| PT-73 | `dedupe.enabled` 為 false | 不呼叫分群；各來源職缺維持獨立，判定回傳其自身 |
 
 ## 5. Profile activation、競態與預算
 

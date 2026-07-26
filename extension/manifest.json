@@ -12,12 +12,17 @@
   "content_scripts": [
     {
       "matches": ["https://www.104.com.tw/jobs/search/*", "https://pda.104.com.tw/work/mate/list/*"],
-      "js": ["content/list.js"],
+      "js": ["content/mark.js", "content/list.js"],
       "run_at": "document_idle"
     },
     {
       "matches": ["https://www.104.com.tw/job/*"],
       "js": ["content/job.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://www.cake.me/*"],
+      "js": ["content/mark.js", "content/nav.js", "content/cake-list.js", "content/cake-job.js", "content/cake.js"],
       "run_at": "document_idle"
     }
   ],

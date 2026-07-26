@@ -59,9 +59,13 @@
 
 | 編號 | 測試情境 | 預期結果 |
 |---|---|---|
-| PT-30 | `interview` 事件少於 `calibration.min_interviews` | `jobfinder calibrate` 拒絕執行並說明尚未達門檻；不呼叫 Agent、不改寫 Profile |
-| PT-31 | 達門檻的合成 Job、Score 與 `interview` 事件 | Calibrator 收到去識別化資料；輸出格式正確的建議 diff；Profile 檔案未被系統改寫 |
-| PT-32 | Calibrator 輸出非法格式或含 PII | 拒絕建議、回傳安全錯誤；不寫入 Profile 或建議檔 |
+| PT-30 | `interview` 事件少於 `calibration.min_interviews` | `jobfinder calibrate` 非零退出並說明目前筆數與門檻；不呼叫 Agent、不改寫 Profile、不產生 diff 檔 |
+| PT-31 | 達門檻的合成 Job、Score 與 `interview` 事件 | Calibrator 輸入只含 `preferences` 區段與樣本，不含 `summary`、經歷與成就；輸出建議套用於副本後產生 unified diff，同時輸出 stdout 與 `0600` 的 `profile.calibration-<時間>.diff`；`profile.yaml` 與 active snapshot 未變 |
+| PT-32 | 成功樣本中含同一群組的多筆 alias | 只取 canonical 一筆計入樣本，重複刊登不重複加權 |
+| PT-33 | 對照樣本（`ghosted`）不存在 | 仍可執行，僅以成功樣本作答；不因缺對照而失敗 |
+| PT-34 | Calibrator 建議指向 `preferences` 以外的欄位 | 拒絕整份建議並回安全錯誤；不產生 diff 檔、不寫入 Profile |
+| PT-35 | 套用建議後的副本命中 PII 檢核 | 拒絕整份建議並回安全錯誤（不回命中值）；磁碟檔與 snapshot 不變 |
+| PT-36 | Calibrator 回空 `suggestions` | 正常結束並說明無足夠證據建議調整；不產生空 diff 檔 |
 
 ### 3.5 Canonical serialization、檔案與 provider
 

@@ -261,7 +261,8 @@ func (s *Store) ListJobs(ctx context.Context, filter JobFilter, sort JobSort) ([
 		LEFT JOIN scores latest_score ON latest_score.id = (
 			SELECT id FROM scores WHERE job_id = j.id AND profile_revision IS j.profile_revision ORDER BY created_at DESC, id DESC LIMIT 1
 		)
-		WHERE (? = '' OR j.process_state = ?)
+		WHERE j.process_state <> 'merged'
+		  AND (? = '' OR j.process_state = ?)
 		  AND (? = '' OR j.apply_state = ?)
 		  AND (? = '' OR j.source = ?)`
 	args := []any{
@@ -302,8 +303,13 @@ func (s *Store) ListJobs(ctx context.Context, filter JobFilter, sort JobSort) ([
 	return jobs, nil
 }
 
-// PickForStage selects the next jobs for one pipeline stage.
-func (s *Store) PickForStage(ctx context.Context, stage string, limit int) ([]Job, error) {
+// PickForStage selects the next jobs for one pipeline stage. A non-empty
+// revision restricts the pick to the jobs that stage may actually act on: a job
+// left on an older Profile revision waits for the user to ask for it to be
+// reprocessed, so picking it would return work the caller can only discard —
+// and, because the oldest rows sort first, would starve every eligible job
+// behind it.
+func (s *Store) PickForStage(ctx context.Context, stage, revision string, limit int) ([]Job, error) {
 	if limit <= 0 {
 		return nil, fmt.Errorf("store: invalid pick limit %d", limit)
 	}
@@ -312,7 +318,17 @@ func (s *Store) PickForStage(ctx context.Context, stage string, limit int) ([]Jo
 	if !ok {
 		return nil, fmt.Errorf("store: invalid pipeline stage %q", stage)
 	}
-	rows, err := s.db.QueryContext(ctx, "SELECT "+jobColumns+" FROM jobs WHERE process_state = ? ORDER BY updated_at, id LIMIT ?", state, limit)
+	// `merged` is never one of the stage states, and the guard states that: an
+	// alias must cost no filter, score, or letter work whatever else changes.
+	query := "SELECT " + jobColumns + " FROM jobs WHERE process_state = ? AND process_state <> 'merged'"
+	args := []any{state}
+	if revision != "" {
+		query += " AND profile_revision = ?"
+		args = append(args, revision)
+	}
+	query += " ORDER BY updated_at, id LIMIT ?"
+	args = append(args, limit)
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("pick stage jobs: %w", err)
 	}

@@ -1,11 +1,11 @@
-# 模組設計 — agents（智能層：Runner 與三 Agent）
+# 模組設計 — agents（智能層：Runner 與四 Agent）
 
 對應需求：R4、R5、R8.2。所有 LLM 互動的唯一入口。
 
 ## 1. 職責邊界
 
 - **Runner 抽象**：以 subprocess 呼叫 headless CLI（claude 為主、codex 為輔），統一「prompt 進、結構化 JSON 出」。
-- **三個 Agent 角色**：Scorer（評分）、Drafter（起草）、Reviewer（審查），各自的 prompt 模板與輸出契約。
+- **四個 Agent 角色**：Scorer（評分）、Drafter（起草）、Reviewer（審查）、Calibrator（反向校準建議），各自的 prompt 模板與輸出契約。Calibrator 只在使用者執行 `jobfinder calibrate` 時呼叫，不參與任何常駐階段。
 - 輸出驗證、重試、runner fallback、防幻覺程式防線、`agent_calls` 稽核寫入；Profile 相關呼叫記錄工作開始時 snapshot 的 `profile_revision`。
 - 不負責：取件與狀態推進（pipeline）、權重計算後的分流（pipeline 依 store 轉換）。
 
@@ -53,7 +53,9 @@
 | 欄位 | 型別 | 約束 |
 |---|---|---|
 | `hard_skill` / `domain` / `seniority` / `condition` / `direction` | int | 0–100 |
-| `reason` | string | ≤100 中文字，說明推薦或不推薦 |
+| `reason` | string | 說明推薦或不推薦；prompt 要求 40~60 中文字，驗證容忍上限 100 字 |
+
+**要求字數與容忍上限刻意分離**：兩者相等時，LLM 只要略微超出就整筆作廢並重跑一次，而重跑是實打實的 token 成本。因此 prompt 要求的是實際想要的長度（40~60 字），驗證的上限放寬到 100 字，只擋「完全無視要求」的回應。放寬容忍上限**不得**回頭調高 prompt 要求的字數。
 
 每次嘗試的稽核結果只有兩種：runner 有回應且回應通過上述契約（成功），或未通過（失敗）。分數高低不影響此判定。失敗者由 `ClassifyFailure(role, output)` 分為 `runner_error`（CLI 自報錯誤，優先於內容驗證）、`empty_output`、`no_json`、`invalid_json`、`reason_too_long`、`score_out_of_range`、`invalid_content`，供 API 的處理進度呈現失敗原因而不外洩原始輸出。
 
@@ -73,15 +75,30 @@
 | `issues[]` | string[] | `revise` 時必填：具體問題（幻覺技能、空泛詞、誇大） |
 | `edited_letter` | string NULL | Reviewer 直接刪改後可過審的版本；有值且 `verdict=approve` 時以此為最終稿 |
 
+### 3.4 CalibrationResult（Calibrator）
+
+| 欄位 | 型別 | 約束 |
+|---|---|---|
+| `summary` | string | ≤200 中文字，說明成功樣本的共同特徵 |
+| `suggestions[]` | object[] | 可為空陣列（代表無足夠證據建議調整） |
+| `suggestions[].field` | string | `preferences.*` 的欄位路徑（如 `preferences.directions[0].keywords`）；白名單外一律拒絕整份建議 |
+| `suggestions[].action` | enum | `add` / `remove` / `replace` |
+| `suggestions[].value` | string ∣ number ∣ string[] | 與目標欄位型別相容 |
+| `suggestions[].evidence` | string | ≤100 字，指出此建議來自哪些樣本的共同特徵 |
+| `suggestions[].confidence` | enum | `high` / `medium` / `low` |
+
+驗證失敗（含白名單外欄位、型別不相容）不重試變體 prompt，直接以失敗結束並記入 `agent_calls`——校準是使用者主動觸發的一次性分析，反覆重試只是浪費額度。套用與 diff 產生屬 profile 模組（見 [design-profile](design-profile.md) §7.3）。
+
 ## 4. Agent prompt 要點（模板放 `internal/agents/prompts/*.tmpl`）
 
 Profile 輸入一律來自 provider snapshot 的 canonical YAML。Scorer、Drafter 與 Reviewer 單次工作途中不得重新載入 Profile；每次 `agent_calls` 與其 Score／Letter 產出保存相同的實際 revision。
 
 | 角色 | 輸入 | 規則要點 |
 |---|---|---|
-| Scorer | Profile YAML 全文＋Job（title/company/JD/薪資/地點/remote） | 逐維給分；條件契合須對照 preferences；方向契合對照 directions 關鍵字；理由 ≤100 字 |
+| Scorer | Profile YAML 全文＋Job（title/company/JD/薪資/地點/remote） | 逐維給分；條件契合須對照 preferences；方向契合對照 directions 關鍵字；理由 40~60 字 |
 | Drafter | Profile＋Job＋（重寫輪）Reviewer issues | 只可使用 Profile 存在的技能與成就；引用量化數據；遵守 `honesty_bounds`；精煉（300–450 字）；佔位符落款；繁體中文（JD 為英文則英文） |
 | Reviewer | Profile＋Job＋草稿 | 毒舌審查：任何 Profile 無根據的技能/經歷/數字＝幻覺必挑；空泛形容詞（「熱情」「抗壓」等無實據修飾）要求刪除；可直接給 `edited_letter`；檢查佔位符落款 |
+| Calibrator | Profile 的 `preferences` 區段＋成功樣本（JD、職稱、產業、地區、薪資、五維分數）＋對照樣本 | 只比較兩組樣本的共同與差異特徵，依 [design-profile](design-profile.md) §7.2 的五個維度作答；只得建議 `preferences.*` 欄位；證據不足時回空 `suggestions`，不得臆測；不得輸出任何履歷事實的修改建議 |
 
 ## 5. 生成迴圈與防幻覺防線（R5）
 
@@ -114,12 +131,12 @@ return failed(review_log)   # → letter_failed
 ## 6. 測試
 
 - Runner：以假可執行檔模擬正常、非零、逾時與 argv/cwd；精確驗證 model flag、空暫存目錄與 cleanup。真 CLI 呼叫只由 opt-in 的 `e2e-live` 驗收，不進 CI。
-- 三 Agent：fake Runner 回罐頭 JSON，驗證解析、驗證失敗路徑、fallback 切換、迴圈輪次上限。
+- 四 Agent：fake Runner 回罐頭 JSON，驗證解析、驗證失敗路徑、fallback 切換、迴圈輪次上限；Calibrator 另驗欄位白名單拒絕與空建議路徑。
 - guard：表驅動正反例（幻覺技能、缺佔位符、含 PII、超長）。
 
 ## 7. 交付物
 
-- `internal/agents/`：runner（claude/codex/fake）、角色路由驗證、prompts、scorer/drafter/reviewer、guard、測試。
+- `internal/agents/`：runner（claude/codex/fake）、角色路由驗證、prompts、scorer/drafter/reviewer/calibrator、guard、測試。
 
 ## 8. 待決
 

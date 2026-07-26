@@ -83,18 +83,23 @@ func (f Filter) Match(j store.Job) []string {
 }
 
 type Pipeline struct {
-	Store           *store.Store
-	Source          crawler.Source
-	Provider        *profile.Provider
-	Filter          Filter
-	Scorer          agents.Scorer
-	Drafter         agents.Drafter
-	Reviewer        agents.Reviewer
-	ProfileYAML     string
-	Profile         profile.Profile
-	Denylist        []string
-	Weights         [5]float64
-	Threshold       float64
+	Store       *store.Store
+	Source      crawler.Source
+	Provider    *profile.Provider
+	Filter      Filter
+	Scorer      agents.Scorer
+	Drafter     agents.Drafter
+	Reviewer    agents.Reviewer
+	ProfileYAML string
+	Profile     profile.Profile
+	Denylist    []string
+	Weights     [5]float64
+	Threshold   float64
+	// DedupeEnabled turns cross-source grouping on; with it off every source keeps
+	// its own copy of a job, which is the escape hatch while the normalization
+	// rules are being retuned.
+	DedupeEnabled   bool
+	Dedupe          store.DedupeOptions
 	MaxScorePerDay  int
 	MaxLetterPerDay int
 	MaxLetterLength int
@@ -218,7 +223,9 @@ func (p Pipeline) LetterWithStats(ctx context.Context, limit int) (StageStats, e
 	if !ok {
 		return StageStats{}, nil
 	}
-	jobs, err := p.Store.PickForStage(ctx, "letter", limit)
+	// The letter stage records the revision it actually drafted under rather than
+	// requiring the job to already carry it, so it picks by state alone.
+	jobs, err := p.Store.PickForStage(ctx, "letter", "", limit)
 	if err != nil {
 		return StageStats{}, err
 	}
@@ -302,6 +309,9 @@ func (p Pipeline) Fetch(ctx context.Context, spec crawler.SearchSpec, runID *int
 		if e != nil {
 			return stats, e
 		}
+		if _, e := p.link(ctx, result.Job.ID); e != nil {
+			return stats, e
+		}
 		stats.Fetched++
 		if result.Created {
 			stats.New++
@@ -325,11 +335,12 @@ func (p Pipeline) FilterJobs(ctx context.Context, limit int) (int, error) {
 }
 
 func (p Pipeline) FilterJobsWithStats(ctx context.Context, limit int) (StageStats, error) {
-	if _, err := p.snapshot(); err != nil {
+	active, err := p.snapshot()
+	if err != nil {
 		return StageStats{}, err
 	}
 	limit, _ = stageLimit(limit, 0, false)
-	jobs, err := p.Store.PickForStage(ctx, "filter", limit)
+	jobs, err := p.Store.PickForStage(ctx, "filter", active.Revision, limit)
 	if err != nil {
 		return StageStats{}, err
 	}
@@ -365,7 +376,8 @@ func (p Pipeline) Score(ctx context.Context, limit int) (int, error) {
 }
 
 func (p Pipeline) ScoreWithStats(ctx context.Context, limit int) (StageStats, error) {
-	if _, err := p.snapshot(); err != nil {
+	active, err := p.snapshot()
+	if err != nil {
 		return StageStats{}, err
 	}
 	remaining, limited, err := p.ScoreBudgetRemaining(ctx)
@@ -377,7 +389,7 @@ func (p Pipeline) ScoreWithStats(ctx context.Context, limit int) (StageStats, er
 		p.logger().Debug("score stage skipped", "stage", "score", "reason", "daily budget exhausted", "max_per_day", p.MaxScorePerDay)
 		return StageStats{}, nil
 	}
-	jobs, err := p.Store.PickForStage(ctx, "score", limit)
+	jobs, err := p.Store.PickForStage(ctx, "score", active.Revision, limit)
 	if err != nil {
 		return StageStats{}, err
 	}
@@ -438,6 +450,26 @@ func (p Pipeline) ScoreWithStats(ctx context.Context, limit int) (StageStats, er
 		stats.Processed++
 	}
 	return stats, errors.Join(failures...)
+}
+
+// link places one freshly upserted job in its cross-source group and reports the
+// job every caller must act on and report: an alias carries no verdict of its
+// own, so the canonical copy is what a capture answers with.
+func (p Pipeline) link(ctx context.Context, jobID int64) (int64, error) {
+	if !p.DedupeEnabled {
+		return jobID, nil
+	}
+	outcome, err := p.Store.LinkOrSuggestDuplicate(ctx, jobID, p.Dedupe)
+	if err != nil {
+		return 0, err
+	}
+	if outcome.Merged {
+		p.logger().Info("job merged across sources", "stage", "dedupe", "job_id", jobID, "canonical_job_id", outcome.CanonicalJobID, "group_id", outcome.GroupID)
+	}
+	for _, candidate := range outcome.CandidateIDs {
+		p.logger().Info("duplicate candidate registered", "stage", "dedupe", "job_id", jobID, "candidate_id", candidate)
+	}
+	return outcome.CanonicalJobID, nil
 }
 
 func jobUsesRevision(job store.Job, revision string) bool {

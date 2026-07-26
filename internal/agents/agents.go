@@ -375,7 +375,7 @@ func parseReview(raw string) (ReviewResult, error) {
 }
 
 func scorePrompt(profile string, j Job) string {
-	return "你是求職媒合評分器。僅輸出單一 JSON 物件，不要說明。\nProfile YAML:\n" + profile + "\nJob:\ntitle: " + j.Title + "\ncompany: " + j.CompanyName + "\ndescription: " + j.Description + "\nlocation: " + j.Location + "\n請回傳 hard_skill、domain、seniority、condition、direction（皆為 0-100 整數）與 reason（最多100字）。不要計算 total。"
+	return "你是求職媒合評分器。僅輸出單一 JSON 物件，不要說明。\nProfile YAML:\n" + profile + "\nJob:\ntitle: " + j.Title + "\ncompany: " + j.CompanyName + "\ndescription: " + j.Description + "\nlocation: " + j.Location + "\n請回傳 hard_skill、domain、seniority、condition、direction（皆為 0-100 整數）與 reason（40~60 字，勿超過）。不要計算 total。"
 }
 
 // extractObject returns the last balanced top-level JSON object in raw, ignoring

@@ -1,6 +1,8 @@
 package api
 
 import (
+	"net/http"
+
 	"github.com/dccoding1118/job-finder/internal/store"
 )
 
@@ -66,6 +68,20 @@ func jobListView(job store.Job, revisions ...string) map[string]any {
 	if state, ok := letterStateByState[job.ProcessState]; ok {
 		value["letter_state"] = state
 	}
+	return value
+}
+
+// jobViewWithGroup adds the cross-source group to one job view. It is what lets
+// the user choose the platform to apply on, and what surfaces the aliases whose
+// assessment this job now carries.
+func (s *Server) jobViewWithGroup(r *http.Request, detail store.JobDetail) map[string]any {
+	value := jobView(detail, s.currentProfileRevision())
+	group, err := s.store.GroupOf(r.Context(), detail.Job.ID)
+	if err != nil || group.GroupID == 0 {
+		value["group"] = nil
+		return value
+	}
+	value["group"] = group
 	return value
 }
 

@@ -18,7 +18,8 @@
 ```
 jobfinder run [--source NAME]
   1. StartRun(trigger)
-  2. 逐全自動 source（Yourator/Cake）抓取 → store.UpsertJob（記 discovered_by_run_id）
+  2. 逐全自動 source（Yourator）抓取 → store.UpsertJob（記 discovered_by_run_id）
+     → store.LinkOrSuggestDuplicate（跨來源分群，見 §3.1）
      source 級錯誤記 stats.errors 續行
   3. FinishRun(stats)
 ```
@@ -27,7 +28,7 @@ jobfinder run [--source NAME]
 
 該輪職缺的判定分布（推薦／不推薦／評分中／不適合）**不寫入 stats**，而是展開該輪時經 `jobs.discovered_by_run_id` 即時查詢——worker 是非同步的，fetch 結束時該批職缺尚未評分完，任何當下的統計快照都會過期（PRD R8.1）。
 
-104 為半被動來源，不經 `run` 抓取；其職缺由使用者導覽觸發的 capture 入庫（§2.3），不屬於任何 run，`discovered_by_run_id` 為 NULL。
+104 與 Cake 為半被動來源，不經 `run` 抓取；其職缺由使用者導覽觸發的 capture 入庫（§2.3），不屬於任何 run，`discovered_by_run_id` 為 NULL。
 
 排程：systemd user timer 每日一次（台北時間，預設 08:30）呼叫 `jobfinder run`；部署細節見 [deploy](../deploy.md)。
 
@@ -43,7 +44,7 @@ worker 隨 API server process 常駐（同 binary、同 systemd service），持
 
 worker 是 process 內單一消化者，以 process 內 mutex 序列化取件；資料正確性仍由 store 的 expected state ＋ expected `profile_revision` CAS 保證，不能以 mutex 取代。無待處理件時休眠等待，有件即取，因此排程 fetch、CLI 與 extension capture 三個入口寫進來的職缺走的是同一條消化路徑，沒有「等下一輪」的空窗。
 
-filter、score 與 letter 每筆工作開始時各自從 Profile provider 取得一次 immutable snapshot。filter／score 只處理 `jobs.profile_revision` 與 snapshot revision 相符的工作；letter 記錄工作開始時實際取得的 revision，不要求與既有 Score 相同。Profile 為 `missing`、`invalid` 或 `degraded` 時 worker 暫停取件。
+filter、score 與 letter 每筆工作開始時各自從 Profile provider 取得一次 immutable snapshot。filter／score 只處理 `jobs.profile_revision` 與 snapshot revision 相符的工作，**該限制下推到取件查詢**（`PickForStage` 帶 active revision）：舊 revision 的職缺等使用者要求重新處理，取件時就排除，否則它們以較舊的 `updated_at` 永遠排在最前面、取滿每次取件上限後被逐筆丟棄，相符的職缺永遠輪不到。letter 記錄工作開始時實際取得的 revision，不要求與既有 Score 相同，取件也不限 revision。Profile 為 `missing`、`invalid` 或 `degraded` 時 worker 暫停取件。
 
 **letter 階段只處理使用者已要求的職缺**（PRD R5.0）：`shortlisted` 不是取件狀態，達閾值的推薦職缺停留在該狀態直到使用者要求。使用者的要求由 API（[design-api](design-api.md)）或 `jobfinder letter request --job ID` 經 store 轉為 `letter_requested`，worker 才取件。無待處理要求時，letter 階段自然是零筆、零 Agent 呼叫、零費用。
 
@@ -55,9 +56,9 @@ filter、score 與 letter 每筆工作開始時各自從 Profile provider 取得
 
 - **冪等**：狀態即進度。中斷後重啟自然從殘留狀態續作；已完成的 Agent 呼叫不重複（該 job 已離開取件狀態）。
 
-### 2.3 ingest 入口（104 半被動）
+### 2.3 ingest 入口（半被動來源）
 
-pipeline 提供 **ingest 入口**供 API capture endpoint 呼叫（見 [design-api](design-api.md)）。兩個入口都同步回傳每筆職缺的**現行 process_state 與現行 score**，讓插件能就地標記判定（PRD R9.1、R9.6）；判定字彙本身由 API viewmodel 導出，pipeline 不定義呈現用語。
+pipeline 提供 **ingest 入口**供 API capture endpoint 呼叫（見 [design-api](design-api.md)），104 與 Cake 共用同一入口，差別只在 API 依 payload 的 `source` 選用哪個解析器。兩個入口都同步回傳每筆職缺的**現行 process_state 與現行 score**，讓插件能就地標記判定（PRD R9.1、R9.6）；判定字彙本身由 API viewmodel 導出，pipeline 不定義呈現用語。
 
 | 入口 | 行為 | 回傳 | LLM |
 |---|---|---|---|
@@ -96,7 +97,19 @@ partial 條件篩選於 `IngestList` 入庫時同步執行（§2.3）；worker �
 
 需要內文的條件在 partial 上**不可近似執行**：104 搜尋頁的列表摘要是繞著關鍵字命中處拼接的片段而非 JD 前綴（見 [design-crawler](design-crawler.md) §2.2），片段未出現某詞不表示 JD 無該詞，據此判定會產生假淘汰。此類條件一律等補入全文（→ `new`）後才執行。
 
-批次來源（Yourator／Cake）若列表回應不含全文亦會產生 partial 職缺，該類職缺不套用 partial 篩選，停留 `discovered` 進入待看清單——partial 篩選只在 104 清單 capture 路徑上執行，因為只有該路徑需要同步回傳就地標記。
+批次來源（Yourator）若列表回應不含全文亦會產生 partial 職缺，該類職缺不套用 partial 篩選，停留 `discovered` 進入待看清單——partial 篩選只在清單 capture 路徑上執行，因為只有該路徑需要同步回傳就地標記。
+
+## 3.1 跨來源分群（R2.8）
+
+每次 upsert 之後（fetch 與兩個 capture 入口皆同）呼叫 `store.LinkOrSuggestDuplicate`，規則與交易語意由 store 定義（見 [design-schema](design-schema.md) §4.2）。pipeline 的責任只有三件：
+
+- **在 upsert 之後、判定回傳之前**呼叫，確保 capture 的同步回應已反映合併結果。
+- capture 回傳的 job id 與 verdict 一律取 **canonical** 那一筆，alias 不獨立呈現。
+- 取件一律排除 `merged`，因此 alias 不消耗任何 filter／score／letter 工作與 LLM 費用。
+
+`dedupe.enabled` 為 false 時整段跳過，各來源職缺維持獨立——此開關是為了在正規化規則調整期間可快速停用，不是常態設定。
+
+`MergeGroups`／`UnmergeJob`／`IgnoreCandidate` 由 API 直接呼叫 store，不經 worker：它們是使用者的同步裁決，不產生非同步工作。
 
 ## 4. 手動 Profile activation 與重新處理
 
@@ -163,6 +176,9 @@ log 不得含 JD、Profile、薪資、求職信內容或 Agent 原始輸入輸�
 | `sources.<name>` | enabled、max_pages、request_delay_min/max、retry_max、retry_backoff、check_robots；query 預設由 Profile directions 依順序展開，每個方向一組、每來源最多三組；`sources.yourator.base_url` 為選填端點覆寫，預設正式 Yourator 網域，僅供隔離驗收以本機 fixture 驗證 adapter |
 | `scoring` | 五維權重、閾值（預設 75） |
 | `calibration.min_interviews` | 反向校準門檻（預設 5） |
+| `dedupe.enabled` | 是否啟用跨來源分群（預設 true） |
+| `dedupe.title_similarity_threshold` | 灰帶候選的職稱相似度下限（預設 0.6） |
+| `dedupe.source_priority` | canonical 選擇的來源優先序（預設 `104` > `cake` > `yourator`） |
 | `llm` | §5 每日預算、呼叫間隔與 timeout；`llm.roles` 為各角色的 primary/fallback 分別指定 agent CLI 與 model（見 design-agents） |
 | `worker.scan_interval` | 常駐 worker 無待處理件時的掃描間隔（預設 5s） |
 | `api.addr` | B4 API 監聽位址，預設 `127.0.0.1:8686` |

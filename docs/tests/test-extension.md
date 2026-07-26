@@ -1,6 +1,6 @@
 # 測試規格 — extension（`extension/`）
 
-對應 [extension 模組設計](../designs/design-extension.md)、PRD R1、R6、R9。Side Panel、Profile editor、Options 與 service worker 以 mock Chrome API 與 mock API response 測試；104 content script 與 Profile editor 的最終驗收由 Chrome 實機 gate 完成。
+對應 [extension 模組設計](../designs/design-extension.md)、PRD R1、R6、R9。Side Panel、Profile editor、Options 與 service worker 以 mock Chrome API 與 mock API response 測試；104／Cake content script 與 Profile editor 的最終驗收由 Chrome 實機 gate 完成。
 
 ## 1. 自動化案例
 
@@ -27,6 +27,13 @@
 | ET-18 | B5 | 搜尋頁虛擬捲動回收與載入新項目 | MutationObserver 收割新出現的項目；已收割項目不重送 capture；捲離回收不影響已送出的標記狀態 |
 | ET-19 | B5 | 搜尋頁第一筆廣告職缺（`jobsource` 前綴 `hotjob`） | 不收割、不送 capture、不標記 |
 | ET-20 | B5 | 搜尋頁與通知頁的同一職缺 | 兩套 selector 正規化為同一組 capture 項目（external_id、url、職稱、公司、地區、薪資一致） |
+| ET-40 | B6 | Cake 列表頁 `__NEXT_DATA__` 與目前 URL 條件一致 | 由 `__NEXT_DATA__` 取得項目並送出帶 `source=cake` 的 capture payload；欄位與 104 路徑正規化為同一結構 |
+| ET-41 | B6 | Cake 列表頁 URL 條件與 `__NEXT_DATA__` 的 `ssr.search` 不一致（使用者頁內改條件或翻頁） | 退回 DOM 收割並以 MutationObserver 涵蓋新注入項目；不使用過期的內嵌資料 |
+| ET-42 | B6 | Cake DOM 收割時 class name 的 hash 段改變 | 仍以 `a[href^="/companies/"][href*="/jobs/"]` 與 `[class*="JobSearchItem"]` 前綴定位成功；不依賴完整 class 常數 |
+| ET-43 | B6 | Cake 內頁擷取 | 以渲染後 DOM 收割職稱、公司名、JD 區塊與 metadata 行，送出 `source=cake` 的 capture 且不帶 `next_data`；Side Panel 依回應呈現，與 104 路徑共用同一套判定呈現規則 |
+| ET-46 | B6 | 由 Cake 列表頁 soft navigation 進入職缺內頁（不重新載入文件） | 路由模組停掉列表模式並啟動內頁模式；page context 由 `list` 轉為 `job`，內頁擷取以新 URL 送出 |
+| ET-44 | B6 | 目前職缺的 Job 回應帶多成員 `group` | 列出其他來源的平台與連結；評分與求職信只呈現一份；提供取消合併 |
+| ET-45 | B6 | 系統頁「疑似重複」 | 併排顯示雙方職稱、公司、地區、來源與相似度；按下合併或忽略各送出一次對應請求並自清單移除；不自動裁決 |
 | ET-30 | Profile | 系統頁 Profile 卡的 missing／invalid／ready | 顯示正確摘要與開始設定／編輯動作；invalid 不顯示敏感內容 |
 | ET-31 | Profile | 全頁表單與動態陣列 | 所有 schema 欄位可編輯；陣列可新增、刪除、排序；新增後聚焦同區塊的新欄位且不跳至其他同型清單；鍵盤與錯誤聚焦可用 |
 | ET-32 | Profile | 未儲存草稿離頁、reload 與無 autosave | 離頁先確認；reload 後草稿消失；未按儲存不送 PUT |
@@ -38,12 +45,13 @@
 | ET-38 | 目前職缺 | `scored` 職缺按下「重新評分」 | 送出一次 `POST /api/v1/jobs/{id}/rescore`；該筆立即顯示為評分中且按鈕消失；信件階段職缺不顯示此按鈕 |
 | ET-39 | 系統 | 處理進度與 Agent 呼叫紀錄 | 顯示各待處理狀態筆數與當日評分額度餘額；未完成呼叫顯示角色、耗時與失敗類別說明；低分的成功呼叫顯示為呼叫成功且不顯示失敗字樣；不輪詢 |
 
-測資不得含真實 JD、Profile、token 或 104 頁面內容。
+測資不得含真實 JD、Profile、token 或任何來源平台的真實頁面內容。
 
 ## 2. Chrome 實機 gate
 
 - B4 由驗收者以與自動驗收相同的 unpacked extension artifact 載入實際 Chrome，確認 toolbar action 開啟原生 Side Panel，完成 Options 設定、淺深色切換、四頁籤、對照、產生求職信、copy、apply、manual run 與 Run history；自動隔離 Chromium 結果不得替代。
 - 在使用者自行開啟的 104 搜尋頁與通知頁確認列表收割與就地標記：不適合者當場可辨識、既有職缺直接顯示既有判定；不由插件開分頁或觸發背景導覽。
+- 在使用者自行開啟的 Cake 搜尋／職類頁與職缺內頁完成同一組確認；`__NEXT_DATA__` 與 DOM 兩條路徑都要實際走過（直接開啟帶條件 URL、以及在頁內改條件後）。
 - 在使用者自行點開的 104 職缺頁確認內頁擷取，Side Panel「目前職缺」顯示判定／五維分數／快取；104 頁面不出現第二套完整評分 overlay。
 - 在 Side Panel 確認清單、判定、對照、求職信生成與複製、投遞狀態、手動 run、Run 歷史與待看清單。
 - 將人工檢查結果與不含敏感內容的證據記入 `.local-dev/verify/`。

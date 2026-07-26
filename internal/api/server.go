@@ -19,7 +19,13 @@ import (
 	"github.com/dccoding1118/job-finder/internal/store"
 )
 
-type Config struct{ Addr, Token, ExtensionOrigin string }
+type Config struct {
+	Addr, Token, ExtensionOrigin string
+	// Dedupe carries the cross-source grouping thresholds the user's merge
+	// decisions are applied with, so a manual merge picks the canonical copy by
+	// the same rules an automatic one does.
+	Dedupe store.DedupeOptions
+}
 
 // Triggerer starts one background fetch. Filter, score, and letter need no
 // trigger: the resident worker consumes them continuously.
@@ -85,6 +91,8 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("/api/v1/status", s.status)
 	mux.HandleFunc("/api/v1/capture/list", s.captureList)
 	mux.HandleFunc("/api/v1/capture/job", s.captureJob)
+	mux.HandleFunc("/api/v1/duplicates", s.duplicates)
+	mux.HandleFunc("/api/v1/duplicates/", s.duplicate)
 	mux.HandleFunc("/api/v1/profile", s.profile)
 	mux.HandleFunc("/api/v1/profile/reprocess", s.reprocessProfile)
 	return s.authorize(mux)

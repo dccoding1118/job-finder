@@ -10,20 +10,20 @@ const readJSON = () => JSON.parse(fs.readFileSync(file, "utf8"));
 
 if (mode === "schema") {
   const data = readJSON();
-  assert.equal(data.schema_version, 3);
+  assert.equal(data.schema_version, 5);
   assert.equal(data.journal_mode.toLowerCase(), "wal");
   assert.equal(data.foreign_keys, true);
-  assert.deepEqual(data.tables, ["agent_calls", "jobs", "letters", "runs", "scores", "status_events"]);
+  assert.deepEqual(data.tables, ["agent_calls", "job_dupe_candidates", "job_groups", "jobs", "letters", "runs", "scores", "status_events"]);
   assert.deepEqual(data.jobs, []);
   process.exit(0);
 }
 
 if (mode === "schema-migrated") {
   const data = readJSON();
-  assert.equal(data.schema_version, 3);
+  assert.equal(data.schema_version, 5);
   assert.equal(data.journal_mode.toLowerCase(), "wal");
   assert.equal(data.foreign_keys, true);
-  assert.deepEqual(data.tables, ["agent_calls", "jobs", "letters", "runs", "scores", "status_events"]);
+  assert.deepEqual(data.tables, ["agent_calls", "job_dupe_candidates", "job_groups", "jobs", "letters", "runs", "scores", "status_events"]);
   assert.ok(data.jobs.length > 0);
   process.exit(0);
 }
@@ -59,7 +59,7 @@ if (mode === "profile-reprocess-response") {
 
 if (mode === "profile-race") {
   const data = readJSON();
-  assert.equal(data.schema_version, 3);
+  assert.equal(data.schema_version, 5);
   const revisions = new Set(data.agent_calls.map(({ profile_revision }) => profile_revision).filter(Boolean));
   assert.ok(revisions.size >= 2, "agent audit did not retain multiple Profile revisions");
   const currentScores = data.jobs.filter((job) => job.score && job.profile_revision === job.score.profile_revision);
@@ -159,10 +159,10 @@ function transitionsOf(id, letterConsumed) {
 if (mode === "snapshot") {
   const data = readJSON();
   const letterConsumed = phase === "lettered" || phase === "repeat";
-  assert.equal(data.schema_version, 3);
+  assert.equal(data.schema_version, 5);
   assert.equal(data.journal_mode.toLowerCase(), "wal");
   assert.equal(data.foreign_keys, true);
-  assert.deepEqual(data.tables, ["agent_calls", "jobs", "letters", "runs", "scores", "status_events"]);
+  assert.deepEqual(data.tables, ["agent_calls", "job_dupe_candidates", "job_groups", "jobs", "letters", "runs", "scores", "status_events"]);
   assert.equal(data.jobs.length, 4);
   const jobs = Object.fromEntries(data.jobs.map((job) => [job.external_id, job]));
 

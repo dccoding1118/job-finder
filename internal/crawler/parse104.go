@@ -63,18 +63,22 @@ var (
 // ParseListItems normalizes captured list entries into partial jobs. List pages
 // carry no JD, so every job it returns has a nil description and is stored as
 // `discovered`.
+//
+// An entry the page does not describe well enough is skipped rather than failing
+// the capture: one such card on screen must not cost every other item on that
+// page its mark (see design-crawler §2).
 func ParseListItems(items []ListItem) ([]RawJob, error) {
 	jobs := make([]RawJob, 0, len(items))
-	for i, item := range items {
+	for _, item := range items {
 		if sponsored(item.Href) {
 			continue
 		}
 		id, link, err := jobIdentity(item.Href)
 		if err != nil {
-			return nil, fmt.Errorf("104 list item %d: %w", i, err)
+			continue
 		}
 		if strings.TrimSpace(item.Title) == "" || strings.TrimSpace(item.CompanyName) == "" || strings.TrimSpace(item.Location) == "" {
-			return nil, fmt.Errorf("104 list item %d: title, company, and location are required", i)
+			continue
 		}
 		remote := "unknown"
 		if item.Remote {

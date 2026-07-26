@@ -61,7 +61,7 @@ func TestIngestJobPassesScreeningAndLeavesScoringToWorker(t *testing.T) {
 		t.Fatalf("captured job = %+v, want queued with no score", result)
 	}
 	// The worker's score stage is what advances it; capture leaves it queued.
-	queued, err := db.PickForStage(ctx, "score", 10)
+	queued, err := db.PickForStage(ctx, "score", "", 10)
 	if err != nil || len(queued) != 1 {
 		t.Fatalf("queued jobs = %d, %v", len(queued), err)
 	}

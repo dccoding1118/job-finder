@@ -156,7 +156,7 @@ func TestCaptureJobReportsPendingAndBudget(t *testing.T) {
 	processor := &fakeProcessor{jobResult: pipeline.IngestResult{JobID: 7, ProcessState: "queued"}, scoreLimited: true, scoreRemain: 0}
 	server, _ := newTestServer(t, processor)
 	posting := `{"@type":"JobPosting","title":"Engineer","hiringOrganization":{"name":"Example"},"industry":"software","description":"Go platform work","jobLocation":{"address":{"addressLocality":"Taipei"}}}`
-	request := authedRequest(http.MethodPost, "/api/v1/capture/job", map[string]any{"url": "https://www.104.com.tw/job/abc", "json_ld": []string{posting}})
+	request := authedRequest(http.MethodPost, "/api/v1/capture/job", map[string]any{"source": "104", "url": "https://www.104.com.tw/job/abc", "json_ld": []string{posting}})
 	response := httptest.NewRecorder()
 	server.Handler().ServeHTTP(response, request)
 	if response.Code != http.StatusOK {
@@ -174,7 +174,7 @@ func TestCaptureListReturnsVerdictPerItem(t *testing.T) {
 		{JobID: 2, ProcessState: "discovered", Created: true},
 	}}
 	server, _ := newTestServer(t, processor)
-	request := authedRequest(http.MethodPost, "/api/v1/capture/list", map[string]any{"items": []map[string]any{
+	request := authedRequest(http.MethodPost, "/api/v1/capture/list", map[string]any{"source": "104", "items": []map[string]any{
 		{"href": "https://www.104.com.tw/job/aaa", "title": "A", "company_name": "C", "location": "Taipei"},
 		{"href": "https://www.104.com.tw/job/bbb", "title": "B", "company_name": "C", "location": "Taipei"},
 	}})

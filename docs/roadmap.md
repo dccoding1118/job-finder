@@ -16,15 +16,15 @@ MVP 的功能規格見 [PRD](PRD.md)；本文件回答四個問題：**現在的
 | AI 落地代表作品 | Multi-Agent 協作、雙層過濾、防幻覺審查、冪等 pipeline——面試與作品集的可展示實例 |
 | 產品核心的驗證場 | MVP 的資料流（抓取→過濾→評分→生成→回饋）就是未來產品的核心引擎；單人真實使用即最早的 product validation |
 
-MVP 架構中為擴展預留的縫：Source adapter（加平台不動核心）、Runner 抽象（CLI 換直串 API 只換實作）、store 隔離（SQLite 換 PostgreSQL 不動業務層）、雙軸狀態機與事件流（天然支撐多用戶成效統計）。
+MVP 架構中為擴展預留的縫：Source adapter 與半被動解析器（加平台不動核心；**半被動是主路線**——多數平台的搜尋路徑在人機驗證後，全自動抓取是例外）、Runner 抽象（CLI 換直串 API 只換實作）、store 隔離（SQLite 換 PostgreSQL 不動業務層）、雙軸狀態機與事件流（天然支撐多用戶成效統計）。
 
 ## 3. 階段規劃
 
 ### S0 — 個人 MVP（現在，對應 PRD 交付計畫 B0–B6）
 
 - **目標**：自己每天用得起來；完成「抓取→評分→生成→手動投遞→狀態追蹤」閉環。
-- **形態**：單人單機（GCP VM）、CLI ＋ localhost API ＋ Chrome 原生 Side Panel（含單一 Profile 全頁編輯器與 104 半被動擷取）、SQLite、headless CLI LLM；Profile 仍以版控外 YAML 為真相。
-- **退出標準**：連續兩週日常使用；三來源皆通（Yourator/Cake 全自動、104 插件半被動）；投遞 ≥20 筆由本系統產出的求職信。
+- **形態**：單人單機（GCP VM）、CLI ＋ localhost API ＋ Chrome 原生 Side Panel（含單一 Profile 全頁編輯器與 104／Cake 半被動擷取）、SQLite、headless CLI LLM；Profile 仍以版控外 YAML 為真相。
+- **退出標準**：連續兩週日常使用；三來源皆通（Yourator 全自動、104／Cake 插件半被動）；跨來源重複職缺合併為一筆；投遞 ≥20 筆由本系統產出的求職信。
 
 ### S1 — 自用強化（求職期間持續迭代）
 
@@ -35,6 +35,7 @@ MVP 架構中為擴展預留的縫：Source adapter（加平台不動核心）�
   - 成效統計頁：投遞數、回應率、各來源/分數帶的轉換率——同時是未來產品的賣點素材。
   - 評分與生成品質迭代（以真實投遞結果當 eval）。
   - 匯入去識別化履歷並產生 Profile 草稿，經使用者檢查與確認後才寫入；支援多 Profile 的建立、切換與個別媒合歸屬。
+  - 跨來源合併規則的持續調校：以實際誤合併／漏合併回饋同義詞對照表與相似度門檻。
   - **深入評估（按需）**：推薦職缺提供「深入評估」動作，才產出優缺點、機會分析，並查詢公司與職缺評論等外部即時評價。與求職信同屬按需觸發——每筆職缺的例行評分維持五維＋短理由，把較貴的分析留給使用者真的在考慮的少數職缺。此功能定案前，`ScoreResult` 不擴充 pros/cons 欄位。
 - **架構演進**：無重大變更；驗證「事件流→統計」的資料模型。
 
@@ -60,7 +61,7 @@ MVP 架構中為擴展預留的縫：Source adapter（加平台不動核心）�
 
 ### S4 — 擴展（選項池，依 S3 學習取捨）
 
-- 更多來源：LinkedIn（合作/授權路線）、1111（插件路線）、獵頭/內推管道。
+- 更多來源：LinkedIn（合作/授權路線）、1111（插件路線）、獵頭/內推管道。插件路線的邊際成本是「一組解析器＋一組 URL pattern」，是擴充來源的預設做法。
 - 投遞素材擴展：履歷客製化重排（PDF 生成）、面試準備 Agent（依 JD 生成考題與話術）。
 - 成效數據飛輪：跨用戶匿名統計回饋評分模型（哪類 Profile×JD 組合真的拿到面試）。
 - B 端變體：企業/獵頭側的反向媒合介面。
@@ -134,7 +135,7 @@ MVP 架構中為擴展預留的縫：Source adapter（加平台不動核心）�
 | Profile | extension 表單編輯單一 YAML 真相 | Web 表單＋每租戶資料 | Web 表單＋多 Profile／範本 |
 | 資料庫 | SQLite | SQLite（每租戶） | PostgreSQL 多租戶 |
 | LLM | headless CLI（訂閱內） | 直串 API | 直串 API＋成本工程 |
-| 爬蟲 | 本機 per-user | 單租戶實例 | 集中抓取池＋合規供給 |
+| 爬蟲 | 本機 per-user（一全自動、兩半被動） | 單租戶實例 | 集中抓取池＋合規供給 |
 | 部署 | VM ＋ systemd timer | 容器單租戶 | 容器多租戶＋排程服務（見 [deploy](deploy.md)） |
 | 登入 | 無（localhost） | Google OAuth | OAuth＋計費身分 |
 | UI | Chrome 原生 Side Panel | e2e UI 第一版 | 完整 e2e＋Landing |

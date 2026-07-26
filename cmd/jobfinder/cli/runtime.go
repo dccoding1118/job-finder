@@ -61,6 +61,8 @@ func loadRuntime(path string) (*runtime, error) {
 	p := pipeline.Pipeline{
 		Store: db, Provider: provider,
 		Denylist: denylist, Weights: [5]float64{cfg.Scoring.HardSkillWeight, cfg.Scoring.DomainWeight, cfg.Scoring.SeniorityWeight, cfg.Scoring.ConditionWeight, cfg.Scoring.DirectionWeight},
+		DedupeEnabled:  cfg.Dedupe.Enabled == nil || *cfg.Dedupe.Enabled,
+		Dedupe:         store.DedupeOptions{TitleSimilarityThreshold: cfg.Dedupe.TitleSimilarityThreshold, SourcePriority: cfg.Dedupe.SourcePriority},
 		MaxScorePerDay: cfg.LLM.MaxScorePerDay, MaxLetterPerDay: cfg.LLM.MaxLetterPerDay, MaxLetterLength: cfg.LLM.MaxLetterLength, MinInterval: interval,
 	}
 	if cfg.Scoring.Threshold == nil {

@@ -1,6 +1,6 @@
 # 測試規格 — crawler（`internal/crawler`）
 
-對應 [crawler 模組設計](../designs/design-crawler.md)、PRD R2 與 R9。本規格的 B1 範圍為 `Source` 介面、共用抓取 helper 與 Yourator adapter；104 解析器與 Cake adapter 分別於 B5、B6 依相同契約擴充案例。L1 測試使用 `httptest` 假伺服器與結構仿真、內容合成的 fixture，不連線真實職缺端點。
+對應 [crawler 模組設計](../designs/design-crawler.md)、PRD R2 與 R9。本規格的 B1 範圍為 `Source` 介面、共用抓取 helper 與 Yourator adapter；104 與 Cake 的半被動解析器分別於 B5、B6 依相同契約擴充案例。L1 測試使用 `httptest` 假伺服器與結構仿真、內容合成的 fixture，不連線真實職缺端點。
 
 ## 1. 程式面閘門
 
@@ -70,8 +70,20 @@
 | B5 | CT-47 | 內頁 `jobLocationType` 為 `TELECOMMUTE` 且內文為部分遠端 | `remote_type` 為 `hybrid`；內文無部分遠端字樣時才為 `remote` |
 | B5 | CT-48 | 內頁 `skills`／`educationRequirements` 為空陣列、語文條件為 `[object Object]` | 不映射空結構化欄位；不因 104 端渲染錯誤而報錯或產生猜測值 |
 | B5 | CT-49 | `queries urls --source 104` | 依 Profile 生成含 `keyword`／`area`／`order` 等參數的巡邏 URL；不發送請求 |
-| B6 | CT-30 | Cake SSR 頁面含合法嵌入資料 | 映射為與 Yourator 相同契約的完整或 partial `RawJob`，並覆蓋分頁與 HTML 純文字化 |
-| B6 | CT-31 | Cake 嵌入資料缺必要欄位、結構變更、空結果或 HTTP 失敗 | 遵守 CT-15、CT-20–CT-23 的相同結果語意 |
+| B6 | CT-50 | Cake 列表 `__NEXT_DATA__` 素材（合成 fixture） | 每筆映射為 partial `RawJob`：`external_id` 為 `{companyPath}/{jobPath}`、`url` 為完整內頁連結、`description` 恆為 NULL、來源固定 `cake`；不發送任何 HTTP 請求 |
+| B6 | CT-51 | 列表項目含 `highlightedTitle`／`highlightedName` | 職稱與公司取原始欄位，不取含命中標記者 |
+| B6 | CT-52 | 列表項目薪資為非 TWD、非月薪或 null | `salary_min`／`salary_max` 一律 NULL，不換算、不猜測 |
+| B6 | CT-53 | Cake 內頁 `pageProps.job` 含 `description`、`requirements`、`interview_process` | 三段 HTML strip tag、解碼 entity、正規化空白後串接為單一全文；空段落略過；`external_id` 與列表項目一致 |
+| B6 | CT-54 | 內頁 `hide_salary_completely`／`hide_salary_max` 為真 | 對應薪資欄位為 NULL，不採用底層數值 |
+| B6 | CT-55 | 內頁 `remote` 為 `no_remote_work`／部分遠端／完全遠端／未知值 | 依序映射為 `onsite`／`hybrid`／`remote`／`unknown` |
+| B6 | CT-56 | 內頁公司資料含 `contact_name`／`email`／`phone` | 這些欄位不進入 `company_info` 或任何 `RawJob` 欄位 |
+| B6 | CT-57 | 素材缺 `__NEXT_DATA__`、非合法 JSON、缺 `pageProps.job` 或職缺非上架狀態 | 回傳解析錯誤或不入庫；不產生猜測資料，且不觸發伺服器端抓取 |
+| B6 | CT-62 | Cake 內頁的 DOM 收割素材（職稱、公司名、依序 JD 區塊、metadata 行） | `external_id` 取自頁面 URL；JD 以「區塊標題＋內文」串接；地點、月薪區間與遠端形式由 metadata 行辨識，不依賴其順序或位置 |
+| B6 | CT-63 | 內頁 DOM 素材缺 metadata 行／缺 JD 區塊／區塊內文皆空／缺職稱／缺公司名 | 缺 metadata 者地點與遠端為 `unknown`、薪資為 NULL 且仍可入庫；後四者回傳解析錯誤 |
+| B6 | CT-58 | `queries urls --source cake` | 依 Profile 生成含 `query`／`location_list[]`／`profession[]`／`page` 的巡邏 URL；只列印不發送請求 |
+| B5／B6 | CT-59 | 列表素材中單筆項目缺職缺路徑、職稱、公司或（104）地區 | 該筆略過、其餘照常映射；整批不回錯，同頁其他項目不因此失去標記 |
+| B6 | CT-60 | Cake 內頁 `job.locations` 為空陣列 | `location` 退回公司的 `geo_state_name_l` ＋ `geo_city_l`；街道地址不進入 `location` |
+| B6 | CT-61 | `ssr.search` 為物件，URL 帶 `query`／`page` 之外的參數 | 判定為過時，走 DOM 收割；不以推測的 filter 映射認定新鮮 |
 
 ## 5. 模組驗收
 

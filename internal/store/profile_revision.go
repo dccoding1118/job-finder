@@ -182,8 +182,11 @@ func (s *Store) CommitScore(ctx context.Context, input ScoreInput, to string) er
 	return tx.Commit()
 }
 
+// protectedProfileState reports the states a revision activation must not touch:
+// the letter stages, whose output belongs to the user, and `merged`, which only
+// the user's own unmerge may leave.
 func protectedProfileState(state string) bool {
-	return state == "letter_requested" || state == "letter_ready" || state == "letter_failed"
+	return state == "letter_requested" || state == "letter_ready" || state == "letter_failed" || state == StateMerged
 }
 
 func encodeFilterHits(hits []string) (any, error) {

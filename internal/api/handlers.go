@@ -60,6 +60,8 @@ func (s *Server) job(w http.ResponseWriter, r *http.Request) {
 		s.requestLetter(w, r, id)
 	case len(parts) == 2 && parts[1] == "rescore" && r.Method == http.MethodPost:
 		s.rescoreJob(w, r, id)
+	case len(parts) == 2 && parts[1] == "unmerge" && r.Method == http.MethodPost:
+		s.unmergeJob(w, r, id)
 	default:
 		writeError(w, http.StatusNotFound, "not_found", "route was not found")
 	}
@@ -75,7 +77,7 @@ func (s *Server) readJob(w http.ResponseWriter, r *http.Request, id int64) {
 		writeError(w, 404, "not_found", "job was not found")
 		return
 	}
-	writeJSON(w, 200, jobView(detail, s.currentProfileRevision()))
+	writeJSON(w, 200, s.jobViewWithGroup(r, detail))
 }
 
 func (s *Server) applyJob(w http.ResponseWriter, r *http.Request, id int64) {
@@ -92,7 +94,7 @@ func (s *Server) applyJob(w http.ResponseWriter, r *http.Request, id int64) {
 		return
 	}
 	detail, _, _ := s.store.GetJobDetail(r.Context(), id)
-	writeJSON(w, 200, jobView(detail, s.currentProfileRevision()))
+	writeJSON(w, 200, s.jobViewWithGroup(r, detail))
 }
 
 // requestLetter is the only entry through which a letter is ever drafted: the
@@ -115,7 +117,7 @@ func (s *Server) requestLetter(w http.ResponseWriter, r *http.Request, id int64)
 		writeError(w, 500, "internal", "unable to read job")
 		return
 	}
-	writeJSON(w, 200, map[string]any{"status": "requested", "job": jobView(detail, s.currentProfileRevision())})
+	writeJSON(w, 200, map[string]any{"status": "requested", "job": s.jobViewWithGroup(r, detail)})
 }
 
 // rescoreJob redoes the score of a single job. It exists so a score produced
@@ -145,7 +147,7 @@ func (s *Server) rescoreJob(w http.ResponseWriter, r *http.Request, id int64) {
 		writeError(w, 500, "internal", "unable to read job")
 		return
 	}
-	writeJSON(w, 200, map[string]any{"status": "queued", "job": jobView(detail, s.currentProfileRevision())})
+	writeJSON(w, 200, map[string]any{"status": "queued", "job": s.jobViewWithGroup(r, detail)})
 }
 
 // status reports what the resident worker is doing: the backlog per process
@@ -273,7 +275,16 @@ func (s *Server) runs(w http.ResponseWriter, r *http.Request) {
 }
 
 type captureListRequest struct {
-	Items []struct {
+	// Source selects the parser. It is required and never guessed: two platforms
+	// word the same page differently, and a wrong parser invents data.
+	Source string `json:"source"`
+	// URL is the list page the user had open; Cake derives nothing from it, 104
+	// derives nothing either, but it is what a capture is attributed to.
+	URL string `json:"url"`
+	// NextData is Cake's embedded page state, sent only when it still matches the
+	// conditions on screen.
+	NextData string `json:"next_data"`
+	Items    []struct {
 		Href        string `json:"href"`
 		Title       string `json:"title"`
 		CompanyName string `json:"company_name"`
@@ -282,6 +293,26 @@ type captureListRequest struct {
 		SalaryText  string `json:"salary_text"`
 		Remote      bool   `json:"remote"`
 	} `json:"items"`
+}
+
+// parse turns one list capture into jobs through the parser its source names.
+func (request captureListRequest) parse() ([]crawler.RawJob, error) {
+	switch request.Source {
+	case source104:
+		items := make([]crawler.ListItem, 0, len(request.Items))
+		for _, item := range request.Items {
+			items = append(items, crawler.ListItem{Href: item.Href, Title: item.Title, CompanyName: item.CompanyName, CompanyInfo: item.CompanyInfo, Location: item.Location, SalaryText: item.SalaryText, Remote: item.Remote})
+		}
+		return crawler.ParseListItems(items)
+	case sourceCake:
+		items := make([]crawler.CakeListItem, 0, len(request.Items))
+		for _, item := range request.Items {
+			items = append(items, crawler.CakeListItem{Href: item.Href, Title: item.Title, CompanyName: item.CompanyName, Location: item.Location, SalaryText: item.SalaryText})
+		}
+		return crawler.ParseCakeList(crawler.CakeCapture{URL: request.URL, NextData: request.NextData, Items: items})
+	default:
+		return nil, errUnknownSource
+	}
 }
 
 // captureList marks up a list page the user is still looking at. Nothing on
@@ -299,17 +330,13 @@ func (s *Server) captureList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var request captureListRequest
-	if err := json.NewDecoder(r.Body).Decode(&request); err != nil || len(request.Items) == 0 {
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil || (len(request.Items) == 0 && strings.TrimSpace(request.NextData) == "") {
 		writeError(w, 400, "invalid_request", "at least one list item is required")
 		return
 	}
-	items := make([]crawler.ListItem, 0, len(request.Items))
-	for _, item := range request.Items {
-		items = append(items, crawler.ListItem{Href: item.Href, Title: item.Title, CompanyName: item.CompanyName, CompanyInfo: item.CompanyInfo, Location: item.Location, SalaryText: item.SalaryText, Remote: item.Remote})
-	}
-	rows, err := crawler.ParseListItems(items)
+	rows, err := request.parse()
 	if err != nil {
-		writeError(w, 400, "invalid_request", "list items could not be parsed")
+		writeError(w, 400, "invalid_request", captureParseMessage(err))
 		return
 	}
 	results, err := s.pipeline.IngestList(r.Context(), rows)
@@ -332,9 +359,24 @@ func (s *Server) captureList(w http.ResponseWriter, r *http.Request) {
 }
 
 type captureJobRequest struct {
-	URL    string   `json:"url"`
-	JSONLD []string `json:"json_ld"`
-	DOM    *struct {
+	Source string `json:"source"`
+	URL    string `json:"url"`
+	// NextData is Cake's embedded page state; the JD of a Cake listing has no
+	// other source.
+	NextData string   `json:"next_data"`
+	JSONLD   []string `json:"json_ld"`
+	// CakeDOM is the rendered Cake detail page. Cake's detail pages carry no
+	// listing state to read, so this is the only source of a Cake JD.
+	CakeDOM *struct {
+		Title       string `json:"title"`
+		CompanyName string `json:"company_name"`
+		Sections    []struct {
+			Title string `json:"title"`
+			Body  string `json:"body"`
+		} `json:"sections"`
+		Meta []string `json:"meta"`
+	} `json:"cake_dom"`
+	DOM *struct {
 		Title       string `json:"title"`
 		CompanyName string `json:"company_name"`
 		CompanyInfo string `json:"company_info"`
@@ -343,6 +385,30 @@ type captureJobRequest struct {
 		SalaryText  string `json:"salary_text"`
 		Remote      bool   `json:"remote"`
 	} `json:"dom"`
+}
+
+// parse turns one detail capture into a job through the parser its source names.
+func (request captureJobRequest) parse() (crawler.RawJob, error) {
+	switch request.Source {
+	case source104:
+		capture := crawler.JobCapture{URL: request.URL, JSONLD: request.JSONLD}
+		if request.DOM != nil {
+			capture.DOM = &crawler.JobDOM{Title: request.DOM.Title, CompanyName: request.DOM.CompanyName, CompanyInfo: request.DOM.CompanyInfo, Location: request.DOM.Location, Description: request.DOM.Description, SalaryText: request.DOM.SalaryText, Remote: request.DOM.Remote}
+		}
+		return crawler.ParseJobCapture(capture)
+	case sourceCake:
+		capture := crawler.CakeCapture{URL: request.URL, NextData: request.NextData}
+		if request.CakeDOM != nil {
+			dom := crawler.CakeJobDOM{Title: request.CakeDOM.Title, CompanyName: request.CakeDOM.CompanyName, Meta: request.CakeDOM.Meta}
+			for _, section := range request.CakeDOM.Sections {
+				dom.Sections = append(dom.Sections, crawler.CakeJobSection{Title: section.Title, Body: section.Body})
+			}
+			capture.JobDOM = &dom
+		}
+		return crawler.ParseCakeJob(capture)
+	default:
+		return crawler.RawJob{}, errUnknownSource
+	}
 }
 
 // captureJob stores the full JD and screens it synchronously. Scoring is left
@@ -365,13 +431,9 @@ func (s *Server) captureJob(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "invalid_request", "the captured page url is required")
 		return
 	}
-	capture := crawler.JobCapture{URL: request.URL, JSONLD: request.JSONLD}
-	if request.DOM != nil {
-		capture.DOM = &crawler.JobDOM{Title: request.DOM.Title, CompanyName: request.DOM.CompanyName, CompanyInfo: request.DOM.CompanyInfo, Location: request.DOM.Location, Description: request.DOM.Description, SalaryText: request.DOM.SalaryText, Remote: request.DOM.Remote}
-	}
-	row, err := crawler.ParseJobCapture(capture)
+	row, err := request.parse()
 	if err != nil {
-		writeError(w, 400, "invalid_request", "the captured page could not be parsed")
+		writeError(w, 400, "invalid_request", captureParseMessage(err))
 		return
 	}
 	result, err := s.pipeline.IngestJob(r.Context(), row)
@@ -395,6 +457,22 @@ func (s *Server) captureJob(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, 200, value)
+}
+
+// The capture sources the extension may name. A payload without one is rejected
+// rather than assumed: the parsers are not interchangeable.
+const (
+	source104  = "104"
+	sourceCake = "cake"
+)
+
+var errUnknownSource = errors.New("api: capture source must be 104 or cake")
+
+func captureParseMessage(err error) string {
+	if errors.Is(err, errUnknownSource) {
+		return "capture source must be 104 or cake"
+	}
+	return "the captured page could not be parsed"
 }
 
 func (s *Server) transitionError(w http.ResponseWriter, err error) {

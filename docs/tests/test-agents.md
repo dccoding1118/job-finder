@@ -82,9 +82,19 @@
 | AT-41 | 五維皆為低分但格式合法的評分回應 | 通過驗證並視為成功呼叫；低分不得被判定為失敗 |
 | AT-42 | `reason` 恰為 100 字與 101 字 | 前者通過驗證；後者被拒 |
 
+## 4.3 B6 Calibrator
+
+| 編號 | 測試情境 | 預期結果 |
+|---|---|---|
+| AT-45 | fake Runner 回合法 `CalibrationResult` | 解析出 `summary` 與 `suggestions[]`，各欄位型別與列舉正確；寫入 `role='calibrator'`、`job_id` 為 NULL 的稽核 |
+| AT-46 | `suggestions[].field` 指向 `skills`、`experiences`、`summary` 或 `honesty_bounds` | 拒絕**整份**建議並回安全錯誤；不部分採用白名單內的項目 |
+| AT-47 | `suggestions` 為空陣列 | 視為合法結果（證據不足，不建議調整）；不報錯、不重試 |
+| AT-48 | 輸出非法 JSON、缺欄位、`action`／`confidence` 非列舉值或 `value` 型別不相容 | 驗證失敗即結束，不以變體 prompt 重試；失敗仍寫入稽核 |
+
 ## 5. 模組驗收
 
 - `mise run fmt`、`mise run lint` 與 `mise run test` 全數通過。
 - B2 能以合法結構化回覆取得五維分數與理由，並正確處理 Runner 重試、fallback 與稽核資料。
+- B6 的 Calibrator 只在 `calibrate` 觸發時呼叫，且只能建議 `preferences.*`。
 - B3 能在初稿後最多重寫兩次；只有通過佔位符、技術詞、PII 與字數防線且 Reviewer 核准的信件才能成為 approved 結果。
 - 真實 claude / codex CLI、真實職缺與可供使用者檢閱的求職信，僅依 [verify](../verify.md) 的 B2、B3 手動驗收案例檢查，不進 L1 或例行 CI。

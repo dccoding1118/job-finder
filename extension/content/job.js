@@ -56,7 +56,7 @@
   async function capture() {
     await waitForContent();
     const blocks = jsonLD();
-    const body = { url: location.href, json_ld: blocks };
+    const body = { source: "104", url: location.href, json_ld: blocks };
     if (blocks.length === 0) {
       const dom = domFallback();
       if (!dom) {

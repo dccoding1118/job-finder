@@ -81,17 +81,44 @@ API 讀取回傳 snapshot 的結構化副本，不暴露內部可變物件。語
 
 ## 7. 反向校準（B6，R1.3）
 
-```
-jobfinder calibrate
-  前置：status_events 中 apply 軸 to_state='interview' 的 job 數
-        ≥ 設定檔 calibration.min_interviews（預設 5）
-  1. 取這些 job 的 JD 與評分
-  2. Calibrator Agent 萃取共同特徵（技能組合、產業、規模、職稱模式、薪資帶）
-  3. 輸出「preferences 調整建議」為 unified diff 風格文字 → stdout ＋ 存檔
-  4. 使用者在 Profile editor 檢查並明確儲存；校準流程本身不寫入
-```
+校準是**只讀 Profile、只產建議**的離線分析：由已取得面試的職缺反推「什麼樣的 JD 真的會回應我」，把結論表達為 `preferences` 的調整建議 diff。它不改寫任何檔案，也不影響任何 Job 的狀態。
 
-特徵維度與建議格式的細節於 B6 設計時定案（PRD §10）。
+### 7.1 觸發與樣本
+
+| 項目 | 規則 |
+|---|---|
+| 入口 | `jobfinder calibrate`（CLI only；MVP 不開 API 與 UI 入口） |
+| 前置 | `status_events` 中 `axis='apply' AND to_state='interview'` 的相異 job 數 ≥ `calibration.min_interviews`（預設 5）；未達門檻拒絕執行並列印目前筆數，不呼叫 Agent |
+| 成功樣本 | 上述 job 的 JD 全文、職稱、公司產業摘要、地區、薪資區間與現行五維分數 |
+| 對照樣本 | `applied` 之後轉入 `ghosted` 的 job，取樣上限與成功樣本同數；不足時可為空，Agent 需在無對照下仍只根據成功樣本作答 |
+
+樣本一律取 canonical Job（alias 為同一職缺，重複計入會扭曲特徵權重）。JD 與公司名是公開資訊，不屬 PII；Profile 只送 `preferences` 區段，不送經歷、成就與 `summary`。
+
+### 7.2 特徵萃取維度
+
+Calibrator 的萃取維度與評分五維對齊，讓建議可直接對應到分數的落差：
+
+| 維度 | 萃取內容 | 可影響的 `preferences` 欄位 |
+|---|---|---|
+| 技能組合 | 成功樣本共同出現、且 Profile 方向關鍵字未涵蓋的技術詞 | `directions[].keywords` |
+| 領域與場景 | 產業別、系統型態、雲平台生態的集中傾向 | `directions[].title`、`industry_avoid` |
+| 資歷與職級 | 職稱的層級用語模式（如偏 lead／偏 IC） | `screening.exclude_title_keywords`、`screening.require_any_keywords` |
+| 工作條件 | 薪資帶、地區、遠端型態的實際分布 | `salary_min`、`salary_target`、`locations`、`remote` |
+| 方向命中 | 哪個方向（P1／P2／P3）實際帶來面試、哪個沒有 | `directions[]` 的順序與關鍵字 |
+
+### 7.3 輸出與防線
+
+Agent 回 JSON 建議清單（契約見 [design-agents](design-agents.md) §4.4），程式端依序把關：
+
+1. **JSON 契約驗證**：欄位、型別、`action` 列舉、`confidence` 列舉；不合法即拒絕整份建議。
+2. **欄位白名單**：`field` 必須落在 `preferences.*`（上表所列欄位）；指向 `skills`、`experiences`、`summary`、`honesty_bounds` 等任何其他路徑一律拒絕——校準不得改寫事實性履歷內容，只能調整求職條件。
+3. **套用於副本**：把建議套到 Profile 的記憶體副本，產生 canonical YAML。
+4. **PII 檢核**：對套用後的副本跑與 §4 相同的檢核；命中即拒絕整份建議並回安全錯誤（不回命中值）。
+5. **產出 diff**：原 canonical YAML 與副本的 unified diff → stdout，同時寫入 Profile 同目錄的 `profile.calibration-<RFC3339>.diff`（`0600`，版控外）。
+
+磁碟上的 `profile.yaml` 與 active snapshot **在任何情況下都不被此流程修改**。使用者閱讀 diff 後，自行於 Profile editor 逐項套用並明確儲存——套用與否、套用哪幾條，都是使用者的決定（PRD 核心原則 Human-in-the-Loop）。
+
+每次呼叫（含被拒絕者）寫入 `agent_calls`，`role='calibrator'`、`job_id` 為 NULL。
 
 ## 8. CLI 介面
 
@@ -99,15 +126,15 @@ jobfinder calibrate
 |---|---|
 | `jobfinder profile lint` | 結構驗證 ＋ PII 檢核 |
 | `jobfinder profile show` | 輸出載入後的 Profile 摘要（確認系統實際讀到什麼） |
-| `jobfinder calibrate` | §7（B6） |
+| `jobfinder calibrate` | §7；未達門檻或建議未通過防線時非零退出，不產生 diff 檔 |
 
 `profile lint` 與 `profile show` 預設讀取 `.local-dev/profile.yaml` 與 `.local-dev/pii-denylist.txt`；可分別以 `--profile`、`--denylist` 指定本機路徑。
 
 ## 9. 交付物
 
-- `internal/profile/`：型別、strict codec、驗證、PII 檢核、canonical serialization、ETag／revision、原子檔案寫入、provider、求職條件導出與單元測試。
+- `internal/profile/`：型別、strict codec、驗證、PII 檢核、canonical serialization、ETag／revision、原子檔案寫入、provider、求職條件導出、校準建議套用與 diff 產生，以及單元測試。
 - `configs/profile.example.yaml`。
 
 ## 10. 待決
 
-- 校準建議格式（PRD §10，B6 定案）。
+（無。）

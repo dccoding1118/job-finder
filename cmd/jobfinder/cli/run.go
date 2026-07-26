@@ -35,6 +35,11 @@ type fileConfig struct {
 			CheckRobots     bool   `yaml:"check_robots"`
 		} `yaml:"yourator"`
 	} `yaml:"sources"`
+	Dedupe struct {
+		Enabled                  *bool    `yaml:"enabled"`
+		TitleSimilarityThreshold float64  `yaml:"title_similarity_threshold"`
+		SourcePriority           []string `yaml:"source_priority"`
+	} `yaml:"dedupe"`
 	Scoring struct {
 		HardSkillWeight float64 `yaml:"hard_skill_weight"`
 		DomainWeight    float64 `yaml:"domain_weight"`
