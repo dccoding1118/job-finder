@@ -76,7 +76,7 @@ Job 有兩條正交的狀態軸，擁有權不同：
 
 - **R1.1** 以 `profile.yaml` 承載去識別化履歷與求職條件：技能（分類與熟練度）、年資、學歷（學位層級與領域，無校名）、經歷（角色、產業、年資區間、職責與量化成就，無公司名——以「雲端代理商」「國際商銀」等類型描述）、期望薪資區間、地點、遠端意願、P1/P2/P3 方向關鍵字、產業避開項目，以及職稱／工作內容／公司排除與必要關鍵字。
 - **R1.2** 提供 PII 檢核指令：以版控外的 denylist（姓名、Email、電話、校名、公司名等）掃描 profile 與產出的求職信，命中即報錯。
-- **R1.3** 反向校準：當 `interview` 事件累計達門檻（設定檔 `calibration.min_interviews`，預設 5），可執行校準指令，由 Agent 萃取成功案例 JD 特徵並產出 Profile 偏好調整「建議 diff」，由使用者確認後手動套用（不自動改寫）。
+- **R1.3** 反向校準（S1 範圍，MVP 不交付）：當 `interview` 事件累計達門檻（設定檔 `calibration.min_interviews`，預設 5），由 Agent 萃取成功案例 JD 特徵並產出 Profile 偏好調整「建議 diff」，由使用者確認後手動套用（不自動改寫）。入口為 Side Panel，不提供 CLI 指令；規劃見 [roadmap](roadmap.md) S1。
 - **R1.4** Chrome extension 提供完整 Profile 建立、檢視與編輯表單；結構化 JSON 只作 API 傳輸，`profile.yaml` 仍是唯一真相，不存入 SQLite 或 extension storage。
 - **R1.5** Profile 不自動儲存。使用者明確送出後，後端必須先完成 strict schema 驗證與 PII 檢核，再以 owner-only 權限原子替換；失敗時磁碟檔與 active Profile 均不得改變。
 - **R1.6** Profile 讀取回傳檔案 ETag，儲存強制使用 `If-Match`；外部修改造成衝突時拒絕覆蓋。語意內容以 canonical 結構計算 `profile_revision`，相同內容的重複儲存不得重新入隊或增加 Agent 成本。
@@ -205,7 +205,6 @@ Profile 是所有處理入口的共同前置條件。Profile 缺少或無效時�
        → letter：Drafter 起草 → Reviewer 審查 →（≤2 輪重寫）
                  → 過審 ⇒ letter_ready ∣ 不過 ⇒ letter_failed（可再次要求）
   → 一鍵複製 → 外部平台手動投遞 → 標記 apply_state
-  → interview 累計達門檻 ⇒ 可跑校準 → 產出 Profile 建議 diff → 人工套用
 ```
 
 ## 6. MVP 不包含（Out of Scope）
@@ -231,7 +230,7 @@ Profile 是所有處理入口的共同前置條件。Profile 缺少或無效時�
 | B3 | Drafter–Reviewer 求職信管線 ＋ 防幻覺程式防線 | 經使用者要求的推薦職缺產出過審求職信，佔位符與 PII 檢核通過；未經要求的 `shortlisted` 不觸發任何 Agent 呼叫 |
 | B4 | localhost API、Side Panel 儀表板（清單/判定/對照/求職信生成入口/複製/狀態追蹤/手動觸發）、systemd timer 排程 | 完整日常使用迴圈可跑 |
 | B5 | 104 半被動擷取組（R9）：巡邏 URL 生成、`discovered` 流程、capture API 與判定回傳、104 content script；完成 104 spike | 通知頁/搜尋頁收割→快速判定→就地標記→待看清單→內頁擷取→Side Panel 完整評分全流程可跑；既有職缺直接標記且不重跑 |
-| B6 | Cake 半被動擷取組（解析器、巡邏 URL、content script）；跨來源同一職缺合併（R2.8）；反向校準（R1.3） | 三來源皆通；跨來源重複職缺自動合併為一筆、灰帶可人工裁決；校準可產出建議 diff |
+| B6 | Cake 半被動擷取組（解析器、巡邏 URL、content script）；跨來源同一職缺合併（R2.8） | 三來源皆通；跨來源重複職缺自動合併為一筆、灰帶可人工裁決 |
 
 ## 8. 產品 Roadmap（未來展望）
 

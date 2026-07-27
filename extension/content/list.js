@@ -2,16 +2,29 @@
 // the API returns. Everything here is triggered by the user's own navigation:
 // no page is opened, no request reaches 104.
 (() => {
-  const HARVEST_DEBOUNCE_MS = 400;
+  // A capture is sent once the list stops changing, so a page turn is read from
+  // a settled DOM rather than mid-render; the cap keeps a continuously changing
+  // page from starving the send.
+  const SETTLE_MS = 400;
+  const MAX_WAIT_MS = 1500;
+  // An item the API answered nothing for is asked again a bounded number of
+  // times. Without this a single incomplete read would leave that entry unmarked
+  // until the user reloaded the document.
+  const MAX_ATTEMPTS = 3;
   const mark = globalThis.jobfinder.mark;
 
   // The search page recycles the nodes it scrolls past, so an item can come
   // back with its mark gone; results stay cached by external id and are
   // reapplied whenever the node reappears.
   const decisions = new Map();
-  const requested = new Set();
+  // inflight holds the ids of the batch being asked about right now; attempts
+  // counts how often each id has been asked, so a retry cannot loop.
+  const inflight = new Set();
+  const attempts = new Map();
   let pending = new Map();
   let timer = null;
+  let deadline = 0;
+  let currentURL = location.href;
   const pageContext = { kind: "list", source: "104", status: "captured", title: "104 職缺清單" };
 
   chrome.runtime.onMessage.addListener((message, _sender, respond) => {
@@ -85,6 +98,12 @@
   }
 
   function harvest() {
+    // Turning a page renders a different result set into the same document, so
+    // every entry gets its full retry budget again.
+    if (location.href !== currentURL) {
+      currentURL = location.href;
+      attempts.clear();
+    }
     for (const node of document.querySelectorAll(page().itemSelector)) {
       const item = page().read(node);
       if (!item?.href || sponsored(item.href)) continue;
@@ -95,14 +114,17 @@
         mark(node, decision);
         continue;
       }
-      if (!requested.has(id)) pending.set(id, item);
+      if (!inflight.has(id) && (attempts.get(id) || 0) < MAX_ATTEMPTS) pending.set(id, item);
     }
     schedule();
   }
 
   function schedule() {
-    if (timer || pending.size === 0) return;
-    timer = setTimeout(send, HARVEST_DEBOUNCE_MS);
+    if (pending.size === 0) return;
+    const now = Date.now();
+    if (timer) clearTimeout(timer);
+    else deadline = now + MAX_WAIT_MS;
+    timer = setTimeout(send, Math.max(0, Math.min(SETTLE_MS, deadline - now)));
   }
 
   async function send() {
@@ -110,21 +132,28 @@
     const batch = pending;
     pending = new Map();
     if (batch.size === 0) return;
-    for (const id of batch.keys()) requested.add(id);
+    for (const id of batch.keys()) {
+      inflight.add(id);
+      attempts.set(id, (attempts.get(id) || 0) + 1);
+    }
     const response = await chrome.runtime.sendMessage({
       type: "api",
       path: "/api/v1/capture/list",
       method: "POST",
       body: { source: "104", url: location.href, items: [...batch.values()] },
     });
+    for (const id of batch.keys()) inflight.delete(id);
     if (!response?.ok) {
-      // A failed capture must not retry in the background: the items are
-      // released so the user's next scroll or reload can ask again.
-      for (const id of batch.keys()) requested.delete(id);
+      // A failed capture must not retry in the background, and a failure is not
+      // the item's fault: the attempt is given back so the user's next scroll or
+      // navigation can ask again.
+      for (const id of batch.keys()) attempts.set(id, Math.max(0, (attempts.get(id) || 1) - 1));
       console.warn("jobfinder: 列表擷取失敗，捲動或重新整理可再試一次。", response?.error);
       return;
     }
     for (const item of response.data.items) decisions.set(item.external_id, item);
+    // Ids the response said nothing about stay unmarked; they are left
+    // pending-eligible so the next harvest asks again within the budget.
     harvest();
   }
 

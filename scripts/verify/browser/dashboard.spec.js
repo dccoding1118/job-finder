@@ -183,6 +183,52 @@ test("recommendations append the next cursor page without duplicate jobs", async
   expect(calls.some((call) => call.path?.includes("verdict=recommended") && call.path?.includes("cursor=MjA"))).toBeTruthy();
 });
 
+test("the queue appends the next cursor page without duplicate jobs", async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 900 });
+  await page.addInitScript(() => {
+    const firstPage = Array.from({ length: 12 }, (_, index) => ({ id: index + 1, source: "104", url: `https://www.104.com.tw/job/${index + 1}`, title: `First queued job ${index + 1}`, company_name: "Example", location: "Taipei" }));
+    const second = { id: 99, source: "104", url: "https://www.104.com.tw/job/99", title: "Second queued job", company_name: "Example", location: "Taipei" };
+    window.__calls = [];
+    window.chrome = {
+      storage: { local: {
+        get: (defaults, callback) => callback(defaults),
+        set: (_values, callback) => callback?.(),
+      } },
+      runtime: {
+        onMessage: { addListener: () => {} },
+        sendMessage: (request) => {
+          window.__calls.push(request);
+          if (request.type === "current-page") return Promise.resolve({ ok: true, context: { kind: "unsupported", status: "unsupported" } });
+          if (request.type === "profile-api") return Promise.resolve({ ok: true, data: { status: "missing" } });
+          if (request.path?.startsWith("/api/v1/queue?") && request.path.includes("cursor=MjA")) return Promise.resolve({ ok: true, data: { items: [firstPage[0], second], next_cursor: null } });
+          if (request.path?.startsWith("/api/v1/queue")) return Promise.resolve({ ok: true, data: { items: firstPage, next_cursor: "MjA" } });
+          if (request.path?.startsWith("/api/v1/jobs?") || request.path === "/api/v1/runs") return Promise.resolve({ ok: true, data: { items: [], next_cursor: null } });
+          return Promise.resolve({ ok: false, error: "unexpected request" });
+        },
+      },
+    };
+  });
+  await page.goto(dashboardPath);
+  await page.getByRole("tab", { name: /待看/ }).click();
+  await expect(page.getByRole("button", { name: "載入更多" })).toBeVisible();
+  await page.getByRole("button", { name: "載入更多" }).scrollIntoViewIfNeeded();
+  const scrollBeforeLoad = await page.evaluate(() => window.scrollY);
+  expect(scrollBeforeLoad).toBeGreaterThan(0);
+  await page.getByRole("button", { name: "載入更多" }).click();
+  await expect(page.locator("#queue .job-row")).toHaveCount(13);
+  await expect(page.getByRole("link", { name: /First queued job 1 / })).toHaveCount(1);
+  await expect(page.getByRole("link", { name: /Second queued job/ })).toHaveCount(1);
+  await expect(page.getByRole("button", { name: "載入更多" })).toHaveCount(0);
+  const scrollAfterLoad = await page.evaluate(() => window.scrollY);
+  expect(Math.abs(scrollAfterLoad - scrollBeforeLoad)).toBeLessThanOrEqual(2);
+  await page.getByRole("tab", { name: /系統/ }).click();
+  await page.getByRole("tab", { name: /待看/ }).click();
+  const scrollAfterReturn = await page.evaluate(() => window.scrollY);
+  expect(Math.abs(scrollAfterReturn - scrollAfterLoad)).toBeLessThanOrEqual(2);
+  const calls = await page.evaluate(() => window.__calls);
+  expect(calls.some((call) => call.path?.includes("/api/v1/queue?cursor=MjA"))).toBeTruthy();
+});
+
 test("service worker forwards API requests and reads current tab context", async () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, "../../../extension/manifest.json"), "utf8"));
   expect(manifest.side_panel.default_path).toBe("dashboard/index.html");

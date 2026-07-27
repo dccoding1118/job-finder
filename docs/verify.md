@@ -34,7 +34,7 @@ mise run e2e-mock   # 物化隔離 artifact → 依序跑 V1/V2/V4/V5/V7 共 32 
 
 | 需求 | 成品流程中的驗證 | 正向案例 | 負向案例 | 現況 |
 |---|---|---|---|---|
-| R1 Profile editor、revision、PII 防線、僅產校準建議 | V1、V6、V7 | S1–S3、S30–S37、S46–S47 | N-P、N-PRF | ◑ |
+| R1 Profile editor、revision 與 PII 防線 | V1、V7 | S1–S3、S30–S37 | N-P、N-PRF | ◑ |
 | R2 Yourator／104／Cake 進同一 Job 流程與跨來源合併 | V2、V5、V6 | S4、S7、S24–S25、S40–S45 | N-SRC | ◑ |
 | R3 Profile 條件篩選與可稽核狀態 | V2、V5 | S8、S24 | N-FLT | ◑ |
 | R4 CLI Runner 評分、五維分流、設定路由 | V2、V3 | S9 | — | ◑ |
@@ -136,7 +136,7 @@ mock 一趟用固定合成測資；下表即「標準答案」，逐值由 `asse
 | S37 | Chrome 人工 Profile gate | 系統頁各群組、Options 入口、批次時間、手動 reprocess、整數評分與 revision 燈號、全頁表單新增定位、衝突、離頁提醒及 light／dark 可用 | V7·R6 | ⏳ |
 | S38 | 單筆重新評分與處理進度 | 對已評分職缺按「重新評分」後只該筆回 `queued`、worker 重評並附加新 Score，其他職缺 Agent 呼叫數不變；系統頁處理進度與 Agent 呼叫紀錄反映該次執行 | V7·R6/R7 | ⏳ |
 
-### V6 — Cake 半被動擷取、跨來源合併與反向校準
+### V6 — Cake 半被動擷取與跨來源合併
 
 | 步 | 動作 | 標準答案（字面預期） | 案例·需求 | 狀態 |
 |---|---|---|---|---|
@@ -147,8 +147,6 @@ mock 一趟用固定合成測資；下表即「標準答案」，逐值由 `asse
 | S43 | 合併後的判定與清單 | Cake capture 回 canonical 的 job id 與既有 verdict；`GET /jobs`、`GET /queue` 不含 `merged`；Job 詳情的 `group.members` 含兩個來源連結；Agent 呼叫數不變 | V6·R2.8/R9.7 | ⏳ |
 | S44 | 灰帶候選與人工裁決 | `v6grey` 不自動合併，出現於 `GET /duplicates`；`merge` 後合併成立且候選轉 `merged`；`ignore` 後不再出現 | V6·R2.8/R6.12 | ⏳ |
 | S45 | 取消合併 | alias 還原為合併前狀態與獨立 group，重新出現於清單；既有 Score 與 Letter 未被刪除 | V6·R2.8 | ⏳ |
-| S46 | 未達門檻執行 `calibrate` | 非零退出並列印目前 `interview` 筆數與門檻；Agent 呼叫數不變；無 diff 檔產生 | V6·R1.3 | ⏳ |
-| S47 | 達門檻執行 `calibrate` | 產生 unified diff 至 stdout 與 `0600` 的 `profile.calibration-*.diff`；`profile.yaml` 內容與 revision 未變；`agent_calls` 新增一筆 `role=calibrator`、`job_id=NULL`；建議欄位全部落在 `preferences.*` | V6·R1.3 | ⏳ |
 
 ## 5. 負向案例 N（骨架，待正向穩定後累加）
 
@@ -210,6 +208,6 @@ mise run e2e-live
 1. 在具備正式來源連線與已授權 CLI 的環境跑通 **V3**：真來源至少一筆、真 Agent score／letter 與安全格式 evidence 缺一不可。
 2. 完成實際 **Chrome compatibility gate**；自動隔離 Chromium 不得替代人工結論。人工操作步驟見 `docs/guides/runbook-extension.md`。
 3. 完成 **V5** 的真 104 頁人工 Chrome gate；真頁面只驗證使用者已載入的內容，確認清單就地標記與既有職缺判定一致。
-4. 完成 **V6** 的 Cake 半被動擷取、跨來源合併與校準 diff（含真實 Cake 頁的人工 Chrome gate），再將 V1–V6 彙整為完整日常求職迴圈。
+4. 完成 **V6** 的 Cake 半被動擷取與跨來源合併（含真實 Cake 頁的人工 Chrome gate），再將 V1–V6 彙整為完整日常求職迴圈。
 5. 依 §5 骨架累加負向案例 N，沿用相同需求對照與 evidence 格式。
 6. 將同一 extension artifact 載入實際 Chrome，完成 **V7 S37** Profile editor 與 **S38** 單筆重新評分／處理進度的人工 gate。

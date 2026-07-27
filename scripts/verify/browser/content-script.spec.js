@@ -218,6 +218,66 @@ test("cake list falls back to the DOM when the embedded state is stale", async (
   await expect(page.locator(".jobfinder-mark")).toHaveCount(1);
 });
 
+// Cake links the same job from blocks outside the result list (recommendations,
+// recently viewed) — which is where an already-assessed job shows up. Every
+// occurrence is marked, and the capture fields still come from the result entry.
+test("cake list marks every occurrence of a job, not only the first link on the page", async ({ page }) => {
+  await installAPI(page, {
+    "/api/v1/capture/list": {
+      ok: true,
+      data: { items: [{ external_id: "example-cloud/senior-platform-engineer", verdict: "recommended", score_total: 88 }] },
+    },
+  });
+  // The extra link sits before the result list and has no JobSearchItem ancestor,
+  // exactly like Cake's own recommendation blocks.
+  const withAside = cakeFixture("search.html").replace(
+    '<main id="__next">',
+    '<main id="__next"><aside id="recent"><a href="/companies/example-cloud/jobs/senior-platform-engineer">資深雲端平台工程師</a></aside>',
+  );
+  await serveFixture(page, "https://www.cake.me/**", withAside);
+  await page.goto("https://www.cake.me/jobs?query=platform&page=2");
+  await loadCake(page);
+
+  // Both the aside and the result entry carry the mark.
+  await expect(page.locator("#recent .jobfinder-mark")).toHaveCount(1);
+  await expect(page.locator('[class*="JobSearchItem"] .jobfinder-mark')).toHaveCount(1);
+
+  // The fields were read from the result entry, not from the bare aside link.
+  const capture = await page.evaluate(() => window.__calls.find((c) => c.path === "/api/v1/capture/list"));
+  const item = capture.body.items.find((entry) => entry.href.includes("senior-platform-engineer"));
+  expect(item.company_name).toBe("合成雲端股份有限公司");
+  expect(item.location).toBe("台北市");
+});
+
+// An item the first capture answered nothing about must not stay unmarked until
+// the user reloads: the entry is asked about again on its own.
+test("cake list asks again for an item the first capture left out", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.__calls = [];
+    let round = 0;
+    window.chrome = {
+      runtime: {
+        onMessage: { addListener: (listener) => { window.__contentListener = listener; } },
+        sendMessage: (request) => {
+          window.__calls.push(request);
+          if (request.path !== "/api/v1/capture/list") return Promise.resolve({ ok: true, data: {} });
+          round += 1;
+          // The first answer covers one of the two visible entries only.
+          const items = [{ external_id: "example-cloud/senior-platform-engineer", verdict: "pending_detail" }];
+          if (round > 1) items.push({ external_id: "example-cloud/platform-intern", verdict: "pending_score" });
+          return Promise.resolve({ ok: true, data: { items } });
+        },
+      },
+    };
+  });
+  await serveFixture(page, "https://www.cake.me/**", cakeFixture("search.html"));
+  await page.goto("https://www.cake.me/jobs?query=platform&page=2");
+  await loadCake(page);
+
+  await expect(page.locator(".jobfinder-mark")).toHaveCount(2);
+  expect((await page.locator(".jobfinder-mark .badge").allInnerTexts()).join(" | ")).toContain("評分中");
+});
+
 // ET-43: the detail page is read off the rendered DOM — through the hashed class
 // names, which the selectors must not depend on — and reports the same context
 // the 104 path does, so the Side Panel presents both identically.

@@ -6,7 +6,15 @@ globalThis.jobfinder = globalThis.jobfinder || {};
 globalThis.jobfinder.cake = globalThis.jobfinder.cake || {};
 
 globalThis.jobfinder.cake.list = (() => {
-  const HARVEST_DEBOUNCE_MS = 400;
+  // A capture is sent once the list stops changing, so a page turn is read from
+  // a settled DOM rather than mid-render; the cap keeps a continuously changing
+  // page (infinite scroll) from starving the send.
+  const SETTLE_MS = 400;
+  const MAX_WAIT_MS = 1500;
+  // An item the API answered nothing for is asked again a bounded number of
+  // times. Without this a single incomplete read would leave that entry unmarked
+  // until the user reloaded the document.
+  const MAX_ATTEMPTS = 3;
   const JOB_LINK = 'a[href^="/companies/"][href*="/jobs/"]';
   // Cake's class names carry a build hash, so only the stable prefix is matched.
   const ITEM_CONTAINER = '[class*="JobSearchItem"]';
@@ -52,35 +60,54 @@ globalThis.jobfinder.cake.list = (() => {
     for (let node = link.parentElement; node; node = node.parentElement) {
       if (node.matches(ITEM_CONTAINER)) container = node;
     }
-    return container || link.parentElement;
+    // A link with no such ancestor is not a search result — Cake links the same
+    // job from its recommendation and recently-viewed blocks too. Its nearest
+    // parent is still marked so the user sees the verdict wherever the job is
+    // shown, but a result entry is what the fields are read from.
+    return { container: container || link.parentElement, isResult: container !== null };
+  }
+
+  // read pulls one entry's fields off its container. Each field comes from a leaf
+  // element rather than from innerText: Cake renders the tags inline, so the text
+  // of a whole item collapses onto one line and the location and the salary
+  // become indistinguishable.
+  function read(container, link) {
+    const fields = [...container.querySelectorAll("*")]
+      .filter((element) => element.children.length === 0)
+      .map((element) => (element.textContent || "").trim())
+      .filter(Boolean);
+    return {
+      href: link.href,
+      title: (link.innerText || link.textContent || "").trim(),
+      company_name: companyName(container, fields),
+      location: fields.find((field) => /市|縣|Taiwan|Remote/i.test(field)) || "",
+      salary_text: fields.find((field) => /月薪|年薪|TWD|NT\$/.test(field)) || "",
+    };
   }
 
   // items reads the visible entries off the DOM. Anything but the link path and
   // the text is read defensively: Cake renames its classes on every build.
+  //
+  // One job can be linked from several places on the same page, so every node an
+  // id appears in is collected: marking only the first occurrence would leave the
+  // result entry of an already-known job bare while its mark went to a
+  // recommendation block instead.
   function items() {
     const found = new Map();
     for (const link of document.querySelectorAll(JOB_LINK)) {
       const id = externalID(link.href);
-      if (!id || found.has(id)) continue;
-      const container = itemContainer(link);
+      if (!id) continue;
+      const { container, isResult } = itemContainer(link);
       if (!container) continue;
-      // Each field is read from a leaf element rather than from innerText: Cake
-      // renders the tags inline, so the text of a whole item collapses onto one
-      // line and the location and the salary become indistinguishable.
-      const fields = [...container.querySelectorAll("*")]
-        .filter((element) => element.children.length === 0)
-        .map((element) => (element.textContent || "").trim())
-        .filter(Boolean);
-      found.set(id, {
-        node: container,
-        item: {
-          href: link.href,
-          title: (link.innerText || link.textContent || "").trim(),
-          company_name: companyName(container, fields),
-          location: fields.find((field) => /市|縣|Taiwan|Remote/i.test(field)) || "",
-          salary_text: fields.find((field) => /月薪|年薪|TWD|NT\$/.test(field)) || "",
-        },
-      });
+      const entry = found.get(id) || { nodes: [], item: null, fromResult: false };
+      if (!entry.nodes.includes(container)) entry.nodes.push(container);
+      // The fields of a result entry outrank those of any other occurrence: only
+      // a result entry carries the company, location and salary.
+      if (!entry.item || (isResult && !entry.fromResult)) {
+        entry.item = read(container, link);
+        entry.fromResult = isResult;
+      }
+      found.set(id, entry);
     }
     return found;
   }
@@ -99,29 +126,43 @@ globalThis.jobfinder.cake.list = (() => {
     start(publish) {
       const mark = globalThis.jobfinder.mark;
       const decisions = new Map();
-      const requested = new Set();
+      // inflight holds the ids of the batch being asked about right now;
+      // attempts counts how often each id has been asked, so a retry cannot loop.
+      const inflight = new Set();
+      const attempts = new Map();
       let pending = new Map();
       let timer = null;
+      let deadline = 0;
       let stopped = false;
+      let currentURL = location.href;
 
       publish({ kind: "list", source: "cake", status: "captured", title: "Cake 職缺清單" });
 
       function harvest() {
         if (stopped) return;
+        // Turning a page or changing a filter renders a different result set into
+        // the same document, so every entry gets its full retry budget again.
+        if (location.href !== currentURL) {
+          currentURL = location.href;
+          attempts.clear();
+        }
         for (const [id, entry] of items()) {
           const decision = decisions.get(id);
           if (decision) {
-            mark(entry.node, decision);
+            for (const node of entry.nodes) mark(node, decision);
             continue;
           }
-          if (!requested.has(id)) pending.set(id, entry.item);
+          if (!inflight.has(id) && (attempts.get(id) || 0) < MAX_ATTEMPTS) pending.set(id, entry.item);
         }
         schedule();
       }
 
       function schedule() {
-        if (stopped || timer || pending.size === 0) return;
-        timer = setTimeout(send, HARVEST_DEBOUNCE_MS);
+        if (stopped || pending.size === 0) return;
+        const now = Date.now();
+        if (timer) clearTimeout(timer);
+        else deadline = now + MAX_WAIT_MS;
+        timer = setTimeout(send, Math.max(0, Math.min(SETTLE_MS, deadline - now)));
       }
 
       async function send() {
@@ -129,7 +170,10 @@ globalThis.jobfinder.cake.list = (() => {
         const batch = pending;
         pending = new Map();
         if (stopped || batch.size === 0) return;
-        for (const id of batch.keys()) requested.add(id);
+        for (const id of batch.keys()) {
+          inflight.add(id);
+          attempts.set(id, (attempts.get(id) || 0) + 1);
+        }
         const raw = nextData();
         const body = { source: "cake", url: location.href };
         // The embedded state is preferred whenever it is still current: its fields
@@ -141,14 +185,18 @@ globalThis.jobfinder.cake.list = (() => {
         }
         const response = await chrome.runtime.sendMessage({ type: "api", path: "/api/v1/capture/list", method: "POST", body });
         if (stopped) return;
+        for (const id of batch.keys()) inflight.delete(id);
         if (!response?.ok) {
-          // A failed capture must not retry in the background: the items are
-          // released so the user's next scroll or reload can ask again.
-          for (const id of batch.keys()) requested.delete(id);
+          // A failed capture must not retry in the background, and a failure is
+          // not the item's fault: the attempt is given back so the user's next
+          // scroll or navigation can ask again.
+          for (const id of batch.keys()) attempts.set(id, Math.max(0, (attempts.get(id) || 1) - 1));
           console.warn("jobfinder: Cake 列表擷取失敗，捲動或重新整理可再試一次。", response?.error);
           return;
         }
         for (const item of response.data.items) decisions.set(item.external_id, item);
+        // Ids the response said nothing about stay unmarked; they are left
+        // pending-eligible so the next harvest asks again within the budget.
         harvest();
       }
 
