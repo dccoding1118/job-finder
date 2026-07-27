@@ -5,7 +5,7 @@
 ## 1. 職責邊界
 
 - **Runner 抽象**：以 subprocess 呼叫 headless CLI（claude 為主、codex 為輔），統一「prompt 進、結構化 JSON 出」。
-- **四個 Agent 角色**：Scorer（評分）、Drafter（起草）、Reviewer（審查）、Calibrator（反向校準建議），各自的 prompt 模板與輸出契約。Calibrator 只在使用者執行 `jobfinder calibrate` 時呼叫，不參與任何常駐階段。
+- **四個 Agent 角色**：Scorer（評分）、Drafter（起草）、Reviewer（審查）、Calibrator（反向校準建議，S1 範圍尚未實作），各自的 prompt 模板與輸出契約。Calibrator 只在使用者主動觸發校準時呼叫，不參與任何常駐階段。
 - 輸出驗證、重試、runner fallback、防幻覺程式防線、`agent_calls` 稽核寫入；Profile 相關呼叫記錄工作開始時 snapshot 的 `profile_revision`。
 - 不負責：取件與狀態推進（pipeline）、權重計算後的分流（pipeline 依 store 轉換）。
 

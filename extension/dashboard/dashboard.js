@@ -36,6 +36,7 @@
     jobsNextCursor: null,
     viewedJobIDs: new Set(),
     queue: [],
+    queueNextCursor: null,
     runs: [],
     duplicates: [],
     progress: null,
@@ -299,7 +300,9 @@
   function renderQueue() {
     const root = document.querySelector("#screen-queue");
     const rows = state.queue.map((job) => `<a class="job-row" href="${escapeHTML(job.url)}" target="_blank" rel="noreferrer"><span class="job-row-copy"><strong>${escapeHTML(text(job.title))}</strong><span>${escapeHTML(text(job.company_name))}</span><span class="row-meta"><span>${escapeHTML(text(job.source))}</span><span>${escapeHTML(text(job.location))}</span><span>${escapeHTML(salary(job))}</span></span></span>${icon("arrow", "row-arrow")}</a>`).join("");
-    root.innerHTML = `<div class="screen-heading"><div><h1>待看清單</h1><p>點開原始職缺後才能取得完整 JD 與評分。</p></div></div><div id="queue" class="job-list">${rows || emptyState("沒有待看職缺", "目前沒有需要補全文的職缺。")}</div>`;
+    const loadMore = state.queueNextCursor ? `<button id="load-more-queue" class="load-more-button" type="button" ${state.busy.has("queue-page") ? "disabled" : ""}>${state.busy.has("queue-page") ? "載入中…" : "載入更多"}</button>` : "";
+    root.innerHTML = `<div class="screen-heading"><div><h1>待看清單</h1><p>點開原始職缺後才能取得完整 JD 與評分。</p></div></div><div id="queue" class="job-list">${rows || emptyState("沒有待看職缺", "目前沒有需要補全文的職缺。")}</div>${loadMore}`;
+    root.querySelector("#load-more-queue")?.addEventListener("click", loadMoreQueue);
   }
 
   function filterOptions() {
@@ -415,9 +418,9 @@
     root.innerHTML = `<div class="section-stack"><div class="screen-heading"><div><h1>系統</h1><p>連線、Profile、批次與執行歷程。</p></div></div>
       <section class="card system-group" aria-labelledby="connection-title"><div class="card-heading"><h2 id="connection-title">連線與設定</h2></div><div class="system-card"><div class="system-row"><span class="system-copy"><strong>localhost API</strong><span>Side Panel 的 loopback 連線</span></span><span class="system-status ${state.connected ? "" : "is-warning"}"><span class="connection-dot"></span>${state.connected ? "正常" : "離線"}</span></div></div><button id="open-options" class="button is-secondary is-full" type="button">開啟連線設定</button></section>
       <section class="card profile-card" aria-labelledby="profile-title"><div class="card-heading"><h2 id="profile-title">Profile</h2><span class="profile-state is-${escapeHTML(profileStatus)}">${escapeHTML(profileStatus)}</span></div><p>${profileCopy}</p>${profileStatus === "ready" ? `<p class="reprocess-copy">${staleJobs ? `${staleJobs} 筆職缺使用舊版 Profile，等待手動更新。` : "所有可更新職缺均使用目前 Profile。"}${protectedJobs ? `另有 ${protectedJobs} 筆求職信歷史受保護。` : ""}</p>` : ""}<div class="button-stack"><button id="open-profile" class="button is-secondary is-full" type="button" ${profileStatus === "offline" || profileStatus === "loading" ? "disabled" : ""}>${escapeHTML(profileAction)}</button><button id="reprocess-profile" class="button is-primary is-full" type="button" ${profileStatus !== "ready" || staleJobs === 0 || state.busy.has("reprocess") ? "disabled" : ""}>${state.busy.has("reprocess") ? '<span class="spinner" aria-hidden="true"></span>正在排入更新' : `${icon("refresh")}更新過時評分職缺`}</button></div></section>
+      ${duplicatesSection()}
       <section class="card system-group" aria-labelledby="batch-title"><div class="card-heading"><h2 id="batch-title">自動與手動批次</h2></div><div class="system-card"><div class="system-row"><span class="system-copy"><strong>自動抓取時間</strong><span>每日 08:30（Asia/Taipei）</span></span><span class="metric-value">每日</span></div></div><button id="run" class="button is-primary is-full" type="button" ${state.connected === false || state.busy.has("run") || runUnavailable ? "disabled" : ""}>${state.busy.has("run") ? '<span class="spinner" aria-hidden="true"></span>抓取已開始' : `${icon("play")}立即手動抓取`}</button></section>
       ${progressSection()}
-      ${duplicatesSection()}
       <section aria-labelledby="runs-title"><div class="card-heading"><h2 id="runs-title">批次歷程</h2><span>只記抓取事實</span></div><div id="runs" class="run-list">${runs || emptyState("尚無執行記錄", "手動抓取或排程執行後會顯示在這裡。")}</div></section></div>`;
     document.querySelector("#run").addEventListener("click", startRun);
     document.querySelector("#open-profile")?.addEventListener("click", () => chrome.tabs.create({ url: chrome.runtime.getURL("profile/index.html") }));
@@ -463,7 +466,10 @@
       state.jobs = jobs.data.items || [];
       state.jobsNextCursor = jobs.data.next_cursor || null;
     }
-    if (queue?.ok) state.queue = queue.data.items || [];
+    if (queue?.ok) {
+      state.queue = queue.data.items || [];
+      state.queueNextCursor = queue.data.next_cursor || null;
+    }
     if (runs?.ok) state.runs = runs.data.items || [];
     if (duplicates?.ok) state.duplicates = duplicates.data.items || [];
     state.progress = progress?.ok ? progress.data : null;
@@ -543,6 +549,32 @@
       if (!known.has(job.id)) state.jobs.push(job);
     }
     state.jobsNextCursor = result.data.next_cursor || null;
+    renderAll();
+  }
+
+  async function loadMoreQueue() {
+    if (!state.queueNextCursor || state.busy.has("queue-page")) return;
+    const request = state.collectionRequest;
+    const cursor = state.queueNextCursor;
+    state.busy.add("queue-page");
+    renderQueue();
+    const params = new URLSearchParams();
+    params.set("cursor", cursor);
+    const result = await api(`/api/v1/queue?${params}`);
+    state.busy.delete("queue-page");
+    if (request !== state.collectionRequest || cursor !== state.queueNextCursor) {
+      renderAll();
+      return;
+    }
+    if (!result?.ok) {
+      renderQueue();
+      return showToast(result?.error || "無法載入更多待看職缺");
+    }
+    const known = new Set(state.queue.map((job) => job.id));
+    for (const job of result.data.items || []) {
+      if (!known.has(job.id)) state.queue.push(job);
+    }
+    state.queueNextCursor = result.data.next_cursor || null;
     renderAll();
   }
 

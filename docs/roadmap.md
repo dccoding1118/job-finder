@@ -30,11 +30,12 @@ MVP 架構中為擴展預留的縫：Source adapter 與半被動解析器（加�
 
 - **目標**：從「能用」到「好用」，並開始累積成效數據。
 - **關鍵項**：
-  - 反向校準閉環實際運轉（interview 事件 → Profile 建議）。
+  - 反向校準閉環（interview 事件 → Profile 建議）：以前端為唯一入口，不做 CLI 指令——系統頁顯示 `interview` 累計與觸發門檻、可觸發校準，並以逐條建議（附證據與信心度）呈現 diff 供勾選套用至 Profile 編輯器草稿。校準永不自動寫入 Profile，套用仍須使用者明確儲存（PRD R1.3 與 Human-in-the-Loop）。契約見 `docs/designs/design-profile.md` §7 與 `docs/designs/design-agents.md`。
   - 主動通知：每日高分職缺摘要推送（Email / LINE / Discord 擇一）。
   - 成效統計頁：投遞數、回應率、各來源/分數帶的轉換率——同時是未來產品的賣點素材。
   - 評分與生成品質迭代（以真實投遞結果當 eval）。
-  - 匯入去識別化履歷並產生 Profile 草稿，經使用者檢查與確認後才寫入；支援多 Profile 的建立、切換與個別媒合歸屬。
+  - 匯入去識別化履歷並產生 Profile 草稿：解析後一律先落草稿，經使用者檢查與確認才寫入；匯入內容同樣受 PII 檢核，不因來自履歷而放行。
+  - 多 Profile（多份履歷）：建立、切換與個別編輯，且每次媒合所使用的 Profile 有明確歸屬——評分與求職信必須可回溯到當時的 Profile 與 revision。單一 Profile 的 `profile_revision` 契約是其前置條件，因此排在 Profile 編輯器與反向校準之後。
   - 跨來源合併規則的持續調校：以實際誤合併／漏合併回饋同義詞對照表與相似度門檻。
   - **深入評估（按需）**：推薦職缺提供「深入評估」動作，才產出優缺點、機會分析，並查詢公司與職缺評論等外部即時評價。與求職信同屬按需觸發——每筆職缺的例行評分維持五維＋短理由，把較貴的分析留給使用者真的在考慮的少數職缺。此功能定案前，`ScoreResult` 不擴充 pros/cons 欄位。
 - **架構演進**：無重大變更；驗證「事件流→統計」的資料模型。
@@ -65,6 +66,17 @@ MVP 架構中為擴展預留的縫：Source adapter 與半被動解析器（加�
 - 投遞素材擴展：履歷客製化重排（PDF 生成）、面試準備 Agent（依 JD 生成考題與話術）。
 - 成效數據飛輪：跨用戶匿名統計回饋評分模型（哪類 Profile×JD 組合真的拿到面試）。
 - B 端變體：企業/獵頭側的反向媒合介面。
+
+### 工程面跨階段項（不綁特定階段）
+
+不屬於任一階段的產品能力，但會被多個階段依賴的工程改善；優先度低於當期階段的退出標準。
+
+| 項目 | 目標狀態 | 決策 |
+|---|---|---|
+| 部署走正式版工件 | 由 CI/release 產出帶版號與 checksum 的 binary，正式環境只從該工件部署 | 收斂「開發 checkout 直接 build+install」的路徑；Chrome extension 隨同一 release 打包，版號與 `extension_origin` 一併對齊 |
+| 主程式安裝位置 | `~/.local/bin/jobfinder` | 公開主程式是使用者與 systemd 直接啟動的命令，依 XDG 分類應在 `bin`；`~/.local/lib/jobfinder/` 僅保留 rollback 工件與安裝 metadata。XDG config／data 配置不變 |
+| API 請求層觀測 | localhost API 記錄 method、path、status 與來源 | 排查 capture／badge 問題時需知道插件送了什麼、回了什麼；不記 payload 內容，維持 Zero-PII |
+| Agent 重試契約 | Invoke 回錯但輸出已通過契約驗證時不重跑 | 此類「白付重跑」約佔 scorer 失敗的三分之一；其餘為 CLI／API 自報錯誤（不可避）與輸出違反契約（須重跑） |
 
 ## 4. 產品化運作流程與目標架構（S2→S3 形態）
 

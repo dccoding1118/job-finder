@@ -10,6 +10,7 @@
 | ET-02 | B4 | service worker 收到 Side Panel 的 API 請求 | 加入 Bearer token，回傳已標準化成功或錯誤結果 |
 | ET-03 | B4 | Side Panel 四頁籤、Job 清單、判定篩選、五維對照、待看清單與 Run 歷史 | 正確轉譯 API response；判定直接取用 `verdict`，不自行從 `process_state` 推導；Run stats 顯示 `key=value`；空值顯示「—」，錯誤有可理解訊息 |
 | ET-21 | B4 | 推薦清單回應含下一頁 cursor，並在清單與目前職缺間往返 | 顯示「載入更多」並以相同篩選取得下一頁；追加且不重複既有 Job、不改變捲動位置；末頁隱藏按鈕；開啟職缺後標示「已看」，返回推薦頁恢復原位置；變更篩選或重新整理從第一頁開始 |
+| ET-22 | B4 | 待看清單回應含下一頁 cursor，並在頁籤間往返 | 顯示「載入更多」並帶回 cursor 取得下一頁；追加且不重複既有 Job、不改變捲動位置；末頁隱藏按鈕；離開待看頁再返回時恢復原捲動位置 |
 | ET-04 | B4 | 複製求職信成功與失敗 | 成功有文字確認且 clipboard 等於核准信件；失敗時信件仍可選取並顯示說明 |
 | ET-05 | B4 | 投遞狀態與手動 run | 對應正確 API 路由與 payload；`already_running` 不重複送出 |
 | ET-06 | B4 | 對照區依 `letter_state` 呈現求職信入口 | `none` 顯示產生按鈕、`requested` 顯示處理中且按鈕停用、`ready` 顯示信件與複製、`failed` 顯示未過審與再次產生 |
@@ -17,7 +18,8 @@
 | ET-08 | B4 | manifest 與 toolbar action | 宣告原生 Side Panel；toolbar action 開啟 `dashboard/index.html`，不宣告 popup |
 | ET-09 | B4 | 淺色／深色主題切換 | 套用各自語意 token、保存 theme；目前頁籤、選取 Job 與 busy 狀態不被重設；320px 仍維持單欄可用 |
 | ET-10 | B5 | list／job content script 送訊息 | 僅把目前已載入頁面的擷取素材交給 service worker；不直接讀取 token |
-| ET-11 | B5 | 列表回應的就地標記 | 依 `verdict` 掛上對應標記：`unfit` 紅底＋圖示＋命中條件、`recommended`／`not_recommended` 顯示總分、`pending_detail` 標記待看；標記不只以顏色表達 |
+| ET-11 | B5 | 列表回應的就地標記 | 依 `verdict` 掛上對應標記：`unfit`／`recommended`／`not_recommended`／`pending_detail`／`pending_score` 各有可區分的專屬底色與外框，`unfit` 另附命中條件、`recommended`／`not_recommended` 顯示總分；標記不只以顏色表達 |
+| ET-47 | B5／B6 | 列表 capture 回應未涵蓋某筆 external_id | 該筆不被視為已處理；後續收割再問（同一份結果最多 3 次）並在取得判定後就地標記，不需重新整理文件 |
 | ET-12 | B5 | 列表回應含既有 Job 與新職缺混合 | 兩者以同一組 verdict 標記呈現；插件不因既有 Job 而重送 capture 或發起額外請求 |
 | ET-13 | B5 | 內頁 capture context 與 Side Panel 判定 | 內頁不注入完整評分 overlay；content script 回報 Job ID 與擷取狀態；Side Panel 依 API 呈現 `unfit`／快取評分／`pending_score` |
 | ET-14 | B5 | capture API 失敗或離線 | 顯示可理解錯誤與使用者觸發的重送；不自動高頻重試、不暫存 JD |
@@ -29,6 +31,7 @@
 | ET-20 | B5 | 搜尋頁與通知頁的同一職缺 | 兩套 selector 正規化為同一組 capture 項目（external_id、url、職稱、公司、地區、薪資一致） |
 | ET-40 | B6 | Cake 列表頁 `__NEXT_DATA__` 與目前 URL 條件一致 | 由 `__NEXT_DATA__` 取得項目並送出帶 `source=cake` 的 capture payload；欄位與 104 路徑正規化為同一結構 |
 | ET-41 | B6 | Cake 列表頁 URL 條件與 `__NEXT_DATA__` 的 `ssr.search` 不一致（使用者頁內改條件或翻頁） | 退回 DOM 收割並以 MutationObserver 涵蓋新注入項目；不使用過期的內嵌資料 |
+| ET-48 | B6 | Cake 頁面在結果清單外（推薦／最近瀏覽區塊）另有連向同一職缺的連結 | 該筆的每個出現處都掛上標記；送出的欄位取自結果項目（公司名、地區、待遇齊備），不因非結果連結而缺欄位 |
 | ET-42 | B6 | Cake DOM 收割時 class name 的 hash 段改變 | 仍以 `a[href^="/companies/"][href*="/jobs/"]` 與 `[class*="JobSearchItem"]` 前綴定位成功；不依賴完整 class 常數 |
 | ET-43 | B6 | Cake 內頁擷取 | 以渲染後 DOM 收割職稱、公司名、JD 區塊與 metadata 行，送出 `source=cake` 的 capture 且不帶 `next_data`；Side Panel 依回應呈現，與 104 路徑共用同一套判定呈現規則 |
 | ET-46 | B6 | 由 Cake 列表頁 soft navigation 進入職缺內頁（不重新載入文件） | 路由模組停掉列表模式並啟動內頁模式；page context 由 `list` 轉為 `job`，內頁擷取以新 URL 送出 |

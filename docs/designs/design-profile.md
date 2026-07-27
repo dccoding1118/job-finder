@@ -8,7 +8,6 @@
 - 產生 canonical YAML、檔案 ETag 與內容定址的 `profile_revision`，並以 owner-only 權限原子寫入。
 - 提供同步化 runtime provider；以 immutable snapshot 向 filter、score、letter 與 API 提供 Profile、canonical YAML、ETag 與 revision。
 - 提供 Agent prompt 所需的 canonical YAML，不直接重用未驗證的檔案 bytes。
-- B6：反向校準建議產生（只產建議，不自動改寫）。
 - 不負責：替使用者決定或自動改寫 Profile 內容、保存歷史版本、Job 重新處理與狀態轉換。
 
 ## 2. 檔案位置與敏感性
@@ -79,7 +78,7 @@
 
 API 讀取回傳 snapshot 的結構化副本，不暴露內部可變物件。語意相同的重複儲存不替換工作中的 snapshot，也不重新入隊。
 
-## 7. 反向校準（B6，R1.3）
+## 7. 反向校準（S1，R1.3；尚未實作）
 
 校準是**只讀 Profile、只產建議**的離線分析：由已取得面試的職缺反推「什麼樣的 JD 真的會回應我」，把結論表達為 `preferences` 的調整建議 diff。它不改寫任何檔案，也不影響任何 Job 的狀態。
 
@@ -87,7 +86,7 @@ API 讀取回傳 snapshot 的結構化副本，不暴露內部可變物件。語
 
 | 項目 | 規則 |
 |---|---|
-| 入口 | `jobfinder calibrate`（CLI only；MVP 不開 API 與 UI 入口） |
+| 入口 | Side Panel 系統頁：顯示 `interview` 累計與門檻、觸發校準、以逐條建議呈現 diff 供勾選套用至 Profile 編輯器草稿；不提供 CLI 指令 |
 | 前置 | `status_events` 中 `axis='apply' AND to_state='interview'` 的相異 job 數 ≥ `calibration.min_interviews`（預設 5）；未達門檻拒絕執行並列印目前筆數，不呼叫 Agent |
 | 成功樣本 | 上述 job 的 JD 全文、職稱、公司產業摘要、地區、薪資區間與現行五維分數 |
 | 對照樣本 | `applied` 之後轉入 `ghosted` 的 job，取樣上限與成功樣本同數；不足時可為空，Agent 需在無對照下仍只根據成功樣本作答 |
@@ -114,9 +113,9 @@ Agent 回 JSON 建議清單（契約見 [design-agents](design-agents.md) §4.4�
 2. **欄位白名單**：`field` 必須落在 `preferences.*`（上表所列欄位）；指向 `skills`、`experiences`、`summary`、`honesty_bounds` 等任何其他路徑一律拒絕——校準不得改寫事實性履歷內容，只能調整求職條件。
 3. **套用於副本**：把建議套到 Profile 的記憶體副本，產生 canonical YAML。
 4. **PII 檢核**：對套用後的副本跑與 §4 相同的檢核；命中即拒絕整份建議並回安全錯誤（不回命中值）。
-5. **產出 diff**：原 canonical YAML 與副本的 unified diff → stdout，同時寫入 Profile 同目錄的 `profile.calibration-<RFC3339>.diff`（`0600`，版控外）。
+5. **產出 diff**：原 canonical YAML 與副本的 unified diff，逐條建議附證據與信心度回給前端；不寫入任何檔案。
 
-磁碟上的 `profile.yaml` 與 active snapshot **在任何情況下都不被此流程修改**。使用者閱讀 diff 後，自行於 Profile editor 逐項套用並明確儲存——套用與否、套用哪幾條，都是使用者的決定（PRD 核心原則 Human-in-the-Loop）。
+磁碟上的 `profile.yaml` 與 active snapshot **在任何情況下都不被此流程修改**。使用者閱讀 diff 後，於 Profile editor 逐項套用並明確儲存——套用與否、套用哪幾條，都是使用者的決定（PRD 核心原則 Human-in-the-Loop）。
 
 每次呼叫（含被拒絕者）寫入 `agent_calls`，`role='calibrator'`、`job_id` 為 NULL。
 
@@ -126,7 +125,6 @@ Agent 回 JSON 建議清單（契約見 [design-agents](design-agents.md) §4.4�
 |---|---|
 | `jobfinder profile lint` | 結構驗證 ＋ PII 檢核 |
 | `jobfinder profile show` | 輸出載入後的 Profile 摘要（確認系統實際讀到什麼） |
-| `jobfinder calibrate` | §7；未達門檻或建議未通過防線時非零退出，不產生 diff 檔 |
 
 `profile lint` 與 `profile show` 預設讀取 `.local-dev/profile.yaml` 與 `.local-dev/pii-denylist.txt`；可分別以 `--profile`、`--denylist` 指定本機路徑。
 

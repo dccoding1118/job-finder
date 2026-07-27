@@ -114,6 +114,8 @@
 | 列表 | `<script id="__NEXT_DATA__" type="application/json">`（Next.js SSR 狀態）優先，過時或缺漏時退回 DOM 收割的項目陣列 |
 | 內頁 | 渲染後 DOM 的收割結果 |
 
+**巡邏 URL 實務上走 DOM 收割**：`__NEXT_DATA__` 的內嵌列表狀態只在 URL 條件僅含 `query`／`page` 時可信；帶其他搜尋條件的請求一律被 Cake 擋下（§1），因此 `ssr.search.filters` 與 URL 參數的映射無從取樣驗證，也不得據以判斷收割完整性。
+
 **內頁不使用 `__NEXT_DATA__`**：Cake 的內頁不帶自己的 listing 狀態，頁面上的那份描述的是使用者進來前的列表畫面。內頁解析仍接受帶 `__NEXT_DATA__` 的擷取（見 §4.3.1 的欄位映射），但 DOM 收割優先且是插件實際採用的路徑。
 
 ### 4.1 列表項目（partial）
