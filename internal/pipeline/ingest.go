@@ -38,7 +38,7 @@ func (p Pipeline) IngestList(ctx context.Context, rows []crawler.RawJob) ([]Inge
 		if !row.Partial() {
 			return nil, fmt.Errorf("pipeline: list item %q must not carry a description", row.ExternalID)
 		}
-		upsert, err := p.Store.UpsertJob(ctx, jobInput(row, snapshot.Revision), nil)
+		upsert, err := p.Store.UpsertJob(ctx, jobInput(row, snapshot.Revisions.Filter), nil)
 		if err != nil {
 			return nil, err
 		}
@@ -75,7 +75,7 @@ func (p Pipeline) IngestJob(ctx context.Context, row crawler.RawJob) (IngestResu
 	if err != nil {
 		return IngestResult{}, err
 	}
-	upsert, err := p.Store.UpsertJob(ctx, jobInput(row, snapshot.Revision), nil)
+	upsert, err := p.Store.UpsertJob(ctx, jobInput(row, snapshot.Revisions.Filter), nil)
 	if err != nil {
 		return IngestResult{}, err
 	}
@@ -113,19 +113,23 @@ func (p Pipeline) canonical(ctx context.Context, job store.Job) (store.Job, bool
 	return detail.Job, true, nil
 }
 
-// screen applies the screening rules a job's available fields support and moves
-// it out of its intake state accordingly.
+// screen applies the structural hard rules a job's available fields support.
+// Only a rejection is conclusive here: a job that passes them still owes the
+// semantic conditions, which the worker runs asynchronously, so the capture
+// request never waits on an Agent.
 func (p Pipeline) screen(ctx context.Context, job store.Job, snapshot workProfile) (store.Job, error) {
-	hits := snapshot.Filter.Match(job)
+	partial := job.Description == nil
+	conditions := snapshot.Filter.Evaluate(job, partial)
+	hits := failedTexts(conditions)
 	if job.ProcessState == "new" {
-		if err := p.Store.CommitFilter(ctx, job.ID, snapshot.Revision, hits); err != nil {
+		if len(hits) == 0 {
+			return job, nil
+		}
+		result := store.FilterResult{Outcome: store.FilterFail, Conditions: conditions, Stage: "structural"}
+		if err := p.Store.SaveFilterResult(ctx, job.ID, result, snapshot.Revisions); err != nil {
 			return job, err
 		}
-		job.ProcessState = "queued"
-		if len(hits) > 0 {
-			job.ProcessState = "filtered_out"
-		}
-		job.FilterHits = hits
+		job.ProcessState, job.FilterHits = "filtered_out", hits
 		return job, nil
 	}
 	if len(hits) > 0 && job.ProcessState == "discovered" {
@@ -138,6 +142,18 @@ func (p Pipeline) screen(ctx context.Context, job store.Job, snapshot workProfil
 		job.ProcessState, job.FilterHits = "filtered_out", hits
 	}
 	return job, nil
+}
+
+// failedTexts lists the conditions a job outright failed. Undecided conditions
+// are deliberately absent: they are not a reason to reject anything.
+func failedTexts(conditions []store.FilterCondition) []string {
+	texts := []string{}
+	for _, condition := range conditions {
+		if condition.Verdict == store.FilterFail {
+			texts = append(texts, condition.Text)
+		}
+	}
+	return texts
 }
 
 func (p Pipeline) result(ctx context.Context, job store.Job, created, unchanged bool) (IngestResult, error) {
@@ -170,11 +186,11 @@ func (p Pipeline) RequestLetter(ctx context.Context, jobID int64) error {
 	return p.Store.TransitionProcess(ctx, jobID, "letter_requested")
 }
 
-// RequestRescore returns one already scored job to the score stage under the
-// active Profile revision, so a single wrong score can be redone without
-// reprocessing every job. It returns as soon as the state is stored; the worker
-// picks the job up on its own and appends a new score beside the old one.
-func (p Pipeline) RequestRescore(ctx context.Context, jobID int64) error {
+// RequestReprocess returns one job to the start of the pipeline under the active
+// Profile revisions, so a single wrong verdict — a screening rejection as much
+// as a score — can be redone without reprocessing every job. It returns as soon
+// as the state is stored; the worker picks the job up on its own.
+func (p Pipeline) RequestReprocess(ctx context.Context, jobID int64) error {
 	if p.Store == nil {
 		return fmt.Errorf("pipeline: store is required")
 	}
@@ -182,9 +198,9 @@ func (p Pipeline) RequestRescore(ctx context.Context, jobID int64) error {
 	if err != nil {
 		return err
 	}
-	if err := p.Store.RequeueScore(ctx, jobID, snapshot.Revision); err != nil {
+	if err := p.Store.ReprocessJob(ctx, jobID, snapshot.Revisions); err != nil {
 		return err
 	}
-	p.logger().Info("job requeued for rescore", "stage", "score", "job_id", jobID, "profile_revision", snapshot.Revision)
+	p.logger().Info("job requeued for reprocess", "stage", "filter", "job_id", jobID, "filter_revision", snapshot.Revisions.Filter)
 	return nil
 }

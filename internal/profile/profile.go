@@ -21,58 +21,24 @@ var (
 	idPattern       = regexp.MustCompile(`(?i)\b[A-Z][12]\d{8}\b`)
 )
 
+// Profile is the schema v5 shape: sections are split by which gate reads them —
+// `requirements` decides fitness, `intents` decides recommendation, and `search`
+// states the directions a job is looked for under. Locality lives in
+// `requirements.locations` alone: it both restricts what counts as fit and is the
+// only地區 statement there is.
 type Profile struct {
-	Summary           string          `json:"summary" yaml:"summary"`
-	YearsOfExperience int             `json:"years_of_experience" yaml:"years_of_experience"`
-	Education         Education       `json:"education" yaml:"education"`
-	Experiences       []Experience    `json:"experiences" yaml:"experiences"`
-	Skills            Skills          `json:"skills" yaml:"skills"`
-	Certifications    []Certification `json:"certifications" yaml:"certifications"`
-	Preferences       Preferences     `json:"preferences" yaml:"preferences"`
-	HonestyBounds     []string        `json:"honesty_bounds" yaml:"honesty_bounds"`
+	Search         Search         `json:"search" yaml:"search"`
+	Requirements   Requirements   `json:"requirements" yaml:"requirements"`
+	Intents        Intents        `json:"intents" yaml:"intents"`
+	Experiences    []Experience   `json:"experiences" yaml:"experiences"`
+	Qualifications Qualifications `json:"qualifications" yaml:"qualifications"`
+	HonestyBounds  []string       `json:"honesty_bounds" yaml:"honesty_bounds"`
+	// Derived is materialized by this package on save and rejected on input.
+	Derived Derived `json:"derived" yaml:"derived"`
 }
 
-type Education struct {
-	Degree string `json:"degree" yaml:"degree"`
-	Field  string `json:"field" yaml:"field"`
-}
-
-type Experience struct {
-	Role         string   `json:"role" yaml:"role"`
-	OrgType      string   `json:"org_type" yaml:"org_type"`
-	Years        float64  `json:"years" yaml:"years"`
-	Summary      string   `json:"summary" yaml:"summary"`
-	Achievements []string `json:"achievements" yaml:"achievements"`
-	Skills       []string `json:"skills" yaml:"skills"`
-}
-
-type Skills struct {
-	Expert     []string `json:"expert" yaml:"expert"`
-	Proficient []string `json:"proficient" yaml:"proficient"`
-	Familiar   []string `json:"familiar" yaml:"familiar"`
-}
-
-type Certification struct {
-	Name   string `json:"name" yaml:"name"`
-	Status string `json:"status" yaml:"status"`
-}
-
-type Preferences struct {
-	SalaryMin     int         `json:"salary_min" yaml:"salary_min"`
-	SalaryTarget  int         `json:"salary_target" yaml:"salary_target"`
-	Locations     []string    `json:"locations" yaml:"locations"`
-	Remote        string      `json:"remote" yaml:"remote"`
-	Directions    []Direction `json:"directions" yaml:"directions"`
-	IndustryAvoid []string    `json:"industry_avoid" yaml:"industry_avoid"`
-	Screening     Screening   `json:"screening" yaml:"screening"`
-}
-
-// Screening contains the deterministic job rejection rules owned by a Profile.
-type Screening struct {
-	ExcludeTitleKeywords       []string `json:"exclude_title_keywords" yaml:"exclude_title_keywords"`
-	ExcludeDescriptionKeywords []string `json:"exclude_description_keywords" yaml:"exclude_description_keywords"`
-	RequireAnyKeywords         []string `json:"require_any_keywords" yaml:"require_any_keywords"`
-	ExcludeCompanies           []string `json:"exclude_companies" yaml:"exclude_companies"`
+type Search struct {
+	Directions []Direction `json:"directions" yaml:"directions"`
 }
 
 type Direction struct {
@@ -81,20 +47,100 @@ type Direction struct {
 	Keywords []string `json:"keywords" yaml:"keywords"`
 }
 
+// Requirements are the hard rules: a job that misses one is unfit, not low scoring.
+type Requirements struct {
+	SalaryMin                  int      `json:"salary_min" yaml:"salary_min"`
+	Locations                  []string `json:"locations" yaml:"locations"`
+	Remote                     string   `json:"remote" yaml:"remote"`
+	EmploymentTypes            []string `json:"employment_types" yaml:"employment_types"`
+	IndustryAvoid              []string `json:"industry_avoid" yaml:"industry_avoid"`
+	ExcludeTitleKeywords       []string `json:"exclude_title_keywords" yaml:"exclude_title_keywords"`
+	ExcludeDescriptionKeywords []string `json:"exclude_description_keywords" yaml:"exclude_description_keywords"`
+	ExcludeCompanies           []string `json:"exclude_companies" yaml:"exclude_companies"`
+}
+
+// Intents are the soft rules: they move the score, never the fitness verdict.
+type Intents struct {
+	SalaryTarget      int      `json:"salary_target" yaml:"salary_target"`
+	ContentLikes      []string `json:"content_likes" yaml:"content_likes"`
+	ContentDislikes   []string `json:"content_dislikes" yaml:"content_dislikes"`
+	IndustryInterests []string `json:"industry_interests" yaml:"industry_interests"`
+}
+
+// Experience is one job. It serves both gates: the first five fields feed the
+// screening totals, the last three are material the Drafter writes from.
+type Experience struct {
+	Industry          string   `json:"industry" yaml:"industry"`
+	Years             float64  `json:"years" yaml:"years"`
+	IsManagement      bool     `json:"is_management" yaml:"is_management"`
+	ExcludeFromTotals bool     `json:"exclude_from_totals" yaml:"exclude_from_totals"`
+	Skills            []string `json:"skills" yaml:"skills"`
+	OrgType           string   `json:"org_type" yaml:"org_type"`
+	Role              string   `json:"role" yaml:"role"`
+	Achievements      []string `json:"achievements" yaml:"achievements"`
+}
+
+type Qualifications struct {
+	Education      []EducationEntry `json:"education" yaml:"education"`
+	Skills         []SkillEntry     `json:"skills" yaml:"skills"`
+	Certifications []Certification  `json:"certifications" yaml:"certifications"`
+	Languages      []LanguageEntry  `json:"languages" yaml:"languages"`
+}
+
+type EducationEntry struct {
+	Level  string `json:"level" yaml:"level"`
+	Field  string `json:"field" yaml:"field"`
+	Status string `json:"status" yaml:"status"`
+}
+
+// SkillEntry is the single place a proficiency is stated; experiences list skill
+// names only.
+type SkillEntry struct {
+	Name  string `json:"name" yaml:"name"`
+	Level string `json:"level" yaml:"level"`
+}
+
+type Certification struct {
+	Name   string `json:"name" yaml:"name"`
+	Status string `json:"status" yaml:"status"`
+}
+
+type LanguageEntry struct {
+	Name  string `json:"name" yaml:"name"`
+	Level string `json:"level" yaml:"level"`
+}
+
+// Derived carries the totals the screening gate compares against, so a year
+// count is never stated twice and never computed by an Agent.
+type Derived struct {
+	TotalYears      float64            `json:"total_years" yaml:"total_years"`
+	ManagementYears float64            `json:"management_years" yaml:"management_years"`
+	IndustryYears   map[string]float64 `json:"industry_years" yaml:"industry_years"`
+}
+
+// Empty reports a Derived that carries no materialized value, which is the only
+// shape an input document may have.
+func (d Derived) Empty() bool {
+	return d.TotalYears == 0 && d.ManagementYears == 0 && len(d.IndustryYears) == 0
+}
+
 type Finding struct {
 	Kind   string
 	Line   int
 	Column int
 }
 
+// Summary is what `profile show` and the Profile card report: enough to confirm
+// which file the system actually read.
 type Summary struct {
-	YearsOfExperience int
-	Degree            string
-	Field             string
-	Expert            []string
-	Proficient        []string
-	Familiar          []string
-	Directions        []Direction
+	TotalYears      float64
+	ManagementYears float64
+	Education       []EducationEntry
+	Skills          []SkillEntry
+	ExperienceCount int
+	Remote          string
+	SalaryMin       int
+	Directions      []Direction
 }
 
 func Load(path string) (Profile, string, error) {
@@ -109,8 +155,26 @@ func Load(path string) (Profile, string, error) {
 	return value, string(contents), nil
 }
 
-// DecodeYAML rejects fields outside the published Profile schema.
+// DecodeYAML rejects fields outside the published Profile schema. A document
+// still written in a pre-v5 shape is migrated before validation, so an existing
+// local file keeps working without being re-entered by hand.
 func DecodeYAML(contents []byte) (Profile, error) {
+	contents, err := migrateSearchLocations(contents)
+	if err != nil {
+		return Profile{}, err
+	}
+	if isLegacy(contents) {
+		value, err := migrateLegacy(contents)
+		if err != nil {
+			return Profile{}, err
+		}
+		value.normalize()
+		value.materializeDerived()
+		if err := value.Validate(); err != nil {
+			return Profile{}, err
+		}
+		return value, nil
+	}
 	var value Profile
 	decoder := yaml.NewDecoder(bytes.NewReader(contents))
 	decoder.KnownFields(true)
@@ -124,72 +188,171 @@ func DecodeYAML(contents []byte) (Profile, error) {
 		}
 		return Profile{}, err
 	}
+	// `derived` is materialized here, so a stored file may carry it but must agree
+	// with the experiences it was computed from.
+	value.normalize()
+	value.materializeDerived()
 	if err := value.Validate(); err != nil {
 		return Profile{}, err
 	}
 	return value, nil
 }
 
+const (
+	remoteRequired   = "required"
+	remotePreferred  = "preferred"
+	remoteAcceptable = "acceptable"
+	remoteRejected   = "rejected"
+)
+
 func (p Profile) Validate() error {
-	if strings.TrimSpace(p.Summary) == "" || p.YearsOfExperience < 0 {
-		return errors.New("profile: summary is required and years_of_experience must not be negative")
+	if err := p.validateSearch(); err != nil {
+		return err
 	}
-	if !oneOf(p.Education.Degree, "bachelor", "master", "phd") || strings.TrimSpace(p.Education.Field) == "" {
-		return errors.New("profile: education.degree must be bachelor, master, or phd and education.field is required")
+	if err := p.validateRequirements(); err != nil {
+		return err
 	}
+	if err := p.validateIntents(); err != nil {
+		return err
+	}
+	if err := p.validateExperiences(); err != nil {
+		return err
+	}
+	if err := p.validateQualifications(); err != nil {
+		return err
+	}
+	return validateTextList("honesty_bounds", p.HonestyBounds, true)
+}
+
+func (p Profile) validateSearch() error {
+	if len(p.Search.Directions) == 0 {
+		return errors.New("profile: at least one search direction is required")
+	}
+	for index, direction := range p.Search.Directions {
+		if strings.TrimSpace(direction.Key) == "" || strings.TrimSpace(direction.Title) == "" || len(direction.Keywords) == 0 {
+			return fmt.Errorf("profile: search.directions[%d] has missing fields", index)
+		}
+		if err := validateTextList(fmt.Sprintf("search.directions[%d].keywords", index), direction.Keywords, true); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (p Profile) validateRequirements() error {
+	r := p.Requirements
+	if r.SalaryMin < 0 {
+		return errors.New("profile: requirements.salary_min must not be negative")
+	}
+	if !oneOf(r.Remote, remoteRequired, remotePreferred, remoteAcceptable, remoteRejected) {
+		return errors.New("profile: requirements.remote must be required, preferred, acceptable, or rejected")
+	}
+	for index, value := range r.EmploymentTypes {
+		if err := validateTerm(EmploymentTypes, fmt.Sprintf("requirements.employment_types[%d]", index), value); err != nil {
+			return err
+		}
+	}
+	for index, value := range r.Locations {
+		if err := validateTerm(Locations, fmt.Sprintf("requirements.locations[%d]", index), value); err != nil {
+			return err
+		}
+	}
+	for name, values := range map[string][]string{
+		"requirements.industry_avoid":               r.IndustryAvoid,
+		"requirements.exclude_title_keywords":       r.ExcludeTitleKeywords,
+		"requirements.exclude_description_keywords": r.ExcludeDescriptionKeywords,
+		"requirements.exclude_companies":            r.ExcludeCompanies,
+	} {
+		if err := validateTextList(name, values, false); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (p Profile) validateIntents() error {
+	if p.Intents.SalaryTarget < 0 {
+		return errors.New("profile: intents.salary_target must not be negative")
+	}
+	for name, values := range map[string][]string{
+		"intents.content_likes":      p.Intents.ContentLikes,
+		"intents.content_dislikes":   p.Intents.ContentDislikes,
+		"intents.industry_interests": p.Intents.IndustryInterests,
+	} {
+		if err := validateTextList(name, values, false); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (p Profile) validateExperiences() error {
 	if len(p.Experiences) == 0 {
 		return errors.New("profile: at least one experience is required")
 	}
-	for name, values := range map[string][]string{
-		"preferences.screening.exclude_title_keywords":       p.Preferences.Screening.ExcludeTitleKeywords,
-		"preferences.screening.exclude_description_keywords": p.Preferences.Screening.ExcludeDescriptionKeywords,
-		"preferences.screening.require_any_keywords":         p.Preferences.Screening.RequireAnyKeywords,
-		"preferences.screening.exclude_companies":            p.Preferences.Screening.ExcludeCompanies,
-	} {
-		for _, value := range values {
-			if strings.TrimSpace(value) == "" {
-				return fmt.Errorf("profile: %s must not contain an empty value", name)
+	for index, experience := range p.Experiences {
+		if strings.TrimSpace(experience.Industry) == "" {
+			return fmt.Errorf("profile: experiences[%d].industry is required", index)
+		}
+		if experience.Years < 0 {
+			return fmt.Errorf("profile: experiences[%d].years must not be negative", index)
+		}
+		for name, values := range map[string][]string{
+			fmt.Sprintf("experiences[%d].skills", index):       experience.Skills,
+			fmt.Sprintf("experiences[%d].achievements", index): experience.Achievements,
+		} {
+			if err := validateTextList(name, values, false); err != nil {
+				return err
 			}
 		}
 	}
-	for index, experience := range p.Experiences {
-		if strings.TrimSpace(experience.Role) == "" || strings.TrimSpace(experience.OrgType) == "" || experience.Years < 0 || strings.TrimSpace(experience.Summary) == "" {
-			return fmt.Errorf("profile: experience %d has missing or invalid fields", index)
+	return nil
+}
+
+func (p Profile) validateQualifications() error {
+	q := p.Qualifications
+	for index, entry := range q.Education {
+		if !oneOf(entry.Level, "bachelor", "master", "phd") {
+			return fmt.Errorf("profile: qualifications.education[%d].level must be bachelor, master, or phd", index)
 		}
-		if err := validateTextList(fmt.Sprintf("experiences[%d].achievements", index), experience.Achievements, false); err != nil {
-			return err
+		if strings.TrimSpace(entry.Field) == "" {
+			return fmt.Errorf("profile: qualifications.education[%d] has missing fields", index)
 		}
-		if err := validateTextList(fmt.Sprintf("experiences[%d].skills", index), experience.Skills, false); err != nil {
-			return err
-		}
-	}
-	for index, certification := range p.Certifications {
-		if strings.TrimSpace(certification.Name) == "" || strings.TrimSpace(certification.Status) == "" {
-			return fmt.Errorf("profile: certification %d has missing fields", index)
-		}
-	}
-	if err := validateSkills(p.Skills); err != nil {
-		return err
-	}
-	if p.Preferences.SalaryMin < 0 || p.Preferences.SalaryTarget < 0 || !oneOf(p.Preferences.Remote, "required", "preferred", "ok") || len(p.Preferences.Locations) == 0 {
-		return errors.New("profile: preferences has missing or invalid fields")
-	}
-	if len(p.Preferences.Directions) == 0 {
-		return errors.New("profile: at least one preference direction is required")
-	}
-	for index, direction := range p.Preferences.Directions {
-		if strings.TrimSpace(direction.Key) == "" || strings.TrimSpace(direction.Title) == "" || len(direction.Keywords) == 0 {
-			return fmt.Errorf("profile: direction %d has missing fields", index)
-		}
-		if err := validateTextList(fmt.Sprintf("preferences.directions[%d].keywords", index), direction.Keywords, true); err != nil {
+		if err := validateTerm(EducationStatuses, fmt.Sprintf("qualifications.education[%d].status", index), entry.Status); err != nil {
 			return err
 		}
 	}
-	if len(p.HonestyBounds) == 0 {
-		return errors.New("profile: honesty_bounds is required")
+	seen := make(map[string]struct{})
+	for index, entry := range q.Skills {
+		name := strings.TrimSpace(entry.Name)
+		if name == "" {
+			return fmt.Errorf("profile: qualifications.skills[%d].name is required", index)
+		}
+		if !oneOf(entry.Level, "expert", "proficient", "familiar") {
+			return fmt.Errorf("profile: qualifications.skills[%d].level must be expert, proficient, or familiar", index)
+		}
+		key := strings.ToLower(name)
+		if _, exists := seen[key]; exists {
+			return fmt.Errorf("profile: qualifications.skills contains duplicate skill %q", entry.Name)
+		}
+		seen[key] = struct{}{}
 	}
-	for name, values := range map[string][]string{"preferences.locations": p.Preferences.Locations, "preferences.industry_avoid": p.Preferences.IndustryAvoid, "honesty_bounds": p.HonestyBounds} {
-		if err := validateTextList(name, values, name != "preferences.industry_avoid"); err != nil {
+	if len(q.Skills) == 0 {
+		return errors.New("profile: at least one qualifications skill is required")
+	}
+	for index, entry := range q.Certifications {
+		if strings.TrimSpace(entry.Name) == "" {
+			return fmt.Errorf("profile: qualifications.certifications[%d] has missing fields", index)
+		}
+		if err := validateTerm(CertificationStatuses, fmt.Sprintf("qualifications.certifications[%d].status", index), entry.Status); err != nil {
+			return err
+		}
+	}
+	for index, entry := range q.Languages {
+		if strings.TrimSpace(entry.Name) == "" {
+			return fmt.Errorf("profile: qualifications.languages[%d] has missing fields", index)
+		}
+		if err := validateTerm(LanguageLevels, fmt.Sprintf("qualifications.languages[%d].level", index), entry.Level); err != nil {
 			return err
 		}
 	}
@@ -197,7 +360,13 @@ func (p Profile) Validate() error {
 }
 
 func (p Profile) SummaryView() Summary {
-	return Summary{p.YearsOfExperience, p.Education.Degree, p.Education.Field, p.Skills.Expert, p.Skills.Proficient, p.Skills.Familiar, p.Preferences.Directions}
+	derived := p.DerivedTotals()
+	return Summary{
+		TotalYears: derived.TotalYears, ManagementYears: derived.ManagementYears,
+		Education: p.Qualifications.Education, Skills: p.Qualifications.Skills,
+		ExperienceCount: len(p.Experiences), Remote: p.Requirements.Remote,
+		SalaryMin: p.Requirements.SalaryMin, Directions: p.Search.Directions,
+	}
 }
 
 func LoadDenylist(path string) ([]string, error) {
@@ -260,26 +429,6 @@ func LintText(text string, denylist []string) error {
 		parts = append(parts, fmt.Sprintf("%s at %d:%d", finding.Kind, finding.Line, finding.Column))
 	}
 	return fmt.Errorf("PII detected: %s", strings.Join(parts, ", "))
-}
-
-func validateSkills(skills Skills) error {
-	seen := make(map[string]string)
-	for level, values := range map[string][]string{"expert": skills.Expert, "proficient": skills.Proficient, "familiar": skills.Familiar} {
-		for _, skill := range values {
-			key := strings.ToLower(strings.TrimSpace(skill))
-			if key == "" {
-				return fmt.Errorf("profile: %s skill must not be empty", level)
-			}
-			if prior, exists := seen[key]; exists {
-				return fmt.Errorf("profile: skill %q appears in both %s and %s", skill, prior, level)
-			}
-			seen[key] = level
-		}
-	}
-	if len(seen) == 0 {
-		return errors.New("profile: at least one skill is required")
-	}
-	return nil
 }
 
 func validateTextList(name string, values []string, required bool) error {

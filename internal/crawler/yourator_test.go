@@ -186,5 +186,5 @@ func threeQuerySpec() SearchSpec {
 		{Direction: "P1", Keywords: []string{"cloud", "platform"}},
 		{Direction: "P2", Keywords: []string{"backend", "Go"}},
 		{Direction: "P3", Keywords: []string{"Kubernetes", "reliability"}},
-	}, Area: []string{"Taipei"}, MaxPages: 1}
+	}, MaxPages: 1}
 }

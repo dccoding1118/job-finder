@@ -6,7 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=../lib.sh
 source "${SCRIPT_DIR}/../lib.sh"
 
-profile_source="${VERIFY_PROFILE_SOURCE:-${PROJECT_ROOT}/configs/profile.example.yaml}"
+profile_source="${VERIFY_PROFILE_SOURCE:-${PROJECT_ROOT}/scripts/verify/fixtures/profile.synthetic.yaml}"
 denylist_source="${VERIFY_DENYLIST_SOURCE:-}"
 mock_config_source="${VERIFY_MOCK_CONFIG_SOURCE:-${PROJECT_ROOT}/configs/verify.mock.yaml}"
 live_config_source="${VERIFY_LIVE_CONFIG_SOURCE:-${PROJECT_ROOT}/configs/verify.live.yaml}"

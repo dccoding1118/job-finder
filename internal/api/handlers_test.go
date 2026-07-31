@@ -29,7 +29,9 @@ type fakeProcessor struct {
 	scoreRemain   int
 	scoreLimited  bool
 	requestLetter func(int64) error
-	rescored      []int64
+	reprocessed   []int64
+	filterRemain  int
+	filterLimited bool
 }
 
 func (f *fakeProcessor) IngestList(context.Context, []crawler.RawJob) ([]pipeline.IngestResult, error) {
@@ -48,9 +50,13 @@ func (f *fakeProcessor) RequestLetter(_ context.Context, id int64) error {
 	return f.store.TransitionProcess(context.Background(), id, "letter_requested")
 }
 
-func (f *fakeProcessor) RequestRescore(ctx context.Context, id int64) error {
-	f.rescored = append(f.rescored, id)
-	return f.store.RequeueScore(ctx, id, testRevision)
+func (f *fakeProcessor) RequestReprocess(ctx context.Context, id int64) error {
+	f.reprocessed = append(f.reprocessed, id)
+	return f.store.ReprocessJob(ctx, id, store.Revisions{Filter: testRevision, Score: testRevision})
+}
+
+func (f *fakeProcessor) FilterBudgetRemaining(context.Context) (int, bool, error) {
+	return f.filterRemain, f.filterLimited, nil
 }
 
 func (f *fakeProcessor) ScoreBudgetRemaining(context.Context) (int, bool, error) {
@@ -109,7 +115,7 @@ func TestJobViewDerivesVerdictAndLetterState(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := data.SaveScore(ctx, store.ScoreInput{JobID: created.Job.ID, HardSkill: 80, Domain: 80, Seniority: 80, Condition: 80, Direction: 80, Total: 80, Reason: "fit", Runner: "claude"}); err != nil {
+	if err := data.SaveScore(ctx, store.ScoreInput{JobID: created.Job.ID, Content: 80, Benefit: 80, Bonus: 80, Industry: 80, Total: 80, Reason: "fit", Runner: "claude"}); err != nil {
 		t.Fatal(err)
 	}
 	request := authedRequest(http.MethodGet, "/api/v1/jobs/1", nil)

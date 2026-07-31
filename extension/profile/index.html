@@ -18,7 +18,7 @@
 
     <main>
       <div class="page-heading">
-        <div><p class="eyebrow">PROFILE EDITOR</p><h1>履歷與求職條件</h1><p>內容只有在你確認儲存後才會寫入本機 Profile。</p></div>
+        <div><p class="eyebrow">PROFILE EDITOR</p><h1>求職條件與履歷</h1><p>硬性條件決定「適合與否」，軟性偏好決定「推不推薦」。內容只有在你確認儲存後才會寫入本機 Profile。</p></div>
         <span id="save-state" class="state-pill">載入中</span>
       </div>
 
@@ -27,48 +27,53 @@
       <div id="loading" class="loading" role="status">正在載入 Profile…</div>
 
       <form id="profile-form" hidden novalidate>
-        <section class="form-section" aria-labelledby="summary-title">
-          <div class="section-heading"><span>01</span><div><h2 id="summary-title">專業摘要</h2><p>用去識別化方式描述定位與總年資。</p></div></div>
-          <label class="field field-wide">專業定位<textarea name="summary" data-path="summary" rows="4" required></textarea></label>
-          <label class="field">總年資<input name="years_of_experience" data-path="years_of_experience" type="number" min="0" step="1" required /><span class="suffix">年</span></label>
-        </section>
-
-        <section class="form-section" aria-labelledby="education-title">
-          <div class="section-heading"><span>02</span><div><h2 id="education-title">學歷</h2><p>只填學位與領域，不填學校名稱。</p></div></div>
-          <div class="field-grid"><label class="field">最高學位<select name="education.degree" data-path="education.degree" required><option value="">請選擇</option><option value="bachelor">學士</option><option value="master">碩士</option><option value="phd">博士</option></select></label><label class="field">領域<input name="education.field" data-path="education.field" required /></label></div>
-        </section>
-
-        <section class="form-section" aria-labelledby="experience-title">
-          <div class="section-heading"><span>03</span><div><h2 id="experience-title">工作經歷與成就</h2><p>以角色與組織類型取代真實公司名稱。</p></div></div>
-          <div id="experiences" class="item-stack"></div><button class="add-button" type="button" data-add="experience">＋ 新增經歷</button>
-        </section>
-
-        <section class="form-section" aria-labelledby="skills-title">
-          <div class="section-heading"><span>04</span><div><h2 id="skills-title">技能與證照</h2><p>技能分級會成為求職信的誠實白名單。</p></div></div>
-          <div class="three-columns"><div><h3>專家</h3><div id="skills-expert" class="compact-list"></div><button class="text-button" type="button" data-add-list="skills.expert">＋ 新增</button></div><div><h3>熟練</h3><div id="skills-proficient" class="compact-list"></div><button class="text-button" type="button" data-add-list="skills.proficient">＋ 新增</button></div><div><h3>了解</h3><div id="skills-familiar" class="compact-list"></div><button class="text-button" type="button" data-add-list="skills.familiar">＋ 新增</button></div></div>
-          <div class="subsection"><div class="subheading"><h3>證照</h3><button class="text-button" type="button" data-add="certification">＋ 新增證照</button></div><div id="certifications" class="item-stack"></div></div>
-        </section>
-
-        <section class="form-section" aria-labelledby="preferences-title">
-          <div class="section-heading"><span>05</span><div><h2 id="preferences-title">求職方向與條件</h2><p>薪資只保存在本機 Profile，不會顯示於系統卡片。</p></div></div>
-          <div class="field-grid"><label class="field">月薪下限<input name="preferences.salary_min" data-path="preferences.salary_min" type="number" min="0" step="1" required /></label><label class="field">月薪目標<input name="preferences.salary_target" data-path="preferences.salary_target" type="number" min="0" step="1" required /></label><label class="field">遠端意願<select name="preferences.remote" data-path="preferences.remote" required><option value="">請選擇</option><option value="required">必要</option><option value="preferred">優先</option><option value="ok">可接受</option></select></label></div>
-          <div class="subsection"><div class="subheading"><h3>可接受地點</h3><button class="text-button" type="button" data-add-list="preferences.locations">＋ 新增</button></div><div id="locations" class="compact-list"></div></div>
+        <section class="form-section" aria-labelledby="search-title">
+          <div class="section-heading"><span>01</span><div><h2 id="search-title">搜尋條件</h2><p>要往哪些方向找職缺；只用於決定收集範圍，不參與篩選也不參與評分。</p></div></div>
           <div class="subsection"><div class="subheading"><h3>求職方向</h3><button class="text-button" type="button" data-add="direction">＋ 新增方向</button></div><div id="directions" class="item-stack"></div></div>
         </section>
 
-        <section class="form-section" aria-labelledby="screening-title">
-          <div class="section-heading"><span>06</span><div><h2 id="screening-title">產業避開與條件篩選</h2><p>每項條件皆以包含任一文字判定。</p></div></div>
+        <section class="form-section" aria-labelledby="requirements-title">
+          <div class="section-heading"><span>02</span><div><h2 id="requirements-title">硬性條件</h2><p>不符合就判定為不適合，不是扣分。資訊不足時一律歸「待看」，不會直接淘汰。</p></div></div>
+          <div class="field-grid">
+            <label class="field">月薪下限<input name="requirements.salary_min" data-path="requirements.salary_min" type="number" min="0" step="1" required /></label>
+            <label class="field">遠端意願<select name="requirements.remote" data-path="requirements.remote" required><option value="">請選擇</option><option value="required">必須遠端</option><option value="preferred">偏好遠端</option><option value="acceptable">都可以</option><option value="rejected">不要遠端</option></select></label>
+          </div>
+          <div class="subsection"><div class="subheading"><h3>可通勤地區</h3><button class="text-button" type="button" data-add-list="requirements.locations">＋ 新增地區</button></div><div id="requirement-locations" class="compact-list"></div><p class="hint">地區是唯一的一份設定，同時決定要找哪裡的職缺與哪些算不適合。「全台」代表不限台灣的縣市但不含海外；不新增任何地區代表完全不限地區。</p></div>
           <div class="list-grid">
-            <div><h3>避開產業／型態</h3><div id="industry-avoid" class="compact-list"></div><button class="text-button" type="button" data-add-list="preferences.industry_avoid">＋ 新增</button></div>
-            <div><h3>排除職稱關鍵字</h3><div id="exclude-title" class="compact-list"></div><button class="text-button" type="button" data-add-list="preferences.screening.exclude_title_keywords">＋ 新增</button></div>
-            <div><h3>排除內容關鍵字</h3><div id="exclude-description" class="compact-list"></div><button class="text-button" type="button" data-add-list="preferences.screening.exclude_description_keywords">＋ 新增</button></div>
-            <div><h3>至少命中一項</h3><div id="require-any" class="compact-list"></div><button class="text-button" type="button" data-add-list="preferences.screening.require_any_keywords">＋ 新增</button></div>
-            <div><h3>排除公司文字</h3><div id="exclude-companies" class="compact-list"></div><button class="text-button" type="button" data-add-list="preferences.screening.exclude_companies">＋ 新增</button></div>
+            <div><h3>工作型態</h3><fieldset id="employment-types" class="option-group"></fieldset><p class="hint">不勾選代表不限型態。</p></div>
+            <div><h3>排除產業</h3><div id="industry-avoid" class="compact-list"></div><button class="text-button" type="button" data-add-list="requirements.industry_avoid">＋ 新增</button></div>
+            <div><h3>排除職稱關鍵字</h3><div id="exclude-title" class="compact-list"></div><button class="text-button" type="button" data-add-list="requirements.exclude_title_keywords">＋ 新增</button></div>
+            <div><h3>排除內文關鍵字</h3><div id="exclude-description" class="compact-list"></div><button class="text-button" type="button" data-add-list="requirements.exclude_description_keywords">＋ 新增</button></div>
+            <div><h3>排除公司文字</h3><div id="exclude-companies" class="compact-list"></div><button class="text-button" type="button" data-add-list="requirements.exclude_companies">＋ 新增</button></div>
           </div>
         </section>
 
+        <section class="form-section" aria-labelledby="intents-title">
+          <div class="section-heading"><span>03</span><div><h2 id="intents-title">軟性偏好</h2><p>決定通過篩選後的分數高低。想做與不想做的內容都要寫：只寫想做的，做過但不想再做的工作只會被加分。</p></div></div>
+          <label class="field">月薪目標<input name="intents.salary_target" data-path="intents.salary_target" type="number" min="0" step="1" required /></label>
+          <div class="list-grid">
+            <div><h3>想做的工作內容</h3><div id="content-likes" class="compact-list"></div><button class="text-button" type="button" data-add-list="intents.content_likes">＋ 新增</button></div>
+            <div><h3>不想做的工作內容</h3><div id="content-dislikes" class="compact-list"></div><button class="text-button" type="button" data-add-list="intents.content_dislikes">＋ 新增</button></div>
+            <div><h3>期許發展的產業</h3><div id="industry-interests" class="compact-list"></div><button class="text-button" type="button" data-add-list="intents.industry_interests">＋ 新增</button></div>
+          </div>
+        </section>
+
+        <section class="form-section" aria-labelledby="experience-title">
+          <div class="section-heading"><span>04</span><div><h2 id="experience-title">工作經歷</h2><p>一份工作一列。產業、年資與是否管理職供硬性條件加總；角色與量化成就供求職信取材。</p></div></div>
+          <p id="derived-summary" class="hint" role="status">年資加總：—</p>
+          <div id="experiences" class="item-stack"></div><button class="add-button" type="button" data-add="experience">＋ 新增經歷</button>
+        </section>
+
+        <section class="form-section" aria-labelledby="qualifications-title">
+          <div class="section-heading"><span>05</span><div><h2 id="qualifications-title">資格</h2><p>學歷、技能、證照與語言同時服務硬性篩選與加分評分。技能熟練度只在這裡填一次。</p></div></div>
+          <div class="subsection"><div class="subheading"><h3>學歷</h3><button class="text-button" type="button" data-add="education">＋ 新增學歷</button></div><div id="education" class="item-stack"></div></div>
+          <div class="subsection"><div class="subheading"><h3>技能總表</h3><span class="row-actions"><button class="text-button" type="button" data-load-experience-skills>↧ 從經歷載入</button><button class="text-button" type="button" data-add="skill">＋ 新增技能</button></span></div><p class="hint">「從經歷載入」會把各段經歷列到的技能補進來，預設熟練度為「專家」；已在表上的技能不會重複帶入，熟練度也不會被改寫。</p><div id="skills" class="compact-list"></div></div>
+          <div class="subsection"><div class="subheading"><h3>證照</h3><button class="text-button" type="button" data-add="certification">＋ 新增證照</button></div><div id="certifications" class="compact-list"></div></div>
+          <div class="subsection"><div class="subheading"><h3>語言</h3><button class="text-button" type="button" data-add="language">＋ 新增語言</button></div><div id="languages" class="compact-list"></div></div>
+        </section>
+
         <section class="form-section" aria-labelledby="honesty-title">
-          <div class="section-heading"><span>07</span><div><h2 id="honesty-title">誠實邊界</h2><p>明確記錄不能宣稱的能力與經驗範圍。</p></div></div>
+          <div class="section-heading"><span>06</span><div><h2 id="honesty-title">誠實邊界</h2><p>明確記錄不能宣稱的能力與經驗範圍；只供求職信使用，不影響任何判定。</p></div></div>
           <div id="honesty-bounds" class="compact-list"></div><button class="add-button" type="button" data-add-list="honesty_bounds">＋ 新增誠實邊界</button>
         </section>
 
@@ -76,7 +81,7 @@
       </form>
     </main>
 
-    <dialog id="confirm-dialog" aria-labelledby="confirm-title"><form method="dialog"><h2 id="confirm-title">確認套用新 Profile</h2><p>儲存後，新擷取的職缺會立即使用新版 Profile。</p><p class="hint">既有職缺保留原評分與 Profile 版號；需要時可從系統頁手動更新過時評分。求職信與投遞歷史不會被改寫。</p><div class="dialog-actions"><button value="cancel" class="secondary-button">返回檢查</button><button id="confirm-save" value="default" class="primary-button">確認儲存</button></div></form></dialog>
+    <dialog id="confirm-dialog" aria-labelledby="confirm-title"><form method="dialog"><h2 id="confirm-title">確認套用新 Profile</h2><p>儲存後，新擷取的職缺會立即使用新版 Profile。</p><p class="hint">既有職缺保留原判定與版號；需要時可從系統頁手動更新。改硬性條件會重新篩選，只改軟性偏好則只重新評分。求職信與投遞歷史不會被改寫。</p><div class="dialog-actions"><button value="cancel" class="secondary-button">返回檢查</button><button id="confirm-save" value="default" class="primary-button">確認儲存</button></div></form></dialog>
     <script src="profile.js"></script>
   </body>
 </html>

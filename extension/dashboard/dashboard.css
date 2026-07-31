@@ -1214,6 +1214,55 @@ svg {
   font-size: 11px;
 }
 
+.run-tokens {
+  margin-bottom: 5px;
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+
+.usage-subtitle {
+  flex: none;
+  line-height: 1.4;
+  text-align: right;
+}
+
+#usage-title {
+  white-space: nowrap;
+}
+
+.metric-value.usage-metric {
+  flex-direction: column;
+  gap: 1px;
+  height: auto;
+  min-height: 31px;
+  padding: 4px 9px;
+  line-height: 1.25;
+  white-space: nowrap;
+}
+
+.usage-day-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-muted);
+}
+
+.usage-day-heading strong {
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.usage-day-heading span {
+  color: var(--ink-muted);
+  font-size: 11px;
+  text-align: right;
+}
+
 .run-item.is-failed {
   border-color: var(--warning);
 }

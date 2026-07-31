@@ -9,7 +9,7 @@ const optionsPath = `file://${path.join(__dirname, "../../../extension/options/i
 test("Side Panel loads, filters, shows a job, persists theme, updates apply state, and starts a run", async ({ page }) => {
   await page.setViewportSize({ width: 320, height: 900 });
   await page.addInitScript(() => {
-    const jobs = [{ id: 2, source: "yourator", url: "https://www.yourator.co/jobs/2", title: "Synthetic job", company_name: "Example", salary_min: 100000, salary_max: 120000, location: "Taipei", score_total: 90.456, score_stale: true, score_profile_revision: `sha256:${"9".repeat(64)}`, evaluation_profile_revision: `sha256:${"9".repeat(64)}`, process_state: "letter_ready", apply_state: "pending", verdict: "recommended", letter_state: "ready" }];
+    const jobs = [{ id: 2, source: "yourator", url: "https://www.yourator.co/jobs/2", title: "Synthetic job", company_name: "Example", salary_min: 100000, salary_max: 120000, location: "Taipei", score_total: 90.456, score_stale: true, score_result_revision: `sha256:${"9".repeat(64)}`, filter_result_revision: `sha256:${"9".repeat(64)}`, process_state: "letter_ready", apply_state: "pending", verdict: "recommended", letter_state: "ready" }];
     window.__calls = [];
     window.__storage = { theme: "light" };
     window.chrome = {
@@ -23,14 +23,14 @@ test("Side Panel loads, filters, shows a job, persists theme, updates apply stat
         sendMessage: (request) => {
           window.__calls.push(request);
 		  if (request.type === "profile-api" && request.path === "/api/v1/profile/reprocess") return Promise.resolve({ ok: true, data: { status: "queued", activation: { requeued: 1 } } });
-		  if (request.type === "profile-api") return Promise.resolve({ ok: true, etag: '"sha256:file"', data: { status: "ready", profile_revision: `sha256:${"a".repeat(64)}`, summary: { years_of_experience: 8, skill_count: 3, experience_count: 1, directions: ["cloud architecture"] }, issues: [], reprocess_estimate: { requeued: 1, protected: 1 } } });
+		  if (request.type === "profile-api") return Promise.resolve({ ok: true, etag: '"sha256:file"', data: { status: "ready", filter_revision: `sha256:${"a".repeat(64)}`, score_revision: `sha256:${"c".repeat(64)}`, summary: { total_years: 8, skill_count: 3, experience_count: 1, directions: ["cloud architecture"] }, issues: [], reprocess_estimate: { requeued: 1, protected: 1 } } });
           if (request.type === "current-page") return Promise.resolve({ ok: true, context: { kind: "unsupported", status: "unsupported" } });
           if (request.path.startsWith("/api/v1/jobs?")) return Promise.resolve({ ok: true, data: { items: jobs } });
-          if (request.path === "/api/v1/jobs/2") return Promise.resolve({ ok: true, data: { ...jobs[0], description: "Synthetic description", score: { hard_skill: 90, domain: 90, seniority: 90, condition: 90, direction: 90, total: 90, reason: "Synthetic" }, letter: { status: "approved", content: "Synthetic letter" }, status_events: [] } });
+          if (request.path === "/api/v1/jobs/2") return Promise.resolve({ ok: true, data: { ...jobs[0], description: "Synthetic description", score: { content_fit: 90, benefit_fit: 90, bonus_fit: 90, industry_fit: 90, total: 90, reason: "Synthetic" }, letter: { status: "approved", content: "Synthetic letter" }, status_events: [] } });
           if (request.path === "/api/v1/queue") return Promise.resolve({ ok: true, data: { items: [] } });
           if (request.path === "/api/v1/runs" && request.method === "POST") return Promise.resolve({ ok: true, data: { status: "started" } });
           if (request.path === "/api/v1/runs") return Promise.resolve({ ok: true, data: { items: [{ started_at: "2026-07-16T00:00:00+08:00", finished_at: null, trigger: "manual-extension", stats: { errors: 0, fetched: 4, new: 0, queries: 3 }, verdicts: { recommended: 2, not_recommended: 1, unfit: 1 }, error: null }] } });
-          if (request.path === "/api/v1/jobs/2/apply") return Promise.resolve({ ok: true, data: { ...jobs[0], apply_state: request.body.apply_state, description: "Synthetic description", score: { hard_skill: 90, domain: 90, seniority: 90, condition: 90, direction: 90, total: 90, reason: "Synthetic" }, letter: { status: "approved", content: "Synthetic letter" }, status_events: [] } });
+          if (request.path === "/api/v1/jobs/2/apply") return Promise.resolve({ ok: true, data: { ...jobs[0], apply_state: request.body.apply_state, description: "Synthetic description", score: { content_fit: 90, benefit_fit: 90, bonus_fit: 90, industry_fit: 90, total: 90, reason: "Synthetic" }, letter: { status: "approved", content: "Synthetic letter" }, status_events: [] } });
           return Promise.resolve({ ok: true, data: jobs[0] });
         },
       },
@@ -42,7 +42,7 @@ test("Side Panel loads, filters, shows a job, persists theme, updates apply stat
   await page.getByRole("tab", { name: /推薦/ }).click();
   await page.getByRole("button", { name: /Synthetic job/ }).click();
   await expect(page.locator("#letter")).toHaveText("Synthetic letter");
-  await expect(page.locator("#score")).toContainText("技能90");
+  await expect(page.locator("#score")).toContainText("工作內容90");
   await expect(page.locator(".score-total strong")).toHaveText("90");
   await expect(page.locator("#screen-current .revision-badge.is-stale")).toContainText("待重評");
   await page.locator("#theme-toggle").click();
@@ -61,7 +61,7 @@ test("Side Panel loads, filters, shows a job, persists theme, updates apply stat
   await expect(page.getByText("每日 08:30（Asia/Taipei）")).toBeVisible();
   await page.getByRole("button", { name: "開啟連線設定" }).click();
   expect(await page.evaluate(() => window.__openedOptions)).toBeTruthy();
-  await page.getByRole("button", { name: "更新過時評分職缺" }).click();
+  await page.getByRole("button", { name: "更新過時判定職缺" }).click();
   await expect(page.locator("#runs")).toContainText("fetched=4");
   await expect(page.locator("#runs")).toContainText("recommended=2");
   await expect(page.locator("#runs")).not.toContainText("[object Object]");
@@ -73,11 +73,11 @@ test("Side Panel loads, filters, shows a job, persists theme, updates apply stat
   expect(calls.some((call) => call.path?.includes("source=yourator"))).toBeTruthy();
 });
 
-test("a scored job can be rescored on its own and the system tab shows processing progress", async ({ page }) => {
+test("a scored job can be reprocessed on its own and the system tab shows processing progress", async ({ page }) => {
   await page.setViewportSize({ width: 320, height: 900 });
   await page.addInitScript(() => {
     const scored = { id: 5, source: "yourator", url: "https://www.yourator.co/jobs/5", title: "Synthetic scored job", company_name: "Example", location: "Taipei", score_total: 55, process_state: "scored", apply_state: "pending", verdict: "not_recommended" };
-    const queued = { ...scored, process_state: "queued", verdict: "pending_score", score_total: null };
+    const screening = { ...scored, process_state: "new", verdict: "pending_screen", score_total: null };
     window.__calls = [];
     window.chrome = {
       storage: { local: {
@@ -89,10 +89,10 @@ test("a scored job can be rescored on its own and the system tab shows processin
         openOptionsPage: () => Promise.resolve(),
         sendMessage: (request) => {
           window.__calls.push(request);
-          if (request.type === "profile-api") return Promise.resolve({ ok: true, data: { status: "ready", profile_revision: `sha256:${"a".repeat(64)}`, summary: { years_of_experience: 8, skill_count: 3, experience_count: 1, directions: ["cloud architecture"] }, issues: [], reprocess_estimate: {} } });
+          if (request.type === "profile-api") return Promise.resolve({ ok: true, data: { status: "ready", filter_revision: `sha256:${"a".repeat(64)}`, score_revision: `sha256:${"c".repeat(64)}`, summary: { total_years: 8, skill_count: 3, experience_count: 1, directions: ["cloud architecture"] }, issues: [], reprocess_estimate: {} } });
           if (request.type === "current-page") return Promise.resolve({ ok: true, context: { kind: "unsupported", status: "unsupported" } });
-          if (request.path === "/api/v1/jobs/5/rescore") return Promise.resolve({ ok: true, data: { status: "queued", job: { ...queued, description: "Synthetic description", status_events: [] } } });
-          if (request.path === "/api/v1/jobs/5") return Promise.resolve({ ok: true, data: { ...scored, description: "Synthetic description", score: { hard_skill: 5, domain: 5, seniority: 5, condition: 5, direction: 5, total: 55, reason: "Synthetic" }, status_events: [] } });
+          if (request.path === "/api/v1/jobs/5/reprocess") return Promise.resolve({ ok: true, data: { status: "new", job: { ...screening, description: "Synthetic description", status_events: [] } } });
+          if (request.path === "/api/v1/jobs/5") return Promise.resolve({ ok: true, data: { ...scored, description: "Synthetic description", score: { content_fit: 5, benefit_fit: 5, bonus_fit: 5, industry_fit: 5, total: 55, reason: "Synthetic" }, status_events: [] } });
           if (request.path?.startsWith("/api/v1/jobs?")) return Promise.resolve({ ok: true, data: { items: [scored], next_cursor: null } });
           if (request.path === "/api/v1/status") return Promise.resolve({ ok: true, data: { jobs: { queued: 3, new: 1 }, score_budget: { remaining: 0, limited: true }, agent_calls: [{ id: 9, job_id: 5, role: "scorer", runner: "claude", ok: false, duration_ms: 90000, created_at: "2026-07-25T09:12:00+08:00", failure_kind: "reason_too_long", detail: "{\"reason\":\"…\"}" }, { id: 8, job_id: 5, role: "scorer", runner: "claude", ok: true, duration_ms: 8000, created_at: "2026-07-25T09:10:00+08:00" }] } });
           return Promise.resolve({ ok: true, data: { items: [], next_cursor: null } });
@@ -103,18 +103,18 @@ test("a scored job can be rescored on its own and the system tab shows processin
   await page.goto(dashboardPath);
   await page.getByRole("tab", { name: /推薦/ }).click();
   await page.getByRole("button", { name: /Synthetic scored job/ }).click();
-  await page.getByRole("button", { name: "重新評分這筆職缺" }).click();
-  await expect(page.locator("#verdict-label")).toContainText("評分中");
-  await expect(page.getByRole("button", { name: "重新評分這筆職缺" })).toHaveCount(0);
+  await page.getByRole("button", { name: "重新處理這筆職缺" }).click();
+  await expect(page.locator("#verdict-label")).toContainText("篩選中");
+  await expect(page.getByRole("button", { name: "重新處理這筆職缺" })).toHaveCount(0);
   await page.getByRole("tab", { name: "系統" }).click();
-  await expect(page.locator(".system-card").nth(2)).toContainText("待評分");
+  await expect(page.locator(".system-card").nth(2)).toContainText("評分中");
   await expect(page.locator(".system-card").nth(2)).toContainText("剩 0");
   await expect(page.locator("#agent-calls")).toContainText("理由超過 100 字上限");
   await expect(page.locator("#agent-calls")).toContainText("90s");
   await expect(page.locator("#agent-calls .run-item").nth(1)).toContainText("呼叫成功");
   await expect(page.locator("#agent-calls .run-item").nth(1)).not.toContainText("失敗");
   const calls = await page.evaluate(() => window.__calls);
-  expect(calls.some((call) => call.path === "/api/v1/jobs/5/rescore" && call.method === "POST")).toBeTruthy();
+  expect(calls.some((call) => call.path === "/api/v1/jobs/5/reprocess" && call.method === "POST")).toBeTruthy();
   expect(calls.some((call) => call.path === "/api/v1/status")).toBeTruthy();
 });
 
@@ -249,7 +249,7 @@ test("service worker forwards API requests and reads current tab context", async
   const response = await new Promise((resolve) => listener({ type: "api", path: "/api/v1/jobs", method: "GET" }, null, resolve));
   expect(response).toEqual({ ok: true, data: { items: [] } });
   expect(request).toEqual({ url: "http://127.0.0.1:18786/api/v1/jobs", options: { method: "GET", headers: { Authorization: "Bearer synthetic-token", "Content-Type": "application/json" }, body: undefined } });
-	const profileResponse = await new Promise((resolve) => listener({ type: "profile-api", path: "/api/v1/profile", method: "PUT", etag: '"sha256:old"', body: { summary: "synthetic" } }, { url: "chrome-extension://test-id/profile/index.html" }, resolve));
+	const profileResponse = await new Promise((resolve) => listener({ type: "profile-api", path: "/api/v1/profile", method: "PUT", etag: '"sha256:old"', body: { intents: { salary_target: 120000 } } }, { url: "chrome-extension://test-id/profile/index.html" }, resolve));
 	expect(profileResponse).toEqual({ ok: true, data: { items: [] }, etag: '"sha256:new"' });
 	expect(request.options.headers["If-Match"]).toBe('"sha256:old"');
 	const reprocessResponse = await new Promise((resolve) => listener({ type: "profile-api", path: "/api/v1/profile/reprocess", method: "POST" }, { url: "chrome-extension://test-id/dashboard/index.html" }, resolve));

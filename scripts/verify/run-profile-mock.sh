@@ -26,7 +26,7 @@ api_unit=''
 current_step=''
 current_title=''
 pass_count=0
-total_steps=7
+total_steps=8
 
 cleanup() {
   stop_transient_units
@@ -66,6 +66,20 @@ start_api() {
   fail 'Profile verification API did not become ready'
 }
 
+# wait_for_quiet_agents blocks until the resident worker has stopped adding Agent
+# calls, so a step that must prove "no new call" is not sampling mid-reprocess.
+wait_for_quiet_agents() {
+  local previous='' current=''
+  for _ in $(seq 1 200); do
+    "${binary}" verify snapshot --db "${profile_db}" >"${snapshot}" 2>/dev/null || true
+    current="$(assert_node agent-total "${snapshot}")"
+    [[ -n "${previous}" && "${previous}" == "${current}" ]] && return
+    previous="${current}"
+    sleep 0.3
+  done
+  fail 'the resident worker never settled'
+}
+
 etag_from_headers() {
   awk 'tolower($1) == "etag:" { gsub("\r", "", $2); print $2 }' "${headers}" | tail -1
 }
@@ -90,7 +104,7 @@ rm -f "${profile_path}" "${profile_db}.worker.lock" "${agent_signal}"
   printf '# jobfinder Profile mock E2E 驗證報告\n\n'
   printf '%s\n' "- 產生時間：$(TZ=Asia/Taipei date --iso-8601=seconds)"
   printf '%s\n' '- 模式：mock（合成 Profile；不保存 request／response body）'
-  printf '%s\n' '- 範圍：V7 S30–S36；S37 保留實際 Chrome 人工 gate'
+  printf '%s\n' '- 範圍：V7 S30–S36 與 V8 S52；S37 保留實際 Chrome 人工 gate'
 } >"${report}"
 
 start_api "$(date +%s)-$$-setup"
@@ -104,8 +118,8 @@ runs_status="$(curl --silent --output /dev/null --write-out '%{http_code}' "${au
 run_status="$(curl --silent --output "${output_file}" --write-out '%{http_code}' "${auth[@]}" -X POST "${api_url}/runs")"
 [[ "${jobs_status}" == '200' && "${runs_status}" == '200' && "${run_status}" == '409' ]] || fail 'setup mode did not keep reads available and processing paused'
 "${binary}" verify snapshot --db "${profile_db}" >"${snapshot}"
-assert_node schema-migrated "${snapshot}" || fail 'setup database did not migrate to schema v3'
-record '- Profile status=missing、ETag="missing"；Job 讀取=200、手動 run=409；worker 暫停且 schema_version=5。'
+assert_node schema-migrated "${snapshot}" || fail 'setup database did not migrate to the current schema'
+record '- Profile status=missing、ETag="missing"；Job 讀取=200、手動 run=409；worker 暫停且 schema_version=7。'
 pass_step
 
 begin_step 'S31' '建立 Profile 並立即啟用'
@@ -120,12 +134,12 @@ pass_step
 
 begin_step 'S32' '變更 Profile 後手動重處理既有 Job'
 "${binary}" verify snapshot --db "${profile_db}" >"${before_save_snapshot}"
-mise exec -- node -e 'const fs=require("fs");const [from,to]=process.argv.slice(1);const value=JSON.parse(fs.readFileSync(from));value.summary="Updated anonymous platform engineering profile";value.skills.familiar.push("Observability");fs.writeFileSync(to,JSON.stringify(value));' "${profile_json}" "${modified_json}"
+mise exec -- node -e 'const fs=require("fs");const [from,to]=process.argv.slice(1);const value=JSON.parse(fs.readFileSync(from));value.qualifications.certifications.push({name:"Cloud Architect",status:"renewing"});fs.writeFileSync(to,JSON.stringify(value));' "${profile_json}" "${modified_json}"
 change_status="$(curl --silent --dump-header "${headers}" --output "${output_file}" --write-out '%{http_code}' "${auth[@]}" -X PUT -H "If-Match: ${etag}" --data-binary "@${modified_json}" "${api_url}/profile")"
 [[ "${change_status}" == '200' ]] || fail "Profile save returned HTTP ${change_status}"
 assert_node profile-response "${output_file}" change || fail 'Profile save response is invalid'
 etag="$(etag_from_headers)"
-revision="$(mise exec -- node -e 'const fs=require("fs");process.stdout.write(JSON.parse(fs.readFileSync(process.argv[1])).profile_revision)' "${output_file}")"
+revision="$(mise exec -- node -e 'const fs=require("fs");process.stdout.write(JSON.parse(fs.readFileSync(process.argv[1])).filter_revision)' "${output_file}")"
 "${binary}" verify snapshot --db "${profile_db}" >"${snapshot}"
 cmp -s "${before_save_snapshot}" "${snapshot}" || fail 'Profile save changed existing Job revisions before explicit reprocess'
 reprocess_status="$(curl --silent --output "${output_file}" --write-out '%{http_code}' "${auth[@]}" -X POST "${api_url}/profile/reprocess")"
@@ -137,12 +151,13 @@ record '- PUT 後舊 Job 保留原 revision；POST reprocess 後 partial Job 重
 pass_step
 
 begin_step 'S33' '驗證相同語意儲存冪等'
+wait_for_quiet_agents
 calls_before="$(assert_node agent-total "${snapshot}")"
 same_status="$(curl --silent --dump-header "${headers}" --output "${output_file}" --write-out '%{http_code}' "${auth[@]}" -X PUT -H "If-Match: ${etag}" --data-binary "@${modified_json}" "${api_url}/profile")"
 [[ "${same_status}" == '200' ]] || fail "idempotent Profile save returned HTTP ${same_status}"
 assert_node profile-response "${output_file}" same || fail 'same Profile was not a semantic no-op'
 etag="$(etag_from_headers)"
-"${binary}" verify snapshot --db "${profile_db}" >"${snapshot}"
+wait_for_quiet_agents
 calls_after="$(assert_node agent-total "${snapshot}")"
 [[ "${calls_before}" == "${calls_after}" ]] || fail 'same Profile increased Agent calls'
 record '- revision 不變、semantic_changed=false，未觸發重新處理且 Agent 呼叫數未增加。'
@@ -158,7 +173,7 @@ grep -Fq 'profile_conflict' "${output_file}" || fail 'conflict response did not 
 record '- 外部修改精確 bytes 後，舊 ETag 儲存=412；磁碟內容未被覆蓋。'
 pass_step
 
-sed -i 's/max_score_per_day: 3/max_score_per_day: 100/' "${profile_config}"
+sed -i 's/max_score_per_day: 8/max_score_per_day: 100/' "${profile_config}"
 rm -f "${agent_signal}"
 start_api "$(date +%s)-$$-race" '2s'
 curl --silent --dump-header "${headers}" --output "${output_file}" "${auth[@]}" "${api_url}/profile"
@@ -166,10 +181,10 @@ etag="$(etag_from_headers)"
 
 begin_step 'S35' '驗證 unknown field 與 PII 安全拒絕'
 before_invalid_hash="$(sha256sum "${profile_path}" | awk '{print $1}')"
-mise exec -- node -e 'const fs=require("fs");const [from,to,kind]=process.argv.slice(1);const value=JSON.parse(fs.readFileSync(from));if(kind==="unknown")value.unknown_field=true;else value.summary="synthetic@example.invalid";fs.writeFileSync(to,JSON.stringify(value));' "${modified_json}" "${invalid_json}" unknown
+mise exec -- node -e 'const fs=require("fs");const [from,to,kind]=process.argv.slice(1);const value=JSON.parse(fs.readFileSync(from));if(kind==="unknown")value.unknown_field=true;else value.honesty_bounds.push("synthetic@example.invalid");fs.writeFileSync(to,JSON.stringify(value));' "${modified_json}" "${invalid_json}" unknown
 unknown_status="$(curl --silent --output "${output_file}" --write-out '%{http_code}' "${auth[@]}" -X PUT -H "If-Match: ${etag}" --data-binary "@${invalid_json}" "${api_url}/profile")"
 [[ "${unknown_status}" == '422' ]] || fail "unknown field returned HTTP ${unknown_status}"
-mise exec -- node -e 'const fs=require("fs");const [from,to]=process.argv.slice(1);const value=JSON.parse(fs.readFileSync(from));value.summary="synthetic@example.invalid";fs.writeFileSync(to,JSON.stringify(value));' "${modified_json}" "${invalid_json}"
+mise exec -- node -e 'const fs=require("fs");const [from,to]=process.argv.slice(1);const value=JSON.parse(fs.readFileSync(from));value.honesty_bounds.push("synthetic@example.invalid");fs.writeFileSync(to,JSON.stringify(value));' "${modified_json}" "${invalid_json}"
 pii_status="$(curl --silent --output "${output_file}" --write-out '%{http_code}' "${auth[@]}" -X PUT -H "If-Match: ${etag}" --data-binary "@${invalid_json}" "${api_url}/profile")"
 [[ "${pii_status}" == '422' ]] || fail "synthetic PII returned HTTP ${pii_status}"
 grep -Fq 'profile_invalid' "${output_file}" || fail 'invalid Profile response did not use the safe error code'
@@ -179,12 +194,20 @@ record '- unknown field 與合成 PII 均回 422 safe issues；回應不含命�
 pass_step
 
 begin_step 'S36' '驗證 in-flight Score 的 revision CAS'
+# The worker only holds a score in flight if something is waiting to be scored,
+# so requeue first and let the delayed fake scorer pick that job up.
+mise exec -- node -e 'const fs=require("fs");const [from,to]=process.argv.slice(1);const value=JSON.parse(fs.readFileSync(from));value.intents.industry_interests.push("platform tooling");fs.writeFileSync(to,JSON.stringify(value));' "${modified_json}" "${race_json}"
+requeue_status="$(curl --silent --dump-header "${headers}" --output "${output_file}" --write-out '%{http_code}' "${auth[@]}" -X PUT -H "If-Match: ${etag}" --data-binary "@${race_json}" "${api_url}/profile")"
+[[ "${requeue_status}" == '200' ]] || fail "score-gate Profile update returned HTTP ${requeue_status}"
+etag="$(etag_from_headers)"
+curl --fail --silent --output /dev/null "${auth[@]}" -X POST "${api_url}/profile/reprocess" || fail 'requeue for the in-flight race failed'
+cp "${race_json}" "${modified_json}"
 for _ in $(seq 1 100); do
   [[ -f "${agent_signal}" ]] && break
   sleep 0.1
 done
 [[ -f "${agent_signal}" ]] || fail 'delayed scorer did not start'
-mise exec -- node -e 'const fs=require("fs");const [from,to]=process.argv.slice(1);const value=JSON.parse(fs.readFileSync(from));value.honesty_bounds.push("Race verification boundary");fs.writeFileSync(to,JSON.stringify(value));' "${modified_json}" "${race_json}"
+mise exec -- node -e 'const fs=require("fs");const [from,to]=process.argv.slice(1);const value=JSON.parse(fs.readFileSync(from));value.intents.content_likes.push("Race verification interest");fs.writeFileSync(to,JSON.stringify(value));' "${modified_json}" "${race_json}"
 race_status="$(curl --silent --output "${output_file}" --write-out '%{http_code}' "${auth[@]}" -X PUT -H "If-Match: ${etag}" --data-binary "@${race_json}" "${api_url}/profile")"
 [[ "${race_status}" == '200' ]] || fail "race Profile update returned HTTP ${race_status}"
 race_reprocess_status="$(curl --silent --output "${output_file}" --write-out '%{http_code}' "${auth[@]}" -X POST "${api_url}/profile/reprocess")"
@@ -198,9 +221,28 @@ assert_node profile-race "${snapshot}" || fail 'old revision Score became curren
 record '- scorer 執行中切換 Profile：舊 Agent call 保留舊 revision；舊結果 CAS 未成為現行 Score；新 revision Score 可被查得。'
 pass_step
 
+begin_step 'S52' '只改軟規則的重跑範圍'
+curl --silent --dump-header "${headers}" --output "${output_file}" "${auth[@]}" "${api_url}/profile"
+etag="$(etag_from_headers)"
+mise exec -- node -e 'const fs=require("fs");const [from,to]=process.argv.slice(1);const value=JSON.parse(fs.readFileSync(from));value.intents.content_dislikes.push("on-call rotations without tooling");fs.writeFileSync(to,JSON.stringify(value));' "${race_json}" "${modified_json}"
+wait_for_quiet_agents
+cp "${snapshot}" "${before_save_snapshot}"
+filter_calls_before="$(assert_node agent-total "${before_save_snapshot}" filter)"
+intents_status="$(curl --silent --dump-header "${headers}" --output "${output_file}" --write-out '%{http_code}' "${auth[@]}" -X PUT -H "If-Match: ${etag}" --data-binary "@${modified_json}" "${api_url}/profile")"
+[[ "${intents_status}" == '200' ]] || fail "soft-rule-only Profile save returned HTTP ${intents_status}"
+assert_node profile-response "${output_file}" intents || fail 'a soft-rule-only change did not leave the filter revision alone'
+intents_reprocess_status="$(curl --silent --output "${output_file}" --write-out '%{http_code}' "${auth[@]}" -X POST "${api_url}/profile/reprocess")"
+[[ "${intents_reprocess_status}" == '200' ]] || fail "soft-rule-only reprocess returned HTTP ${intents_reprocess_status}"
+wait_for_quiet_agents
+assert_node screened-intact "${snapshot}" || fail 'a soft-rule-only reprocess disturbed a structurally rejected job'
+filter_calls_after="$(assert_node agent-total "${snapshot}" filter)"
+[[ "${filter_calls_before}" == "${filter_calls_after}" ]] || fail "soft-rule-only reprocess re-screened jobs (filter calls ${filter_calls_before} → ${filter_calls_after})"
+record "- 只修改 intents：PUT 回 filter_changed=false／score_changed=true；reprocess 後 filtered_out 職缺的狀態與逐條判定不變，role=filter 呼叫數維持 ${filter_calls_after}。"
+pass_step
+
 record ''
 record '## 結果'
 record '- 結果：PASS'
 record "- 判定 tally：PASS ${pass_count}／FAIL 0／SKIP 0（共 ${total_steps} 步）"
-record '- 案例覆蓋：V7 S30–S36；S37 仍須將同一 extension artifact 載入實際 Chrome 完成人工 gate。'
+record '- 案例覆蓋：V7 S30–S36 與 V8 S52；S37 仍須將同一 extension artifact 載入實際 Chrome 完成人工 gate。'
 printf 'profile mock verification passed: %s\n' "${report}"

@@ -14,7 +14,6 @@ type (
 	}
 	SearchSpec struct {
 		Queries  []SearchQuery
-		Area     []string
 		MaxPages int
 	}
 	RawJob struct {
@@ -42,11 +41,6 @@ func (s SearchSpec) Validate() error {
 			if strings.TrimSpace(keyword) == "" {
 				return fmt.Errorf("crawler: search terms must not be empty")
 			}
-		}
-	}
-	for _, v := range s.Area {
-		if strings.TrimSpace(v) == "" {
-			return fmt.Errorf("crawler: search terms must not be empty")
 		}
 	}
 	return nil

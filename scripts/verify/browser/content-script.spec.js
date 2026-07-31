@@ -132,6 +132,44 @@ test("notification page reads its unlabelled tags by position and format", async
   expect(remote.remote).toBe(true);
 });
 
+// Opening a job changes its verdict in another tab, so the marks a list is still
+// showing are stale the moment the user returns to it. The list asks again on
+// its own rather than waiting for a reload.
+test("returning to the list asks again instead of keeping the marks it cached", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.__calls = [];
+    // Every id is answered so nothing is retried on its own: the only thing that
+    // changes the marks in this test is the return to the foreground. The first
+    // answer is the verdict the list itself reached; every later one is what the
+    // job became while the user was reading it in another tab.
+    let captures = 0;
+    const answer = () => {
+      captures += 1;
+      const first = captures === 1 ? { external_id: "100001", verdict: "unfit", filter_hits: ["locations"] } : { external_id: "100001", verdict: "pending_screen" };
+      return { ok: true, data: { items: [first, { external_id: "100002", verdict: "pending_detail" }, { external_id: "100003", verdict: "pending_detail" }] } };
+    };
+    window.chrome = {
+      runtime: {
+        onMessage: { addListener: () => {} },
+        sendMessage: (request) => {
+          window.__calls.push(request);
+          if (request.path !== "/api/v1/capture/list") return Promise.resolve({ ok: true, data: {} });
+          return Promise.resolve(answer());
+        },
+      },
+    };
+  });
+  await serveFixture(page, "https://www.104.com.tw/**", fixture("search.html"));
+  await page.goto("https://www.104.com.tw/jobs/search/?keyword=platform");
+  await page.addScriptTag({ content: markScript });
+  await page.addScriptTag({ content: listScript });
+  await expect(page.locator(".jobfinder-mark .badge").first()).toContainText("不適合");
+
+  await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+  await expect(page.locator(".jobfinder-mark .badge").first()).toContainText("篩選中");
+  await expect(page.locator(".jobfinder-mark .badge").first()).not.toContainText("命中");
+});
+
 test("detail page exposes captured Job context without injecting an overlay", async ({ page }) => {
   await installAPI(page, {
     "/api/v1/capture/job": {
@@ -139,7 +177,7 @@ test("detail page exposes captured Job context without injecting an overlay", as
       data: {
         id: 5,
         verdict: "recommended",
-        score: { total: 88, hard_skill: 80, domain: 90, seniority: 85, condition: 88, direction: 80, reason: "合成評分理由" },
+        score: { total: 88, content_fit: 80, benefit_fit: 90, bonus_fit: 85, industry_fit: 88, reason: "合成評分理由" },
       },
     },
   });

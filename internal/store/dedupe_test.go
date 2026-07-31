@@ -218,7 +218,7 @@ func TestLinkRefusesToMergeJobsWithOutput(t *testing.T) {
 	description := "Synthetic platform work"
 	scored := insertDedupeJob(t, store, ctx, dedupeJob("104", "a1", "Backend Engineer", "Example", "台北市", "onsite", &description))
 	link(t, store, ctx, scored)
-	if err := store.SaveScore(ctx, ScoreInput{JobID: scored, HardSkill: 80, Domain: 80, Seniority: 80, Condition: 80, Direction: 80, Total: 80, Reason: "synthetic", Runner: "claude"}); err != nil {
+	if err := store.SaveScore(ctx, ScoreInput{JobID: scored, Content: 80, Benefit: 80, Bonus: 80, Industry: 80, Total: 80, Reason: "synthetic", Runner: "claude"}); err != nil {
 		t.Fatal(err)
 	}
 	other := insertDedupeJob(t, store, ctx, dedupeJob("cake", "c1", "Backend Engineer", "Example", "台北市", "onsite", nil))
@@ -458,13 +458,13 @@ func TestMigrationFromVersionThreeGroupsExistingJobs(t *testing.T) {
 	ctx := context.Background()
 	description := "Synthetic platform work"
 	jobID := insertDedupeJob(t, created, ctx, dedupeJob("104", "a1", "Backend Engineer", "Example", "台北市", "onsite", &description))
-	for _, statement := range []string{
+	statements := append([]string{
 		"DROP TABLE job_dupe_candidates",
 		"DROP INDEX jobs_group_idx",
 		"ALTER TABLE jobs DROP COLUMN group_id",
 		"DROP TABLE job_groups",
-		"PRAGMA user_version = 3",
-	} {
+	}, rewindRevisionSchema(true)...)
+	for _, statement := range append(statements, "PRAGMA user_version = 3") {
 		if _, err := created.db.ExecContext(ctx, statement); err != nil {
 			t.Fatalf("prepare v3 database: %v", err)
 		}

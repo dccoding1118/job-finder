@@ -247,7 +247,7 @@ func TestForeignKeysAndRunAndAgentValidation(t *testing.T) {
 	store := openTestStore(t, filepath.Join(t.TempDir(), "jobs.db"))
 	defer closeTestStore(t, store)
 	ctx := context.Background()
-	if err := store.SaveScore(ctx, ScoreInput{JobID: 999, HardSkill: 1, Domain: 1, Seniority: 1, Condition: 1, Direction: 1, Runner: "claude"}); err == nil {
+	if err := store.SaveScore(ctx, ScoreInput{JobID: 999, Content: 1, Benefit: 1, Bonus: 1, Industry: 1, Runner: "claude"}); err == nil {
 		t.Fatal("score for unknown job succeeded")
 	}
 	runID, err := store.StartRun(ctx, RunTriggerManualCLI)

@@ -98,7 +98,7 @@ func TestJobsListIncludesLatestScoreAndSourceFilter(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if scoreErr := data.SaveScore(context.Background(), store.ScoreInput{JobID: created.Job.ID, HardSkill: 80, Domain: 80, Seniority: 80, Condition: 80, Direction: 80, Total: 80, Reason: "Synthetic", Runner: "claude"}); scoreErr != nil {
+	if scoreErr := data.SaveScore(context.Background(), store.ScoreInput{JobID: created.Job.ID, Content: 80, Benefit: 80, Bonus: 80, Industry: 80, Total: 80, Reason: "Synthetic", Runner: "claude"}); scoreErr != nil {
 		t.Fatal(scoreErr)
 	}
 	server, err := New(Config{Addr: "127.0.0.1:0", Token: "test-token", ExtensionOrigin: "chrome-extension://test-id"}, data, nil, nil)

@@ -159,5 +159,15 @@
 
   const observer = new MutationObserver(() => harvest());
   observer.observe(document.body, { childList: true, subtree: true });
+  // Opening a job changes its verdict, and that happens in another tab: the
+  // cached decisions of this list are stale the moment the user comes back. They
+  // are dropped on return so the marks are asked for again — a job that is
+  // already known is only read, never re-screened, so this costs no Agent call.
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState !== "visible") return;
+    decisions.clear();
+    attempts.clear();
+    harvest();
+  });
   harvest();
 })();

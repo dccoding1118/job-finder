@@ -14,7 +14,8 @@ CREATE TABLE IF NOT EXISTS jobs (
     content_hash TEXT,
     process_state TEXT NOT NULL,
     filter_hits TEXT,
-    profile_revision TEXT,
+    filter_revision TEXT,
+    score_revision TEXT,
     apply_state TEXT,
     group_id INTEGER REFERENCES job_groups(id),
     discovered_by_run_id INTEGER REFERENCES runs(id),
@@ -32,17 +33,29 @@ CREATE INDEX IF NOT EXISTS jobs_group_idx ON jobs(group_id);
 CREATE TABLE IF NOT EXISTS scores (
     id INTEGER PRIMARY KEY,
     job_id INTEGER NOT NULL REFERENCES jobs(id),
-    dim_hard_skill INTEGER NOT NULL,
-    dim_domain INTEGER NOT NULL,
-    dim_seniority INTEGER NOT NULL,
-    dim_condition INTEGER NOT NULL,
-    dim_direction INTEGER NOT NULL,
+    dim_content INTEGER NOT NULL,
+    dim_benefit INTEGER NOT NULL,
+    dim_bonus INTEGER NOT NULL,
+    dim_industry INTEGER NOT NULL,
     total REAL NOT NULL,
     reason TEXT NOT NULL,
     runner TEXT NOT NULL,
-    profile_revision TEXT,
+    score_revision TEXT,
     created_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS filter_results (
+    id INTEGER PRIMARY KEY,
+    job_id INTEGER NOT NULL REFERENCES jobs(id),
+    outcome TEXT NOT NULL,
+    conditions TEXT NOT NULL,
+    stage TEXT NOT NULL,
+    runner TEXT,
+    filter_revision TEXT,
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS filter_results_job_idx ON filter_results(job_id);
 
 CREATE TABLE IF NOT EXISTS letters (
     id INTEGER PRIMARY KEY,
@@ -53,7 +66,8 @@ CREATE TABLE IF NOT EXISTS letters (
     review_log TEXT NOT NULL,
     runner_draft TEXT NOT NULL,
     runner_review TEXT NOT NULL,
-    profile_revision TEXT,
+    filter_revision TEXT,
+    score_revision TEXT,
     created_at TEXT NOT NULL
 );
 
@@ -81,15 +95,24 @@ CREATE TABLE IF NOT EXISTS agent_calls (
     job_id INTEGER REFERENCES jobs(id),
     role TEXT NOT NULL,
     runner TEXT NOT NULL,
+    model TEXT,
     input TEXT NOT NULL,
     output TEXT NOT NULL,
     ok INTEGER NOT NULL,
     duration_ms INTEGER NOT NULL,
-    profile_revision TEXT,
+    input_tokens INTEGER NOT NULL DEFAULT 0,
+    output_tokens INTEGER NOT NULL DEFAULT 0,
+    cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+    cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+    reasoning_tokens INTEGER NOT NULL DEFAULT 0,
+    cost_usd REAL NOT NULL DEFAULT 0,
+    filter_revision TEXT,
+    score_revision TEXT,
     created_at TEXT NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS agent_calls_role_created_idx ON agent_calls(role, created_at);
+CREATE INDEX IF NOT EXISTS agent_calls_runner_model_created_idx ON agent_calls(runner, model, created_at);
 
 CREATE TABLE IF NOT EXISTS job_groups (
     id INTEGER PRIMARY KEY,

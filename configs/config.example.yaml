@@ -21,14 +21,21 @@ dedupe:
     - cake
     - yourator
 scoring:
-  hard_skill_weight: 0.30
-  domain_weight: 0.15
-  seniority_weight: 0.15
-  condition_weight: 0.20
-  direction_weight: 0.20
+  content_fit_weight: 0.50
+  benefit_fit_weight: 0.20
+  bonus_fit_weight: 0.15
+  industry_fit_weight: 0.15
   threshold: 75
+  baseline: 75
 llm:
   roles:
+    filter:
+      primary:
+        agent: claude
+        model: claude-sonnet-5
+      fallback:
+        agent: codex
+        model: gpt-5.6-terra
     scorer:
       primary:
         agent: claude
@@ -50,6 +57,7 @@ llm:
       fallback:
         agent: claude
         model: claude-sonnet-5
+  max_filter_per_day: 60
   max_score_per_day: 30
   max_letter_per_day: 10
   max_letter_length: 600
@@ -57,6 +65,9 @@ llm:
   timeout: 5m
 worker:
   scan_interval: 5s
+  # true stops the resident worker consuming any stage: collection continues and
+  # every job rests at `new` until `run --stage filter|score` is driven by hand.
+  paused: false
 api:
   addr: 127.0.0.1:8686
   token: CHANGE_ME

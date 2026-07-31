@@ -1,0 +1,78 @@
+# The mock answer key's Profile, in the same synthetic content as
+# profile.synthetic.json so the CLI trip and the V7 API trip screen and score
+# identically. Values here are fixed by docs/verify.md §3.4; changing one
+# changes the expected outcome of the whole mock run.
+search:
+  directions:
+    - key: P1
+      title: cloud architecture
+      keywords:
+        - cloud
+        - platform
+    - key: P2
+      title: backend engineering
+      keywords:
+        - backend
+        - Go
+    - key: P3
+      title: platform reliability
+      keywords:
+        - Kubernetes
+        - reliability
+requirements:
+  salary_min: 90000
+  locations:
+    - taipei
+  remote: acceptable
+  employment_types: []
+  industry_avoid: []
+  exclude_title_keywords:
+    - intern
+  exclude_description_keywords: []
+  exclude_companies: []
+intents:
+  salary_target: 120000
+  content_likes:
+    - building reliable cloud services
+  content_dislikes:
+    - manual release procedures
+  industry_interests:
+    - developer tooling
+experiences:
+  - industry: technology services
+    years: 4
+    is_management: false
+    exclude_from_totals: false
+    skills:
+      - Go
+      - Java
+    org_type: technology provider
+    role: backend engineer
+    achievements:
+      - Improved delivery reliability
+  - industry: developer tooling
+    years: 4
+    is_management: false
+    exclude_from_totals: false
+    skills:
+      - Kubernetes
+    org_type: technology provider
+    role: platform engineer
+    achievements:
+      - Reduced release lead time
+qualifications:
+  education:
+    - level: master
+      field: computer science
+      status: graduated
+  skills:
+    - name: Java
+      level: expert
+    - name: Go
+      level: proficient
+    - name: Kubernetes
+      level: familiar
+  certifications: []
+  languages: []
+honesty_bounds:
+  - Platform configuration experience is not operations ownership.

@@ -59,7 +59,7 @@
 
 兩個列表頁都有 `.info-description` 區塊，但**一律不得映射至 `description`**，理由不同且都是硬性的：
 
-- **搜尋頁**：該區塊是繞著關鍵字命中處拼接的**摘要片段**（sample 佐證：內文自第 1 點跳至第 3 點、結尾斷在半句中間；同頁無關鍵字命中的廣告職缺則回完整內文）。片段未出現某詞**不表示 JD 無該詞**，據以執行 `exclude_description_keywords`／`require_any_keywords` 會產生假淘汰。
+- **搜尋頁**：該區塊是繞著關鍵字命中處拼接的**摘要片段**（sample 佐證：內文自第 1 點跳至第 3 點、結尾斷在半句中間；同頁無關鍵字命中的廣告職缺則回完整內文）。片段未出現某詞**不表示 JD 無該詞**，據以執行 `requirements.exclude_description_keywords` 會產生假淘汰。
 - **通知頁**：內容雖較完整（推測因無關鍵字搜尋而回原文），但僅涵蓋「工作內容」，缺【相關條件】【其他條件】【公司福利】三段，仍非全文。
 
 因此清單一律視為 partial，全文只來自內頁 JSON-LD（§2.3）。對應的篩選限制見 [design-pipeline](design-pipeline.md) §3。
@@ -114,7 +114,7 @@
 | 列表 | `<script id="__NEXT_DATA__" type="application/json">`（Next.js SSR 狀態）優先，過時或缺漏時退回 DOM 收割的項目陣列 |
 | 內頁 | 渲染後 DOM 的收割結果 |
 
-**巡邏 URL 實務上走 DOM 收割**：`__NEXT_DATA__` 的內嵌列表狀態只在 URL 條件僅含 `query`／`page` 時可信；帶其他搜尋條件的請求一律被 Cake 擋下（§1），因此 `ssr.search.filters` 與 URL 參數的映射無從取樣驗證，也不得據以判斷收割完整性。
+**實務上走 DOM 收割**：`__NEXT_DATA__` 的內嵌列表狀態只在 URL 條件僅含 `query`／`page` 時可信；使用者一旦在 Cake 加上其他搜尋條件即改以 DOM 收割，且帶條件的伺服器端請求一律被 Cake 擋下（§1），因此 `ssr.search.filters` 與 URL 參數的映射無從取樣驗證，也不得據以判斷收割完整性。
 
 **內頁不使用 `__NEXT_DATA__`**：Cake 的內頁不帶自己的 listing 狀態，頁面上的那份描述的是使用者進來前的列表畫面。內頁解析仍接受帶 `__NEXT_DATA__` 的擷取（見 §4.3.1 的欄位映射），但 DOM 收割優先且是插件實際採用的路徑。
 
@@ -152,7 +152,7 @@
 | `salary_min` / `salary_max` | metadata 行 | 僅解析明確的月薪區間（與列表 DOM 收割同一規則）；無命中為 NULL |
 | `remote_type` | metadata 行 | 命中部分遠端／混合語意 ⇒ `hybrid`；命中完全遠端 ⇒ `remote`；無命中 ⇒ `unknown` |
 
-metadata 的辨識規則刻意寬鬆：誤判為地點只會讓該職缺被地區條件篩選，漏判則使其停在 `unknown` 而仍可評分——後者是安全的失敗方向。
+metadata 的辨識規則刻意寬鬆：誤判為地點會讓該職缺被地區條件比對，漏判則使其停在未知地區（`location` 存 `unknown`）——未知不構成不適合，只留下未決條件，因此後者是安全的失敗方向。`location` 是必填欄位，來源未陳述地點時一律存這個哨兵值，判定端據此把地區條件判為未決而非不符。
 
 ### 4.3.1 內頁（全文，`__NEXT_DATA__`）
 
@@ -171,41 +171,19 @@ metadata 的辨識規則刻意寬鬆：誤判為地點只會讓該職缺被地�
 
 `__NEXT_DATA__` 不存在、非合法 JSON 或缺 `pageProps.job` 時回 error 而非靜默略過。`job.aasm_state` 非上架狀態者不入庫。
 
-Cake 的職缺常不自帶地點（遠端與混合型尤其如此），而地點未知會被 Profile 的地區條件淘汰，因此以刊登公司的城市補位；街道地址對篩選無用，一律不取。
+Cake 的職缺常不自帶地點（遠端與混合型尤其如此），刊登公司的城市是此時唯一被陳述過的地點，因此以它補位，讓地區條件有依據可判而不必停在未知；街道地址對篩選無用，一律不取。
 
 ## 5. 搜尋條件的生成（R2.6，各來源共用）
 
-1. **預設來源＝Profile**：由 `profile.preferences.directions[]` 展開；每個方向的 keywords 組成一次 query，每個來源每輪最多取前三個方向。全自動來源以此發送請求；半被動來源（104／Cake）以此生成供使用者開啟的巡邏 URL。不同 query 與頁面取得的資料進入同一結果池，依平台 external ID 去重；完整資料優先於 partial。地區條件取 `preferences.locations` ＋ remote 標記，映射為該平台的搜尋參數。
-2. **關鍵字以技能詞為主**：職稱與平台職務類別在台灣平台不可靠（類別錯放常見——雲端／DevOps／SRE 職缺散落於軟體、網路、MIS 工程師等類），技能詞直接命中 JD 內文，recall 與 precision 俱佳。展開時補同義詞（如 K8s/Kubernetes、IaC/Terraform），輔以少量職稱變體；職務大類×薪資/地區過濾僅作補刀網。
+1. **預設來源＝Profile**：由 `profile.search.directions[]` 展開；每個方向的 keywords 組成一次 query，每個來源每輪最多取前三個方向。全自動來源以此發送請求。不同 query 與頁面取得的資料進入同一結果池，依平台 external ID 去重；完整資料優先於 partial。
+2. **關鍵字以技能詞為主**：職稱與平台職務類別在台灣平台不可靠（類別錯放常見——雲端／DevOps／SRE 職缺散落於軟體、網路、MIS 工程師等類），技能詞直接命中 JD 內文，recall 與 precision 俱佳。展開時補同義詞（如 K8s/Kubernetes、IaC/Terraform），輔以少量職稱變體。
 
    104 的 keyword **確實涵蓋工作內容欄位**，非僅比對職稱：`keyword=gcp` 的結果中，命中標記（`.text-highlight`）同時出現在職稱與工作內容摘要內，且有職稱不含該詞、僅內文命中而入列的職缺。技能詞主網成立。
 
-3. **104 搜尋 URL 參數**（供 `queries urls` 生成）：
-
-   | 參數 | 意義 |
-   |---|---|
-   | `keyword` | 關鍵字（涵蓋職稱與工作內容） |
-   | `area` | 地區代碼，逗號分隔（如 `6001001000` 台北市） |
-   | `jobcat` | 職務類別代碼（補刀網用） |
-   | `order` / `mode` / `page` | 排序（`15`＝最近更新）／模式／頁次 |
-   | `remoteWork` | 遠端（`1,2`） |
-   | `jobexp` / `edu` / `sr` | 經歷／學歷／薪資級距 |
-4. **設定檔覆寫/增補**：`sources.<name>.queries[]` 有值時整組取代自動展開；`extra_queries[]` 為增補。平台專屬參數在 adapter／URL 生成器內映射。
-4. **Cake 搜尋 URL 參數**（供 `queries urls` 生成）：
-
-   | 參數 | 意義 |
-   |---|---|
-   | `query` | 關鍵字 |
-   | `location_list[]` | 地區（如 `Taipei City, Taiwan`） |
-   | `profession[]` | 職類代碼（如 `it_back-end-engineer`，補刀網用） |
-   | `page` | 頁次 |
-
-   這些 URL **只供使用者在自己的瀏覽器開啟**；伺服器端請求同一組 URL 會被人機驗證擋下（§1），本模組不發送。
-
-5. **CLI**：
-   - `jobfinder queries show`：列印各來源實際展開後的 query 清單，供調參確認。
-   - `jobfinder queries urls --source 104|cake`：生成該平台的巡邏搜尋 URL 清單（技能詞主網＋大類補刀網），供使用者點開、插件收割；104 的同組條件另供使用者註冊職缺通知（通知頁同樣以插件列表模式收割）。
-6. 與條件篩選的分工：搜尋條件只縮小抓取範圍；精準淘汰交給 pipeline 依 Profile 套用的排除條件（見 [design-pipeline](design-pipeline.md) §3）。不做全量抓取。
+3. **半被動來源不生成搜尋 URL**：104／Cake 的搜尋條件由使用者在該平台自己設定，插件收割其瀏覽到的頁面（§1、[design-extension](design-extension.md)）；系統不代為組裝搜尋連結。地區與關鍵字對這兩個來源只影響判定，不影響收集範圍。
+4. **設定檔覆寫/增補**：`sources.<name>.queries[]` 有值時整組取代自動展開；`extra_queries[]` 為增補。平台專屬參數在 adapter 內映射。
+5. **CLI**：`jobfinder queries show` 列印各來源實際展開後的 query 清單，供調參確認；只列印，不發送請求。
+6. 與硬規則篩選的分工：搜尋條件只縮小全自動來源的抓取範圍；精準淘汰交給 pipeline 依 Profile 套用的排除條件（見 [design-pipeline](design-pipeline.md) §3）。不做全量抓取。
 
 ## 6. 禮貌抓取與韌性（全自動來源）
 

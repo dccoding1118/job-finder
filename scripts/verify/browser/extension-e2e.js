@@ -61,11 +61,17 @@ async function main() {
     result.options_token_cleared = await options.locator("#token").inputValue() === "";
 
     const dashboard = await context.newPage();
+    // A page-level exception leaves the status line untouched, which reads as a
+    // connection timeout and hides the actual cause; surface it verbatim.
+    const pageErrors = [];
+    dashboard.on("pageerror", (error) => pageErrors.push(String(error)));
+    dashboard.on("console", (message) => { if (message.type() === "error") pageErrors.push(message.text()); });
     await dashboard.goto(`chrome-extension://${id}/dashboard/index.html`);
     try {
       await dashboard.getByRole("status").filter({ hasText: "已連線至 jobfinder API" }).waitFor();
     } catch (err) {
       console.error(`dashboard_status=${await dashboard.locator("#status").textContent()}`);
+      console.error(`dashboard_errors=${pageErrors.join(" | ")}`);
       throw err;
     }
     result.connected = true;
@@ -98,7 +104,7 @@ async function main() {
     await dashboard.locator("#letter").waitFor();
     await dashboard.locator("#score").waitFor();
     const scoreText = await dashboard.locator("#score").textContent();
-    if (!["技能", "領域", "資歷", "條件", "方向"].every((label) => scoreText.includes(label)) || (scoreText.match(/90/g) || []).length < 5) {
+    if (!["工作內容", "待遇與制度", "加分條件", "產業"].every((label) => scoreText.includes(label)) || (scoreText.match(/90/g) || []).length < 4) {
       throw new Error("dashboard score dimensions are invalid");
     }
     if (!(await dashboard.locator("#verdict-label").textContent()).includes("推薦")) throw new Error("dashboard verdict label is invalid");

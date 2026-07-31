@@ -85,7 +85,7 @@ fi
 if ! "${binary}" run --config "${config}" --stage filter --limit 1 >"${output_file}" 2>&1; then
 	fail 'role-specific agent/model config did not pass strict parsing and Runner construction'
 fi
-grep -Fqx 'filtered: 0' "${output_file}" || fail 'cost-free config preflight produced unexpected work'
+grep -Fqx 'filtered_out: 0' "${output_file}" || fail 'cost-free config preflight produced unexpected work'
 record "- artifact：binary_sha256=${actual_checksum}；Git dirty 狀態不影響執行。"
 record '- 六個 role endpoints 均明確指定 agent 與 model，並在外部呼叫前通過 strict config 與 Runner 建構。'
 pass_step
@@ -110,7 +110,7 @@ pass_step
 
 begin_step '04' 'Profile 條件篩選'
 "${binary}" run --config "${config}" --stage filter --limit 1000 >"${output_file}" 2>&1 || fail 'live filter stage did not complete'
-grep -Eq '^filtered: [0-9]+$' "${output_file}" || fail 'live filter summary is invalid'
+grep -Eq '^filtered_out: [0-9]+$' "${output_file}" || fail 'live filter summary is invalid'
 record '- 所有已抓取 Job 已依匿名 Profile 進入 filtered_out 或 queued。'
 pass_step
 

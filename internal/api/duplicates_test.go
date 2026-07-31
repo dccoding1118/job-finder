@@ -166,8 +166,8 @@ func TestDuplicateDecisionRoutes(t *testing.T) {
 		t.Fatalf("second unmerge status = %d, want 409", again.Code)
 	}
 	// None of these decisions may reach the pipeline: they are store transactions.
-	if len(processor.requested) != 0 || len(processor.rescored) != 0 {
-		t.Fatalf("duplicate decisions reached the pipeline: %v %v", processor.requested, processor.rescored)
+	if len(processor.requested) != 0 || len(processor.reprocessed) != 0 {
+		t.Fatalf("duplicate decisions reached the pipeline: %v %v", processor.requested, processor.reprocessed)
 	}
 }
 
