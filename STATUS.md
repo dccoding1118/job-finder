@@ -8,12 +8,10 @@
 
 ## §2 未完成任務
 
-- [ ] Token 用量追蹤（每次 Agent 呼叫的 input/output/cache/reasoning tokens 與成本，log＋系統頁每日統計、台灣時間 00:00 重置、依 runner／model 分開）：程式（`internal/agents`、`internal/store`、`internal/api`、`extension/dashboard/dashboard.js`）與單元測試皆已完成，`mise run fmt/lint/test` 與 `mise run e2e-mock` 全綠；尚未 commit／開 PR，UI 呈現未經實機瀏覽器驗收。用量資料直接解析 `claude -p --output-format json` 的 `usage`/`total_cost_usd` 與 `codex exec --json` 的 `turn.completed` 事件，非額外呼叫。
 - [ ] 補上 token 用量追蹤的 canonical 文件：schema v7（`agent_calls` 的 `model` 與六個用量欄位、`agent_calls_runner_model_created_idx`）尚未寫進 `docs/designs/design-schema.md`，`GET /api/v1/status` 的 `agent_usage_daily`／`filter_budget` 未寫進 `docs/designs/design-api.md`，系統頁每日用量呈現未寫進 `docs/designs/design-extension.md`，對應測試規格（`docs/tests/`）與驗收案例（`docs/verify.md`）亦缺。
-- [ ] 本批判定修正待上版與實機驗收：未知地區哨兵、`filtered_out` 對內容變更終局化、單筆重新處理（`POST /api/v1/jobs/{id}/reprocess` 取代 `rescore`）、清單標記快取回前景失效。程式、單元測試、Playwright 與文件（`docs/changes/change-verdict-recovery-and-location-unknown.md`）皆已完成，`mise run fmt/lint/test` 與 18 個 Playwright 案例全綠；尚未 commit／開 PR，實機 Chrome 驗收未做。
 - [ ] 清掉 `pipeline.Filter.Match`：清單標記改由 `Evaluate` ＋ `failedTexts` 決定後，`Match` 只剩 `pipeline_test.go` 呼叫，註解描述的用途也已不成立。
 - [ ] 決定「只陳述國別的地點」怎麼判：Cake 有些職缺地點只寫「台灣」，而「Taiwan／台灣」只是 `nationwide` 的別名，使用者若選的是縣市鍵就會判 `fail` → 不適合。目前維持原判準未動；要改的話應視為未決（`unknown`）而非不符。
-- [ ] 實機 Chrome 人工 gate：Profile editor 六區段新表單（含地區下拉、技能「從經歷載入」、資格三清單一項一列）、六類 verdict 與篩選逐條結論的 Side Panel 呈現、待看清單補全文。
+- [ ] 實機 Chrome 人工 gate：Profile editor 六區段新表單（含地區下拉、技能「從經歷載入」、資格三清單一項一列）、六類 verdict 與篩選逐條結論的 Side Panel 呈現、待看清單補全文、系統頁每次呼叫的 token／費用與每日用量卡片排版。
 - [ ] 上版後首次啟動：雙 revision 的 schema 標記已升至 v5，既有職缺全部視為過時，需在系統頁手動 reprocess 一次。本機 `profile.yaml` 的地區值（台北／臺北／新北／台中／Taipei）皆在地區列舉內，載入時自動併入 `requirements.locations` 並正規化為地區鍵，無需手改。
 - [ ] 實機部署測試：清空既有 JD 資料後重新建立，先以 `worker.paused: true` 只收集不判定，確認 Profile 欄位與內容、104／Cake 擷取正常後，改回 `paused: false` 並以 `run --stage filter/score` 批次消化（步驟見 `docs/deploy.md` §6）。
 - [ ] 補上 V6 的驗收 harness 步驟 S40–S45 與 S41b（Cake capture 測資見 `docs/verify.md` §3.3.1）。
