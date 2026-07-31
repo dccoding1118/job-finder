@@ -7,38 +7,46 @@ if (!mode || !file) throw new Error("usage: assert-positive.mjs <schema|source|s
 
 const sha256 = (value) => crypto.createHash("sha256").update(value).digest("hex");
 const readJSON = () => JSON.parse(fs.readFileSync(file, "utf8"));
+const REVISION = /^sha256:[a-f0-9]{64}$/;
+
+// The screening results table joined the schema with the split hard/soft gates,
+// so every snapshot mode checks the same nine-table contract.
+function assertSchema(data) {
+  assert.equal(data.schema_version, 7);
+  assert.equal(data.journal_mode.toLowerCase(), "wal");
+  assert.equal(data.foreign_keys, true);
+  assert.deepEqual(data.tables, ["agent_calls", "filter_results", "job_dupe_candidates", "job_groups", "jobs", "letters", "runs", "scores", "status_events"]);
+}
 
 if (mode === "schema") {
   const data = readJSON();
-  assert.equal(data.schema_version, 5);
-  assert.equal(data.journal_mode.toLowerCase(), "wal");
-  assert.equal(data.foreign_keys, true);
-  assert.deepEqual(data.tables, ["agent_calls", "job_dupe_candidates", "job_groups", "jobs", "letters", "runs", "scores", "status_events"]);
+  assertSchema(data);
   assert.deepEqual(data.jobs, []);
   process.exit(0);
 }
 
 if (mode === "schema-migrated") {
   const data = readJSON();
-  assert.equal(data.schema_version, 5);
-  assert.equal(data.journal_mode.toLowerCase(), "wal");
-  assert.equal(data.foreign_keys, true);
-  assert.deepEqual(data.tables, ["agent_calls", "job_dupe_candidates", "job_groups", "jobs", "letters", "runs", "scores", "status_events"]);
+  assertSchema(data);
   assert.ok(data.jobs.length > 0);
   process.exit(0);
 }
 
 if (mode === "agent-total") {
   const data = readJSON();
-  process.stdout.write(String((data.agent_calls || []).reduce((sum, call) => sum + call.count, 0)));
+  const calls = (data.agent_calls || []).filter(({ role }) => phase === "base" || role === phase);
+  process.stdout.write(String(calls.reduce((sum, call) => sum + call.count, 0)));
   process.exit(0);
 }
 
 if (mode === "profile-response") {
   const data = readJSON();
   assert.equal(data.status, "ready");
-  assert.match(data.profile_revision, /^sha256:[a-f0-9]{64}$/);
-  assert.equal(data.semantic_changed, phase !== "same");
+  assert.match(data.filter_revision, REVISION);
+  assert.match(data.score_revision, REVISION);
+  // A soft-rule-only edit must not disturb the screening revision.
+  if (phase === "intents") assert.deepEqual([data.filter_changed, data.score_changed], [false, true]);
+  else assert.equal(data.score_changed, phase !== "same");
   assert.equal(data.activation, undefined);
   process.exit(0);
 }
@@ -46,12 +54,14 @@ if (mode === "profile-response") {
 if (mode === "profile-reprocess-response") {
   const data = readJSON();
   assert.equal(data.status, "queued");
-  assert.match(data.profile_revision, /^sha256:[a-f0-9]{64}$/);
+  assert.match(data.filter_revision, REVISION);
+  assert.match(data.score_revision, REVISION);
   const activation = data.activation || {};
-  for (const key of ["partial_screened", "requeued", "protected", "unchanged"]) assert.ok(Number.isInteger(activation[key]) && activation[key] >= 0);
+  for (const key of ["partial_screened", "refiltered", "requeued", "protected", "unchanged"]) assert.ok(Number.isInteger(activation[key]) && activation[key] >= 0);
   if (phase === "change") {
-    assert.ok(activation.partial_screened > 0);
-    assert.ok(activation.requeued > 0);
+    // A hard-rule change sends screened jobs back through the screen itself,
+    // while letter history stays protected from any reprocess.
+    assert.ok(activation.refiltered > 0);
     assert.ok(activation.protected > 0);
   }
   process.exit(0);
@@ -59,18 +69,30 @@ if (mode === "profile-reprocess-response") {
 
 if (mode === "profile-race") {
   const data = readJSON();
-  assert.equal(data.schema_version, 5);
-  const revisions = new Set(data.agent_calls.map(({ profile_revision }) => profile_revision).filter(Boolean));
-  assert.ok(revisions.size >= 2, "agent audit did not retain multiple Profile revisions");
-  const currentScores = data.jobs.filter((job) => job.score && job.profile_revision === job.score.profile_revision);
-  assert.ok(currentScores.length > 0, "no current Score matches its Job Profile revision");
-  for (const job of currentScores) assert.match(job.profile_revision, /^sha256:[a-f0-9]{64}$/);
+  assert.equal(data.schema_version, 7);
+  const revisions = new Set(data.agent_calls.map(({ score_revision }) => score_revision).filter(Boolean));
+  assert.ok(revisions.size >= 2, "agent audit did not retain multiple score revisions");
+  const currentScores = data.jobs.filter((job) => job.score && job.score_revision === job.score.score_revision);
+  assert.ok(currentScores.length > 0, "no current Score matches its Job score revision");
+  for (const job of currentScores) assert.match(job.score_revision, REVISION);
+  process.exit(0);
+}
+
+// screened-intact asserts the jobs a soft-rule change must not touch: a
+// structurally rejected job keeps both its state and its screening record.
+if (mode === "screened-intact") {
+  const data = readJSON();
+  const rejected = data.jobs.find(({ external_id }) => external_id === "1000");
+  assert.ok(rejected, "the structurally rejected fixture is absent");
+  assert.equal(rejected.process_state, "filtered_out");
+  assert.equal(rejected.filter_outcome, "fail");
+  assert.deepEqual(rejected.filter_hits, ["exclude_title_keywords", "salary_floor"]);
   process.exit(0);
 }
 
 if (mode === "source") {
   const requests = fs.readFileSync(file, "utf8").trim().split("\n").filter(Boolean).map(JSON.parse);
-  assert.equal(requests.length, 8);
+  assert.equal(requests.length, 9);
   assert.equal(requests[0].path, "/robots.txt");
   const lists = requests.filter(({ path }) => path === "/api/v4/jobs");
   assert.equal(lists.length, 3);
@@ -80,7 +102,7 @@ if (mode === "source") {
     assert.match(list.user_agent, /^jobfinder\/1\.0/);
     assert.equal(list.referer, "");
   }
-  assert.deepEqual(requests.filter(({ path }) => path.startsWith("/jobs/")).map(({ method, path }) => ({ method, path })), [1000, 1001, 1002, 1003].map((id) => ({ method: "GET", path: `/jobs/${id}` })));
+  assert.deepEqual(requests.filter(({ path }) => path.startsWith("/jobs/")).map(({ method, path }) => ({ method, path })), [1000, 1001, 1002, 1003, 1004].map((id) => ({ method: "GET", path: `/jobs/${id}` })));
   process.exit(0);
 }
 
@@ -123,7 +145,7 @@ if (mode === "live-snapshot") {
   process.exit(0);
 }
 
-// The four synthetic fixtures. process_state and letter change with the phase;
+// The five synthetic fixtures. process_state and letter change with the phase;
 // every other field is fixed by the production adapter and fake Agent, so it is
 // asserted identically in every phase.
 const FIXTURES = {
@@ -131,39 +153,58 @@ const FIXTURES = {
   1001: { title: "Verification failure remote platform engineer", company: "Example Platform", description: "Build Go & cloud platform services", salary: [100000, 120000], remote: "remote" },
   1002: { title: "Verification ready hybrid backend engineer", company: "Example Services", description: "Build Go backend services", salary: [110000, 130000], remote: "hybrid" },
   1003: { title: "Verification low score cloud engineer", company: "Example Operations", description: "Maintain cloud operations services", salary: [90000, 100000], remote: "onsite" },
+  1004: { title: "Verification unknown salary platform engineer", company: "Example Ventures", description: "Operate cloud platform services", salary: [null, null], remote: "onsite" },
 };
 
 function assertAgentCalls(actual, expected) {
-  for (const call of actual) assert.match(call.profile_revision, /^sha256:[a-f0-9]{64}$/);
-  assert.deepEqual(actual.map(({ profile_revision: _revision, ...call }) => call), expected);
+  // Screening is audited against the filter revision and scoring against the
+  // score revision; a letter call carries both.
+  for (const call of actual) {
+    if (call.role !== "scorer") assert.match(call.filter_revision, REVISION);
+    if (call.role !== "filter") assert.match(call.score_revision, REVISION);
+  }
+  assert.deepEqual(actual.map(({ filter_revision: _f, score_revision: _s, ...call }) => call), expected);
 }
 
 // letterConsumed is true once the user has requested the two letters and the
 // letter stage has been driven; base is the pre-request state.
 function processStateOf(id, letterConsumed) {
   if (id === "1000") return "filtered_out";
-  if (id === "1003") return "scored";
+  if (id === "1003" || id === "1004") return "scored";
   if (!letterConsumed) return "shortlisted";
   return id === "1002" ? "letter_ready" : "letter_failed";
 }
 
 function transitionsOf(id, letterConsumed) {
   if (id === "1000") return ["process:->new", "process:new->filtered_out"];
-  if (id === "1003") return ["process:->new", "process:new->queued", "process:queued->scored"];
+  if (id === "1003" || id === "1004") return ["process:->new", "process:new->queued", "process:queued->scored"];
   const base = ["process:->new", "process:new->queued", "process:queued->shortlisted"];
   if (!letterConsumed) return base;
   if (id === "1002") return [...base, "process:shortlisted->letter_requested", "process:letter_requested->letter_ready", "apply:->pending"];
   return [...base, "process:shortlisted->letter_requested", "process:letter_requested->letter_failed"];
 }
 
+// The structural rules the Profile actually activates, in the order the screen
+// evaluates them. Their verdicts are the whole of a structurally rejected job's
+// screening record, and the prefix of every semantically screened one.
+const STRUCTURAL_RULES = ["exclude_title_keywords", "exclude_companies", "locations", "remote", "salary_floor", "exclude_description_keywords"];
+
+function structuralVerdicts(conditions) {
+  const structural = conditions.filter(({ category }) => category === "other");
+  const rules = structural.map(({ rule }) => rule);
+  // A rule with nothing to compare against is skipped rather than recorded — a
+  // fully remote job has no commute to judge — so the record is the ordered
+  // subset of the activated rules, not always all of them.
+  assert.deepEqual(rules, STRUCTURAL_RULES.filter((rule) => rules.includes(rule)));
+  assert.ok(rules.includes("salary_floor") && rules.includes("exclude_title_keywords"));
+  return Object.fromEntries(structural.map(({ rule, verdict }) => [rule, verdict]));
+}
+
 if (mode === "snapshot") {
   const data = readJSON();
   const letterConsumed = phase === "lettered" || phase === "repeat";
-  assert.equal(data.schema_version, 5);
-  assert.equal(data.journal_mode.toLowerCase(), "wal");
-  assert.equal(data.foreign_keys, true);
-  assert.deepEqual(data.tables, ["agent_calls", "job_dupe_candidates", "job_groups", "jobs", "letters", "runs", "scores", "status_events"]);
-  assert.equal(data.jobs.length, 4);
+  assertSchema(data);
+  assert.equal(data.jobs.length, 5);
   const jobs = Object.fromEntries(data.jobs.map((job) => [job.external_id, job]));
 
   for (const [id, expected] of Object.entries(FIXTURES)) {
@@ -180,29 +221,57 @@ if (mode === "snapshot") {
     assert.equal(job.location, "Taipei");
     assert.equal(job.remote_type, expected.remote);
     assert.equal(job.process_state, processStateOf(id, letterConsumed));
-	assert.match(job.profile_revision, /^sha256:[a-f0-9]{64}$/);
-    const content = [expected.title, expected.description, ...expected.salary.map(String), "Taipei", expected.remote].join("\n");
+    assert.match(job.filter_revision, REVISION);
+    const content = [expected.title, expected.description, ...expected.salary.map((value) => (value === null ? "" : String(value))), "Taipei", expected.remote].join("\n");
     assert.equal(job.content_hash, sha256(content));
     assert.deepEqual(job.events.map(({ axis, from_state, to_state }) => `${axis}:${from_state}->${to_state}`), transitionsOf(id, letterConsumed));
   }
 
-  // Filter is deterministic and LLM-free: one title is excluded, the rest are scored.
-  assert.deepEqual(jobs[1000].filter_hits, ["exclude_title_keywords"]);
+  // #1000 is rejected by the structural pass alone: it never reaches the Agent,
+  // so its screening record holds nothing but the deterministic rules.
+  assert.equal(jobs[1000].filter_outcome, "fail");
+  assert.deepEqual(jobs[1000].filter_hits, ["exclude_title_keywords", "salary_floor"]);
+  assert.deepEqual(jobs[1000].filter_conditions.filter(({ category }) => category !== "other"), []);
   assert.equal(jobs[1000].score, null);
   assert.equal(jobs[1000].letter, null);
+  assert.equal(jobs[1000].score_revision, null);
+
+  // #1004 discloses no salary and leaves one required condition undecidable, yet
+  // its JD is complete: neither absence can be resolved by waiting, so screening
+  // records both as undecided and still sends the job on to scoring. Nothing was
+  // rejected, so it names no reason.
+  assert.equal(jobs[1004].filter_outcome, "pass");
+  assert.deepEqual(jobs[1004].filter_hits, []);
+  const unknownRules = structuralVerdicts(jobs[1004].filter_conditions);
+  assert.equal(unknownRules.salary_floor, "unknown");
+  assert.deepEqual(Object.entries(unknownRules).filter(([, verdict]) => verdict !== "pass").map(([rule]) => rule), ["salary_floor"]);
+  const undecided = jobs[1004].filter_conditions.filter(({ category }) => category !== "other");
+  assert.deepEqual(undecided.map(({ kind, verdict }) => `${kind}:${verdict}`), ["required:unknown"]);
+  assert.equal(jobs[1004].score.total, 70);
+  assert.equal(jobs[1004].score.reason_sha256, sha256("合成資訊不足情境"));
+
+  // The three fully screened jobs each carry the Agent's condition breakdown, and
+  // the unmet bonus condition proves a bonus never contributes to a rejection.
+  for (const id of [1001, 1002, 1003]) {
+    assert.equal(jobs[id].filter_outcome, "pass");
+    const semantic = jobs[id].filter_conditions.filter(({ category }) => category !== "other");
+    assert.deepEqual(semantic.map(({ kind, verdict }) => `${kind}:${verdict}`), ["required:pass", "bonus:fail"]);
+    for (const verdict of Object.values(structuralVerdicts(jobs[id].filter_conditions))) assert.equal(verdict, "pass");
+  }
+
   assert.equal(jobs[1003].score.total, 60);
-  assert.deepEqual([jobs[1003].score.hard_skill, jobs[1003].score.domain, jobs[1003].score.seniority, jobs[1003].score.condition, jobs[1003].score.direction], [60, 60, 60, 60, 60]);
+  assert.deepEqual([jobs[1003].score.content_fit, jobs[1003].score.benefit_fit, jobs[1003].score.bonus_fit, jobs[1003].score.industry_fit], [60, 60, 60, 60]);
   assert.equal(jobs[1003].score.runner, "claude");
-	assert.equal(jobs[1003].score.profile_revision, jobs[1003].profile_revision);
+  assert.equal(jobs[1003].score.score_revision, jobs[1003].score_revision);
   assert.equal(jobs[1003].score.reason_sha256, sha256("合成低分情境"));
   assert.equal(jobs[1003].letter, null);
   assert.equal(jobs[1001].score.total, 80);
-	assert.equal(jobs[1001].score.profile_revision, jobs[1001].profile_revision);
+  assert.equal(jobs[1001].score.score_revision, jobs[1001].score_revision);
   assert.equal(jobs[1001].score.reason_sha256, sha256("合成重試情境"));
   assert.equal(jobs[1002].score.total, 90);
-  assert.deepEqual([jobs[1002].score.hard_skill, jobs[1002].score.domain, jobs[1002].score.seniority, jobs[1002].score.condition, jobs[1002].score.direction], [90, 90, 90, 90, 90]);
+  assert.deepEqual([jobs[1002].score.content_fit, jobs[1002].score.benefit_fit, jobs[1002].score.bonus_fit, jobs[1002].score.industry_fit], [90, 90, 90, 90]);
   assert.equal(jobs[1002].score.reason_sha256, sha256("合成核准情境"));
-	assert.equal(jobs[1002].score.profile_revision, jobs[1002].profile_revision);
+  assert.equal(jobs[1002].score.score_revision, jobs[1002].score_revision);
 
   if (!letterConsumed) {
     // No letter is drafted until the user requests one, so the letter stage has
@@ -211,7 +280,10 @@ if (mode === "snapshot") {
     assert.equal(jobs[1002].letter, null);
     assert.equal(jobs[1001].apply_state, null);
     assert.equal(jobs[1002].apply_state, null);
-    assertAgentCalls(data.agent_calls, [{ role: "scorer", runner: "claude", ok: true, count: 3 }]);
+    assertAgentCalls(data.agent_calls, [
+      { role: "filter", runner: "claude", ok: true, count: 4 },
+      { role: "scorer", runner: "claude", ok: true, count: 4 },
+    ]);
   } else {
     assert.deepEqual([jobs[1002].apply_state, jobs[1002].letter.status, jobs[1002].letter.rounds], ["pending", "approved", 1]);
     assert.deepEqual([jobs[1001].apply_state, jobs[1001].letter.status, jobs[1001].letter.rounds], [null, "failed", 3]);
@@ -220,19 +292,21 @@ if (mode === "snapshot") {
       assert.equal(jobs[id].letter.runner_review, "codex");
       assert.equal(jobs[id].letter.has_name_placeholder, true);
       assert.equal(jobs[id].letter.has_contact_placeholder, true);
-	  assert.equal(jobs[id].letter.profile_revision, jobs[id].profile_revision);
+      assert.equal(jobs[id].letter.score_revision, jobs[id].score_revision);
+      assert.equal(jobs[id].letter.filter_revision, jobs[id].filter_revision);
     }
     assert.equal(jobs[1001].letter.review_entries, 3);
     assert.equal(jobs[1002].letter.review_entries, 1);
     assertAgentCalls(data.agent_calls, [
       { role: "drafter", runner: "claude", ok: true, count: 4 },
+      { role: "filter", runner: "claude", ok: true, count: 4 },
       { role: "reviewer", runner: "codex", ok: true, count: 4 },
-      { role: "scorer", runner: "claude", ok: true, count: 3 },
+      { role: "scorer", runner: "claude", ok: true, count: 4 },
     ]);
   }
 
   // runs record fetch facts only; the worker's filter/score/letter never touch them.
-  const firstStats = { errors: 0, fetched: 4, new: 4, queries: 3 };
+  const firstStats = { errors: 0, fetched: 5, new: 5, queries: 3 };
   const chronological = [...data.runs].reverse();
   assert.deepEqual(chronological[0].Stats, firstStats);
   assert.equal(chronological[0].Trigger, "manual-cli");
@@ -241,7 +315,7 @@ if (mode === "snapshot") {
   if (phase === "repeat") {
     assert.ok(chronological.length >= 2);
     // The rerun re-fetches the same detail pages but inserts nothing new.
-    assert.deepEqual(chronological[1].Stats, { errors: 0, fetched: 4, new: 0, queries: 3 });
+    assert.deepEqual(chronological[1].Stats, { errors: 0, fetched: 5, new: 0, queries: 3 });
   } else {
     assert.equal(chronological.length, 1);
   }
@@ -250,7 +324,7 @@ if (mode === "snapshot") {
 
 if (mode === "api") {
   const data = readJSON();
-  assert.equal(data.items.length, 4);
+  assert.equal(data.items.length, 5);
   const jobs = Object.fromEntries(data.items.map((job) => [job.title, job]));
   const ready = jobs["Verification ready hybrid backend engineer"];
   const failed = jobs["Verification failure remote platform engineer"];
@@ -262,12 +336,17 @@ if (mode === "api") {
   assert.equal(low.letter_state ?? null, null);
   assert.deepEqual([unfit.score_total, unfit.verdict], [null, "unfit"]);
   assert.equal(unfit.letter_state ?? null, null);
+  // The undisclosed-salary job was screened through and scored like any other:
+  // an undecidable condition on a complete JD is not a reason to withhold it.
+  const undisclosed = jobs["Verification unknown salary platform engineer"];
+  assert.deepEqual([undisclosed.score_total, undisclosed.verdict], [70, "not_recommended"]);
+  assert.equal(undisclosed.letter_state ?? null, null);
   process.exit(0);
 }
 
 if (mode === "api-filter") {
   const data = readJSON();
-  if (phase === "source") assert.equal(data.items.length, 4);
+  if (phase === "source") assert.equal(data.items.length, 5);
   if (phase === "process") {
     assert.equal(data.items.length, 1);
     assert.equal(data.items[0].title, "Verification ready hybrid backend engineer");
@@ -284,6 +363,8 @@ if (mode === "api-filter") {
     ]);
     for (const job of data.items) assert.equal(job.verdict, "recommended");
   }
+  // 待看 is carried entirely by list items still waiting for their full text, so
+  // the queue is empty until one is captured.
   if (phase === "queue") assert.deepEqual(data.items, []);
   process.exit(0);
 }
@@ -295,7 +376,7 @@ if (mode === "api-detail") {
     assert.equal(data.description, "Build Go backend services");
     assert.equal(data.remote_type, "hybrid");
     assert.deepEqual([data.verdict, data.letter_state], ["recommended", "ready"]);
-    assert.deepEqual([data.score.hard_skill, data.score.domain, data.score.seniority, data.score.condition, data.score.direction, data.score.total], [90, 90, 90, 90, 90, 90]);
+    assert.deepEqual([data.score.content_fit, data.score.benefit_fit, data.score.bonus_fit, data.score.industry_fit, data.score.total], [90, 90, 90, 90, 90]);
     assert.equal(data.score.reason, "合成核准情境");
     assert.equal(data.letter.status, "approved");
     assert.equal(data.letter.rounds, 1);
@@ -341,12 +422,14 @@ if (mode === "capture-list") {
 }
 
 if (mode === "capture-job") {
-  // A fresh detail passes screening synchronously and comes back pending; the
-  // worker scores it out of band, so this path never calls an Agent itself.
+  // A fresh detail clears the structural conditions synchronously and comes back
+  // pending. The semantic half of the screen costs a token call, so the capture
+  // request never waits for it: the job rests in `new` until the worker screens
+  // and then scores it, and this path calls no Agent of its own.
   const data = readJSON();
   assert.equal(data.cached, false);
-  assert.equal(data.verdict, "pending_score");
-  assert.equal(data.process_state, "queued");
+  assert.equal(data.verdict, "pending_screen");
+  assert.equal(data.process_state, "new");
   assert.equal(data.score ?? null, null);
   process.exit(0);
 }

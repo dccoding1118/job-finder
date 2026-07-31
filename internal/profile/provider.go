@@ -19,7 +19,10 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const revisionSchema = "jobfinder-profile-v1\n"
+const (
+	filterRevisionSchema = "jobfinder-profile-filter-v5\n"
+	scoreRevisionSchema  = "jobfinder-profile-score-v5\n"
+)
 
 var (
 	ErrNotReady = errors.New("profile is not ready")
@@ -32,27 +35,38 @@ type Issue struct {
 	Message string `json:"message"`
 }
 
+// Snapshot carries both revisions because the two gates rerun independently:
+// a change to the soft rules must not send every job back through screening.
 type Snapshot struct {
-	Status   string
-	Profile  *Profile
-	YAML     string
-	Revision string
-	ETag     string
-	Issues   []Issue
+	Status         string
+	Profile        *Profile
+	YAML           string
+	FilterRevision string
+	ScoreRevision  string
+	ETag           string
+	Issues         []Issue
 }
 
 type Activation struct {
 	PartialScreened int `json:"partial_screened"`
+	Refiltered      int `json:"refiltered"`
 	Requeued        int `json:"requeued"`
 	Protected       int `json:"protected"`
 	Unchanged       int `json:"unchanged"`
 }
 
-type ActivationFunc func(context.Context, string, Profile) (Activation, error)
+// Revisions names one activation's target pair.
+type Revisions struct {
+	Filter string
+	Score  string
+}
+
+type ActivationFunc func(context.Context, Revisions, Profile) (Activation, error)
 
 type SaveResult struct {
-	Snapshot        Snapshot
-	SemanticChanged bool
+	Snapshot      Snapshot
+	FilterChanged bool
+	ScoreChanged  bool
 }
 
 // Provider owns the process-wide immutable Profile snapshot and its disk file.
@@ -108,6 +122,10 @@ func (p *Provider) Save(expectedETag string, value Profile) (SaveResult, error) 
 	if expectedETag == "" || expectedETag != actualETag {
 		return SaveResult{}, ErrConflict
 	}
+	// The totals are materialized here rather than accepted from the caller, so a
+	// stored Profile can never state a year count its experiences disagree with.
+	value.normalize()
+	value.materializeDerived()
 	if issues := ValidateForSave(value, p.denylist); len(issues) > 0 {
 		return SaveResult{}, ValidationError{Issues: issues}
 	}
@@ -115,11 +133,13 @@ func (p *Provider) Save(expectedETag string, value Profile) (SaveResult, error) 
 	if err != nil {
 		return SaveResult{}, fmt.Errorf("encode profile YAML: %w", err)
 	}
-	revision, err := Revision(value)
+	filterRevision, scoreRevision, err := RevisionPair(value)
 	if err != nil {
 		return SaveResult{}, err
 	}
-	semanticChanged := p.current.Status != "ready" || p.current.Revision != revision
+	fresh := p.current.Status != "ready"
+	filterChanged := fresh || p.current.FilterRevision != filterRevision
+	scoreChanged := fresh || p.current.ScoreRevision != scoreRevision
 	newETag := ETag(canonicalYAML)
 	if bytes.Equal(contents, canonicalYAML) && exists {
 		newETag = actualETag
@@ -130,12 +150,12 @@ func (p *Provider) Save(expectedETag string, value Profile) (SaveResult, error) 
 		}
 	}
 	profileCopy := cloneProfile(value)
-	p.current = Snapshot{Status: "ready", Profile: &profileCopy, YAML: string(canonicalYAML), Revision: revision, ETag: newETag, Issues: []Issue{}}
+	p.current = Snapshot{Status: "ready", Profile: &profileCopy, YAML: string(canonicalYAML), FilterRevision: filterRevision, ScoreRevision: scoreRevision, ETag: newETag, Issues: []Issue{}}
 	select {
 	case p.changed <- struct{}{}:
 	default:
 	}
-	return SaveResult{Snapshot: cloneSnapshot(p.current), SemanticChanged: semanticChanged}, nil
+	return SaveResult{Snapshot: cloneSnapshot(p.current), FilterChanged: filterChanged, ScoreChanged: scoreChanged}, nil
 }
 
 type ValidationError struct{ Issues []Issue }
@@ -152,15 +172,81 @@ func DecodeJSON(reader io.Reader) (Profile, error) {
 	if err := decoder.Decode(&struct{}{}); err != io.EOF {
 		return Profile{}, errors.New("profile: request must contain one JSON object")
 	}
+	// `derived` is materialized from the experience list; accepting it as input
+	// would let a caller state totals that contradict what they were derived from.
+	if !value.Derived.Empty() {
+		return Profile{}, errors.New("profile: derived is computed by the system and must not be supplied")
+	}
 	return value, nil
 }
 
-func Revision(value Profile) (string, error) {
-	canonical, err := json.Marshal(value)
+// filterRevisionInput is the exact field set the screening gate reads. A
+// revision hashes its own gate's fields only, so changing the soft rules cannot
+// send jobs back through screening.
+type filterRevisionInput struct {
+	Requirements   Requirements           `json:"requirements"`
+	Qualifications Qualifications         `json:"qualifications"`
+	Experiences    []filterExperienceView `json:"experiences"`
+}
+
+type filterExperienceView struct {
+	Industry          string   `json:"industry"`
+	Years             float64  `json:"years"`
+	IsManagement      bool     `json:"is_management"`
+	ExcludeFromTotals bool     `json:"exclude_from_totals"`
+	Skills            []string `json:"skills"`
+}
+
+// scoreRevisionInput is the field set the scoring gate reads. `remote`,
+// `locations` and the three qualification lists appear in both inputs because
+// both gates genuinely read them: the shared cost of a field serving two gates.
+type scoreRevisionInput struct {
+	Intents        Intents         `json:"intents"`
+	Remote         string          `json:"remote"`
+	Locations      []string        `json:"locations"`
+	Skills         []SkillEntry    `json:"skills"`
+	Certifications []Certification `json:"certifications"`
+	Languages      []LanguageEntry `json:"languages"`
+}
+
+// RevisionPair returns the filter and score revisions of one Profile.
+func RevisionPair(value Profile) (string, string, error) {
+	filter, err := FilterRevision(value)
+	if err != nil {
+		return "", "", err
+	}
+	score, err := ScoreRevision(value)
+	if err != nil {
+		return "", "", err
+	}
+	return filter, score, nil
+}
+
+func FilterRevision(value Profile) (string, error) {
+	input := filterRevisionInput{Requirements: value.Requirements, Qualifications: value.Qualifications}
+	for _, experience := range value.Experiences {
+		input.Experiences = append(input.Experiences, filterExperienceView{
+			Industry: experience.Industry, Years: experience.Years, IsManagement: experience.IsManagement,
+			ExcludeFromTotals: experience.ExcludeFromTotals, Skills: experience.Skills,
+		})
+	}
+	return digestRevision(filterRevisionSchema, input)
+}
+
+func ScoreRevision(value Profile) (string, error) {
+	return digestRevision(scoreRevisionSchema, scoreRevisionInput{
+		Intents: value.Intents, Remote: value.Requirements.Remote, Locations: value.Requirements.Locations,
+		Skills: value.Qualifications.Skills, Certifications: value.Qualifications.Certifications,
+		Languages: value.Qualifications.Languages,
+	})
+}
+
+func digestRevision(schema string, input any) (string, error) {
+	canonical, err := json.Marshal(input)
 	if err != nil {
 		return "", fmt.Errorf("encode canonical profile: %w", err)
 	}
-	digest := sha256.Sum256(append([]byte(revisionSchema), canonical...))
+	digest := sha256.Sum256(append([]byte(schema), canonical...))
 	return "sha256:" + hex.EncodeToString(digest[:]), nil
 }
 
@@ -201,12 +287,12 @@ func readSnapshot(path string, denylist []string) (Snapshot, error) {
 	if err != nil {
 		return Snapshot{}, err
 	}
-	revision, err := Revision(value)
+	filterRevision, scoreRevision, err := RevisionPair(value)
 	if err != nil {
 		return Snapshot{}, err
 	}
 	copy := cloneProfile(value)
-	return Snapshot{Status: "ready", Profile: &copy, YAML: string(canonicalYAML), Revision: revision, ETag: ETag(contents), Issues: []Issue{}}, nil
+	return Snapshot{Status: "ready", Profile: &copy, YAML: string(canonicalYAML), FilterRevision: filterRevision, ScoreRevision: scoreRevision, ETag: ETag(contents), Issues: []Issue{}}, nil
 }
 
 func readFile(path string) ([]byte, bool, error) {

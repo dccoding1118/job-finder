@@ -115,14 +115,16 @@ pass_step
 begin_step 'S03' 'V1·R1' '驗證匿名 Profile 與 PII 防線'
 "${binary}" profile lint --profile "${profile}" --denylist "${denylist}" >"${output_file}" 2>&1 || fail 'profile lint did not pass'
 "${binary}" profile show --profile "${profile}" --denylist "${denylist}" >"${output_file}" 2>&1 || fail 'profile summary did not pass'
-grep -Fqx 'years_of_experience: 8' "${output_file}" || fail 'profile years are invalid'
-grep -Fqx 'education: master (computer science)' "${output_file}" || fail 'profile education is invalid'
-grep -Fqx 'expert: [Java]' "${output_file}" || fail 'profile expert skills are invalid'
-grep -Fqx 'proficient: [Go]' "${output_file}" || fail 'profile proficient skills are invalid'
+grep -Fqx 'total_years: 8.0' "${output_file}" || fail 'derived total years are invalid'
+grep -Fqx 'management_years: 0.0' "${output_file}" || fail 'derived management years are invalid'
+grep -Fqx 'education: [master:computer science (graduated)]' "${output_file}" || fail 'profile education is invalid'
+grep -Fqx 'skills: [Java:expert Go:proficient Kubernetes:familiar]' "${output_file}" || fail 'profile skill levels are invalid'
+grep -Fqx 'salary_min: 90000' "${output_file}" || fail 'profile salary floor is invalid'
+grep -Fqx 'remote: acceptable' "${output_file}" || fail 'profile remote preference is invalid'
 grep -Fqx 'directions: [P1:cloud architecture P2:backend engineering P3:platform reliability]' "${output_file}" || fail 'profile directions are invalid'
 "${binary}" verify snapshot --db "${MOCK_DB}" >"${RUNTIME_ROOT}/tmp/schema-snapshot.json" || fail 'SQLite schema snapshot failed'
 assert_node schema "${RUNTIME_ROOT}/tmp/schema-snapshot.json" >"${output_file}" 2>&1 || fail 'SQLite schema contract is invalid'
-record '- 匿名 Profile summary、schema version=3、WAL、foreign keys、必要資料表與 revision 欄位已由物化 binary 建立。'
+record '- 匿名 Profile 摘要（derived 加總、學歷、硬規則）、schema version=7、WAL、foreign keys、9 張表（含 filter_results）與雙 revision 欄位已由物化 binary 建立。'
 pass_step
 
 begin_step 'S04' 'V2·R2' '產生本機 Yourator mock 資料來源'
@@ -144,21 +146,22 @@ fi
 if ! kill -0 "${source_pid}" 2>/dev/null; then
   environment_blocked 'verification fixture port is already held by another process'
 fi
-record '- source=yourator；external_id=1000–1003；內容均為合成資料；safe request journal 已啟用；GET /healthz → 200。'
+record '- source=yourator；external_id=1000–1004；內容均為合成資料；safe request journal 已啟用；GET /healthz → 200。'
 pass_step
 
 begin_step 'S05' 'V2·R5/R7' '抓取後手動驅動 filter 與 score（letter 階段零取件）'
 if ! "${binary}" run --config "${config}" >"${output_file}" 2>&1; then
   fail 'first mock fetch did not complete'
 fi
-grep -Eq '^fetched: 4$' "${output_file}" || fail 'mock crawler did not fetch four fixture jobs'
-grep -Eq '^new: 4$' "${output_file}" || fail 'first fetch did not insert four new jobs'
+grep -Eq '^fetched: 5$' "${output_file}" || fail 'mock crawler did not fetch five fixture jobs'
+grep -Eq '^new: 5$' "${output_file}" || fail 'first fetch did not insert five new jobs'
 fetch_summary="$(tr '\n' ';' <"${output_file}" | sed 's/;$//')"
 "${binary}" run --config "${config}" --stage filter --limit 30 >"${output_file}" 2>&1 || fail 'hand-driven filter stage did not complete'
-grep -Eq '^filtered: 1$' "${output_file}" || fail 'first mock run filter summary is invalid'
+grep -Eq '^filtered_out: 1$' "${output_file}" || fail 'first mock run did not structurally reject one job'
+grep -Eq '^queued: 4$' "${output_file}" || fail 'first mock run did not queue the four screened jobs'
 "${binary}" run --config "${config}" --stage score --limit 30 >"${output_file}" 2>&1 || fail 'hand-driven score stage did not complete'
-grep -Eq '^scored: 3$' "${output_file}" || fail 'first mock run did not enforce the daily score budget'
-record "- fetch：${fetch_summary}；filter=1、score=3；未經使用者要求，letter 階段不取件、不生成求職信。"
+grep -Eq '^scored: 4$' "${output_file}" || fail 'first mock run did not score every queued job'
+record "- fetch：${fetch_summary}；filter＝filtered_out:1／queued:4；score=4；未經使用者要求，letter 階段不取件、不生成求職信。"
 pass_step
 
 snapshot="${RUNTIME_ROOT}/tmp/positive-snapshot.json"
@@ -166,26 +169,25 @@ snapshot="${RUNTIME_ROOT}/tmp/positive-snapshot.json"
 
 begin_step 'S06' 'V2·R2' '驗證 production adapter 搜尋與 detail requests'
 assert_node source "${source_requests}" >"${output_file}" 2>&1 || fail 'source request journal does not match the production adapter contract'
-record '- 三個方向各形成一次搜尋；所有結果進入共同池，四個唯一 detail path 各請求一次。'
+record '- 三個方向各形成一次搜尋；所有結果進入共同池，五個唯一 detail path 各請求一次。'
 pass_step
 
 begin_step 'S07' 'V2·R2' '驗證來源欄位正規化'
 assert_node snapshot "${snapshot}" base >"${output_file}" 2>&1 || fail 'normalized source fields do not match the fixture contract'
-record '- 四筆 Job 的 canonical URL、HTML 純文字、薪資、地點、remote type、company fallback 與 content hash 精確相符。'
+record '- 五筆 Job 的 canonical URL、HTML 純文字、薪資、地點、remote type、company fallback 與 content hash 精確相符。'
 pass_step
 
-begin_step 'S08' 'V2·R3' '驗證 Profile 條件篩選'
-grep -Fq '"external_id": "1000"' "${snapshot}" || fail 'filtered fixture is absent'
-grep -Fq '"exclude_title_keywords"' "${snapshot}" || fail 'filter hit was not persisted'
-record '- external_id=1000 命中 exclude_title_keywords 並走 new → filtered_out；其餘三筆進入評分。'
+begin_step 'S08' 'V2·R3' '驗證硬規則三分流與逐條判定'
+assert_node snapshot "${snapshot}" base >"${output_file}" 2>&1 || fail 'screening breakdown does not match the fixture contract'
+record '- #1000 結構化即淘汰（filter_hits=exclude_title_keywords／salary_floor、零 Agent 呼叫）；#1004 的薪資與一條必要條件皆判 unknown，但 JD 完整故仍彙總為 pass 進評分且不記原因；通過結構化條件的 4 筆各恰一次 role=filter 呼叫，未滿足的加分條件不影響彙總。'
 pass_step
 
-begin_step 'S09' 'V2·R4' '驗證評分五維與分流且 letter 階段零 Agent 呼叫'
+begin_step 'S09' 'V2·R4' '驗證評分四維與分流且 letter 階段零 Agent 呼叫'
 assert_node snapshot "${snapshot}" base >"${output_file}" 2>&1 || fail 'score, routing, or letter-idle state does not match the fixture contract'
 grep -Fq '"total": 90' "${snapshot}" || fail 'approved score is absent'
 grep -Fq '"total": 80' "${snapshot}" || fail 'retry score is absent'
 grep -Fq '"total": 60' "${snapshot}" || fail 'low score is absent'
-record '- 五維 90/80/60 經 Go 加權為 90/80/60，兩筆 shortlisted、一筆 scored；letter null、Drafter／Reviewer 呼叫數為零。'
+record '- 四維 90/80/70/60 經 Go 加權為 90/80/70/60，兩筆 shortlisted、兩筆 scored；letter null、Drafter／Reviewer 呼叫數為零；filter=4、scorer=4。'
 pass_step
 
 begin_step 'S10' 'V2·R5' '要求生成後驗證信件與 Agent 稽核'
@@ -208,27 +210,28 @@ ready_id="$(awk 'NR == 1 { print $1 }' "${output_file}")"
 "${binary}" jobs --db "${MOCK_DB}" --process-state letter_failed >"${output_file}" 2>&1 || fail 'failed letter is unreadable'
 failed_id="$(awk 'NR == 1 { print $1 }' "${output_file}")"
 [[ "${ready_id}" =~ ^[0-9]+$ && "${failed_id}" =~ ^[0-9]+$ ]] || fail 'letter fixture Job IDs are invalid'
-record "- 對兩筆 shortlisted 要求生成後：job_id=${ready_id} approved/rounds=1/apply=pending；job_id=${failed_id} failed/rounds=3；轉換經 shortlisted→letter_requested；calls scorer=3、drafter=4、reviewer=4；兩個 Runner 均為 checked-in fake executable。"
+record "- 對兩筆 shortlisted 要求生成後：job_id=${ready_id} approved/rounds=1/apply=pending；job_id=${failed_id} failed/rounds=3；轉換經 shortlisted→letter_requested；calls filter=4、scorer=4、drafter=4、reviewer=4；兩個 Runner 均為 checked-in fake executable。"
 pass_step
 
 begin_step 'S11' 'V2·R7' '重跑抓取與階段驗證冪等'
 if ! "${binary}" run --config "${config}" >"${output_file}" 2>&1; then
   fail 'second mock fetch did not complete'
 fi
-grep -Eq '^fetched: 4$' "${output_file}" || fail 'idempotent rerun did not re-fetch the fixture detail pages'
+grep -Eq '^fetched: 5$' "${output_file}" || fail 'idempotent rerun did not re-fetch the fixture detail pages'
 grep -Eq '^new: 0$' "${output_file}" || fail 'idempotent crawler rerun inserted duplicate jobs'
 second_summary="$(tr '\n' ';' <"${output_file}" | sed 's/;$//')"
 "${binary}" run --config "${config}" --stage filter --limit 30 >"${output_file}" 2>&1 || fail 'rerun filter stage did not complete'
-grep -Eq '^filtered: 0$' "${output_file}" || fail 'idempotent rerun repeated filtering'
+grep -Eq '^filtered_out: 0$' "${output_file}" || fail 'idempotent rerun repeated filtering'
+grep -Eq '^queued: 0$' "${output_file}" || fail 'idempotent rerun re-queued a screened job'
 "${binary}" run --config "${config}" --stage score --limit 30 >"${output_file}" 2>&1 || fail 'rerun score stage did not complete'
 grep -Eq '^scored: 0$' "${output_file}" || fail 'idempotent rerun repeated scoring'
 "${binary}" verify snapshot --db "${MOCK_DB}" >"${snapshot}" || fail 'repeat SQLite snapshot failed'
 assert_node snapshot "${snapshot}" repeat >"${output_file}" 2>&1 || fail 'repeat snapshot changed terminal data or Agent call counts'
-record "- 重跑 fetch：${second_summary}；filter=0、score=0；Job=4、Score=3、Letter=2、Agent calls=11 均未增加。"
+record "- 重跑 fetch：${second_summary}；filter=0、score=0；Job=5、Score=4、Letter=2、Agent calls=16 均未增加。"
 pass_step
 
 begin_step 'S12' 'V1/V2·R8' '驗證安全 SQLite snapshot 與 Run stats'
-grep -Fq '"fetched": 4' "${snapshot}" || fail 'fetch Run count is absent'
+grep -Fq '"fetched": 5' "${snapshot}" || fail 'fetch Run count is absent'
 grep -Fq '"queries": 3' "${snapshot}" || fail 'query Run count is absent'
 grep -Fq '"letters_failed"' "${snapshot}" && fail 'run stats still carry the retired worker-stage counters'
 record '- snapshot 只含契約欄位與內容 hash；runs 只記抓取事實 fetched/new/queries/errors，不含 filter／score／letter 統計。'
@@ -259,7 +262,7 @@ if ! systemd-run --user --wait --pipe --collect --quiet \
   "${binary}" run --config "${config}" --stage filter --limit 1 >"${output_file}" 2>&1; then
   fail 'transient one-shot service did not complete'
 fi
-grep -Eq '^filtered: [0-9]+$' "${output_file}" || fail 'transient one-shot output is incomplete'
+grep -Eq '^filtered_out: [0-9]+$' "${output_file}" || fail 'transient one-shot output is incomplete'
 record '- systemd-run --user --wait --pipe 在 rendered PATH 下成功執行物化 binary。'
 pass_step
 
@@ -335,12 +338,12 @@ for filter_case in 'source=yourator:source' 'process_state=letter_ready:process'
   assert_node api-filter "${output_file}" "${expectation}" || fail "API filter ${query} returned an invalid collection"
 done
 curl --fail --silent "${auth[@]}" "${api_url}/queue" >"${output_file}" || fail 'API queue is unreadable'
-assert_node api-filter "${output_file}" queue || fail 'discovery queue should be empty before any list capture'
+assert_node api-filter "${output_file}" queue || fail 'the 待看 queue does not hold exactly the undecided job'
 curl --fail --silent "${auth[@]}" "${api_url}/jobs/${ready_id}" >"${output_file}" || fail 'API did not expose Job detail'
 assert_node api-detail "${output_file}" ready || fail 'approved API detail is invalid'
 curl --fail --silent "${auth[@]}" "${api_url}/jobs/${failed_id}" >"${output_file}" || fail 'API did not expose failed Job detail'
 assert_node api-detail "${output_file}" failed || fail 'failed API detail is invalid'
-record "- source/process/apply/verdict filters、空 queue、job_id=${ready_id}/${failed_id} 的五維 Score、verdict／letter_state、Letter 與 StatusEvent 均與同一 SQLite 精確一致。"
+record "- source/process/apply/verdict filters、待看 queue 於清單擷取前為空、job_id=${ready_id}/${failed_id} 的四維 Score、verdict／letter_state、Letter 與 StatusEvent 均與同一 SQLite 精確一致。"
 pass_step
 
 begin_step 'S19' 'V4·R6' '載入固定 ID 的 extension 模擬環境'
@@ -409,7 +412,7 @@ browser_summary="$(tr '\n' ';' <"${output_file}" | sed 's/;$//')"
 record "- Playwright：${browser_summary}"
 pass_step
 
-list_payload='{"source":"104","items":[{"href":"https://www.104.com.tw/job/v5intern","title":"backend intern engineer","company_name":"Alpha Co","location":"Taipei","salary_text":"month 90000","remote":false},{"href":"https://www.104.com.tw/job/v5senior","title":"Senior backend engineer","company_name":"Beta Co","location":"Taipei","salary_text":"month 120000","remote":true}]}'
+list_payload='{"source":"104","items":[{"href":"https://www.104.com.tw/job/v5intern","title":"backend intern engineer","company_name":"Alpha Co","location":"Taipei","salary_text":"月薪90,000元","remote":false},{"href":"https://www.104.com.tw/job/v5senior","title":"Senior backend engineer","company_name":"Beta Co","location":"Taipei","salary_text":"月薪120,000元","remote":true}]}'
 begin_step 'S24' 'V5·R2/R3/R9' '驗證 104 清單就地判定且列表路徑零 Agent 呼叫'
 calls_before="$(agent_call_total)"
 curl --fail --silent "${auth[@]}" -X POST "${api_url}/capture/list" -d "${list_payload}" >"${output_file}" || fail '104 list capture failed'
@@ -425,10 +428,23 @@ assert_node capture-list "${output_file}" repeat || fail '104 re-capture did not
 curl --fail --silent "${auth[@]}" "${api_url}/queue" >"${output_file}" || fail 'API queue is unreadable after list capture'
 grep -Fq '"Senior backend engineer"' "${output_file}" || fail 'discovered list job is absent from the sidebar queue'
 curl --fail --silent "${auth[@]}" -X POST "${api_url}/capture/job" \
-  -d '{"source":"104","url":"https://www.104.com.tw/job/v5senior","dom":{"title":"Senior backend engineer","company_name":"Beta Co","location":"Taipei","description":"Build Go backend and cloud platform services","salary_text":"month 120000~150000","remote":true}}' \
+  -d '{"source":"104","url":"https://www.104.com.tw/job/v5senior","dom":{"title":"Senior backend engineer","company_name":"Beta Co","location":"Taipei","description":"Build Go backend and cloud platform services","salary_text":"月薪120,000~150,000元","remote":true}}' \
   >"${output_file}" || fail '104 job capture failed'
 assert_node capture-job "${output_file}" queued || fail '104 job capture did not screen synchronously and defer scoring'
-record '- 既有職缺 re-capture 直接回現行判定且不重建；discovered 職缺進入 sidebar 待看清單；內頁補全文後同步過篩並停留 queued 待 worker 評分。'
+captured_id="$(mise exec -- node -e 'const fs=require("fs");process.stdout.write(String(JSON.parse(fs.readFileSync(process.argv[1])).id))' "${output_file}")"
+# The semantic half of the screen belongs to the worker, so the capture response
+# is only the start: prove the job actually reaches the scoring queue.
+for _ in $(seq 1 200); do
+  "${binary}" jobs --db "${MOCK_DB}" --process-state queued >"${output_file}" 2>&1 || true
+  grep -Eq "^${captured_id}[[:space:]]" "${output_file}" && break
+  "${binary}" jobs --db "${MOCK_DB}" --process-state scored >"${output_file}" 2>&1 || true
+  grep -Eq "^${captured_id}[[:space:]]" "${output_file}" && break
+  "${binary}" jobs --db "${MOCK_DB}" --process-state shortlisted >"${output_file}" 2>&1 || true
+  grep -Eq "^${captured_id}[[:space:]]" "${output_file}" && break
+  sleep 0.1
+done
+grep -Eq "^${captured_id}[[:space:]]" "${output_file}" || fail 'captured job never reached the scoring queue'
+record "- 既有職缺 re-capture 直接回現行判定且不重建；discovered 職缺進入 sidebar 待看清單；內頁補全文後同步過結構化條件並停留 new，語意篩選由常駐 worker 完成後 job_id=${captured_id} 才進入評分佇列。"
 pass_step
 
 covered_r_list="$(printf '%s\n' "${!covered_r[@]}" | sort -V | paste -sd' ' -)"
@@ -440,7 +456,7 @@ record "- 需求覆蓋：${covered_r_list}（本趟 mock 實際驗到的需求�
 record '- 案例覆蓋：V1 隔離成品與匿名 Profile、V2 合成來源 fetch/worker 階段與按需求職信、V4 transient systemd lifecycle 與隔離 Chromium extension 模擬、V5 104 清單就地判定與內頁非同步評估。'
 record ''
 record '### 使用者故事重建（本趟驗過的劇本）'
-record '載入 4 筆 Yourator 職缺 → #1000「intern」命中排除關鍵字當場篩掉（unfit）→ #1003 得 60（not_recommended）、#1001 得 80、#1002 得 90（後兩者 shortlisted，未要求不生成信）→ 對 2 筆 shortlisted 要求生成 → #1002 首輪核准（round 1）、#1001 三輪退回（round 3）→ dashboard 複製 #1002 的信、標記 applied → 104 搜尋頁載入 2 筆：intern 篩掉、senior 進待看清單 → senior 內頁補全文、過篩、排進評分佇列（queued）。'
+record '載入 5 筆 Yourator 職缺 → #1000「intern」命中排除關鍵字當場篩掉（unfit）→ #1004 的薪資與一條必要條件無從判定，但 JD 完整故照常評分得 70（not_recommended）→ #1003 得 60（not_recommended）、#1001 得 80、#1002 得 90（後兩者 shortlisted，未要求不生成信）→ 對 2 筆 shortlisted 要求生成 → #1002 首輪核准（round 1）、#1001 三輪退回（round 3）→ dashboard 複製 #1002 的信、標記 applied → 104 搜尋頁載入 2 筆：intern 篩掉、senior 進待看清單 → senior 內頁補全文、過結構化條件後停在 new，語意篩選與評分由 worker 接手。'
 record ''
 record '> 對答案：逐案例（S01–S25）將上方觀察值對 docs/verify.md §4 的字面標準答案；測資與完整標準答案見 §3，機器斷言見 scripts/verify/oracle/assert-positive.mjs。'
 printf 'mock verification passed: %s\n' "${report}"

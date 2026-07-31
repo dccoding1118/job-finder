@@ -25,7 +25,7 @@
 
 | unit | 類型與生命週期 | ExecStart／必要設定 |
 |---|---|---|
-| `jobfinder-api.service` | 長駐服務；`Restart=on-failure` | `<binary> serve --config <config>`；僅監聽 `api.addr`；`WorkingDirectory` 為資料根。**同時承載 pipeline 常駐 worker**（初篩／評分／求職信的唯一消化者），因此此服務停止時處理即停止，僅抓取仍會依 timer 進行 |
+| `jobfinder-api.service` | 長駐服務；`Restart=on-failure` | `<binary> serve --config <config>`；僅監聽 `api.addr`；`WorkingDirectory` 為資料根。**同時承載 pipeline 常駐 worker**（篩選／評分／求職信的唯一消化者），因此此服務停止時處理即停止，僅抓取仍會依 timer 進行 |
 | `jobfinder-run.service` | `Type=oneshot` | `<binary> run --config <config>`；只執行抓取，抓完即退出，不等待 LLM 階段 |
 | `jobfinder-run.timer` | 每日觸發 | `OnCalendar=*-*-* 08:30:00 Asia/Taipei`、`Persistent=false`、`Unit=jobfinder-run.service`；錯過的排程不補跑 |
 
@@ -55,7 +55,23 @@ API 不公開網路埠。Windows 工作站以背景常駐的 SSH local forward�
 
 日常診斷使用 `journalctl --user -u jobfinder-api.service`、`journalctl --user -u jobfinder-run.service` 與 Side Panel 的 Run 歷史。驗證 systemd 環境時，以 `systemd-run --user --wait --pipe` 執行相同 binary／設定組合，API 使用 transient service，timer 使用 transient timer 實際觸發 one-shot；互動 shell 成功不構成 service 環境成功的證據。user bus 不可用時，開發驗收回 `ENVIRONMENT_BLOCKED`，不誤判為產品失敗。
 
-## 6. 產品化雛型（S2 → S3 方向，暫不實作）
+## 6. 只收集不判定的暫停模式
+
+`worker.paused: true` 讓 `serve` 只提供 API 而不啟動常駐 worker，也不持有 worker lock。抓取、清單擷取與內頁擷取照常寫入，職缺一律停在 `new`，不呼叫任何 Agent、不產生判定，因此 Profile 尚未定案時不會累積之後必須作廢的結論。此時：
+
+| 動作 | 指令 |
+|---|---|
+| 手動跑一批篩選 | `jobfinder run --config <config> --stage filter --limit <n>` |
+| 手動跑一批評分 | `jobfinder run --config <config> --stage score --limit <n>` |
+| 恢復常駐消化 | 改回 `paused: false` 並 `systemctl --user restart jobfinder-api.service` |
+
+`llm.max_*_per_day` 不是暫停開關：值為 0 或負數代表**不設上限**，不是不執行。
+
+結構化硬規則仍會在清單擷取時就地判定（不花 token），故暫停期間仍可能出現 `filtered_out`；改動 `requirements` 會改變 `filter_revision`，之後的重新處理會把這些結論一併重跑。
+
+清空既有職缺重新開始時，停止 `jobfinder-api.service` 與 `jobfinder-run.timer` 後刪除 SQLite（連同 `-wal`、`-shm`），下次啟動即以最新 schema 重建空庫。Profile、denylist 與設定不受影響。
+
+## 7. 產品化雛型（S2 → S3 方向，暫不實作）
 
 | 面向 | S2（單租戶 Alpha） | S3（多租戶 SaaS） |
 |---|---|---|

@@ -18,21 +18,22 @@ type fakeRunner struct {
 	err     error
 }
 
-func (f *fakeRunner) Name() string { return f.name }
-func (f *fakeRunner) Invoke(context.Context, string) (string, error) {
+func (f *fakeRunner) Name() string  { return f.name }
+func (f *fakeRunner) Model() string { return f.name }
+func (f *fakeRunner) Invoke(context.Context, string) (Reply, error) {
 	if f.err != nil {
-		return "", f.err
+		return Reply{}, f.err
 	}
 	if len(f.replies) == 0 {
-		return "", errors.New("no reply")
+		return Reply{}, errors.New("no reply")
 	}
 	reply := f.replies[0]
 	f.replies = f.replies[1:]
-	return reply, nil
+	return Reply{Text: reply}, nil
 }
 
 func TestGenerateLetterApprovesEditedLetter(t *testing.T) {
-	p := profile.Profile{Skills: profile.Skills{Expert: []string{"Go"}}}
+	p := profile.Profile{Qualifications: profile.Qualifications{Skills: []profile.SkillEntry{{Name: "Go", Level: "expert"}}}}
 	draft := "我使用 Go 交付服務。[你的姓名][你的聯絡方式]"
 	edited := "我使用 Go 交付服務並持續改善。[你的姓名][你的聯絡方式]"
 	result, err := GenerateLetter(context.Background(), Drafter{Primary: &fakeRunner{name: "claude", replies: []string{`{"letter":"` + draft + `"}`}}}, Reviewer{Primary: &fakeRunner{name: "codex", replies: []string{`{"verdict":"approve","issues":[],"edited_letter":"` + edited + `"}`}}}, "profile", p, Job{Description: "Go services"}, nil, 600)
@@ -45,7 +46,7 @@ func TestGenerateLetterApprovesEditedLetter(t *testing.T) {
 }
 
 func TestGenerateLetterFailsAfterThreeRevisions(t *testing.T) {
-	p := profile.Profile{Skills: profile.Skills{Expert: []string{"Go"}}}
+	p := profile.Profile{Qualifications: profile.Qualifications{Skills: []profile.SkillEntry{{Name: "Go", Level: "expert"}}}}
 	letter := "Go。[你的姓名][你的聯絡方式]"
 	drafter := &fakeRunner{name: "claude", replies: []string{`{"letter":"` + letter + `"}`, `{"letter":"` + letter + `"}`, `{"letter":"` + letter + `"}`}}
 	reviewer := &fakeRunner{name: "codex", replies: []string{`{"verdict":"revise","issues":["精簡"]}`, `{"verdict":"revise","issues":["具體化"]}`, `{"verdict":"revise","issues":["仍需修改"]}`}}
@@ -59,7 +60,7 @@ func TestGenerateLetterFailsAfterThreeRevisions(t *testing.T) {
 }
 
 func TestGuardRejectsUnsupportedTermAndPII(t *testing.T) {
-	p := profile.Profile{Skills: profile.Skills{Expert: []string{"Go"}}}
+	p := profile.Profile{Qualifications: profile.Qualifications{Skills: []profile.SkillEntry{{Name: "Go", Level: "expert"}}}}
 	base := "Go 與 Rust。\n[你的姓名]\n[你的聯絡方式]"
 	if err := Guard(base, p, "Go", nil, 600); err == nil {
 		t.Fatal("Guard accepted unsupported technical term")
@@ -74,8 +75,8 @@ func TestGuardAcceptsSkillFromExperience(t *testing.T) {
 	// SQL is a real skill listed under an experience, not the top-level skills
 	// buckets; the guard must treat it as supported rather than a hallucination.
 	p := profile.Profile{
-		Skills:      profile.Skills{Proficient: []string{"Go"}},
-		Experiences: []profile.Experience{{Skills: []string{"Go", "SQL"}}},
+		Qualifications: profile.Qualifications{Skills: []profile.SkillEntry{{Name: "Go", Level: "proficient"}}},
+		Experiences:    []profile.Experience{{Skills: []string{"Go", "SQL"}}},
 	}
 	if err := Guard("使用 Go 與 SQL 交付服務。\n[你的姓名]\n[你的聯絡方式]", p, "backend role", nil, 600); err != nil {
 		t.Fatalf("Guard rejected a skill listed under experiences: %v", err)
@@ -86,10 +87,11 @@ func TestCommandRunnerUsesConfiguredArgsAndTemporaryDirectory(t *testing.T) {
 	root := t.TempDir()
 	command := writeTestExecutable(t, "#!/bin/sh\nprintf '%s\\n' \"$PWD\"\nprintf '%s\\n' \"$@\"\n")
 	runner := CommandRunner{RunnerName: "test", Command: command, Args: []string{"--model", "configured-model"}, TempRoot: root, Timeout: time.Second}
-	output, err := runner.Invoke(context.Background(), "synthetic prompt")
+	reply, err := runner.Invoke(context.Background(), "synthetic prompt")
 	if err != nil {
 		t.Fatal(err)
 	}
+	output := reply.Text
 	if !strings.Contains(output, "--model\nconfigured-model\nsynthetic prompt") || !strings.Contains(output, root+string(os.PathSeparator)+"jobfinder-agent-") {
 		t.Fatalf("unexpected command output: %q", output)
 	}
@@ -130,11 +132,14 @@ func TestRunnerDefinitionsPinModelsAndNonInteractiveSafetyFlags(t *testing.T) {
 }
 
 func TestCommandRunnerReadsStdinPromptAndResultEnvelope(t *testing.T) {
-	command := writeTestExecutable(t, "#!/bin/sh\nprompt=$(cat)\nprintf '{\"subtype\":\"success\",\"is_error\":false,\"result\":\"%s\"}\\n' \"$prompt\"\n")
+	command := writeTestExecutable(t, "#!/bin/sh\nprompt=$(cat)\nprintf '{\"subtype\":\"success\",\"is_error\":false,\"result\":\"%s\",\"usage\":{\"input_tokens\":12,\"output_tokens\":34},\"total_cost_usd\":0.5}\\n' \"$prompt\"\n")
 	runner := CommandRunner{RunnerName: "test", Command: command, PromptViaStdin: true, ResultEnvelope: true, Timeout: time.Second}
-	output, err := runner.Invoke(context.Background(), "synthetic prompt")
-	if err != nil || output != "synthetic prompt" {
-		t.Fatalf("envelope result = %q, %v", output, err)
+	reply, err := runner.Invoke(context.Background(), "synthetic prompt")
+	if err != nil || reply.Text != "synthetic prompt" {
+		t.Fatalf("envelope result = %q, %v", reply.Text, err)
+	}
+	if reply.Usage.InputTokens != 12 || reply.Usage.OutputTokens != 34 || reply.Usage.CostUSD != 0.5 {
+		t.Fatalf("envelope usage = %+v", reply.Usage)
 	}
 	failing := writeTestExecutable(t, "#!/bin/sh\nprintf '{\"subtype\":\"error_during_execution\",\"is_error\":true,\"result\":\"\"}\\n'\n")
 	if _, err := (CommandRunner{RunnerName: "test", Command: failing, PromptViaStdin: true, ResultEnvelope: true, Timeout: time.Second}).Invoke(context.Background(), "prompt"); err == nil {
@@ -145,14 +150,14 @@ func TestCommandRunnerReadsStdinPromptAndResultEnvelope(t *testing.T) {
 func TestCommandRunnerReadsFinalMessageFile(t *testing.T) {
 	command := writeTestExecutable(t, "#!/bin/sh\nprintf 'noisy transcript\\n'\nwhile [ \"$1\" != '-o' ]; do shift; done\nprintf '{\"letter\":\"final\"}\\n' >\"$2\"\n")
 	runner := CommandRunner{RunnerName: "test", Command: command, LastMessageFlag: "-o", Timeout: time.Second}
-	output, err := runner.Invoke(context.Background(), "synthetic prompt")
-	if err != nil || strings.TrimSpace(output) != `{"letter":"final"}` {
-		t.Fatalf("final message = %q, %v", output, err)
+	reply, err := runner.Invoke(context.Background(), "synthetic prompt")
+	if err != nil || strings.TrimSpace(reply.Text) != `{"letter":"final"}` {
+		t.Fatalf("final message = %q, %v", reply.Text, err)
 	}
 }
 
 func TestExtractObjectIgnoresTranscriptNoiseAndRepeatedAnswers(t *testing.T) {
-	answer := `{"hard_skill":5,"reason":"合成"}`
+	answer := `{"content_fit":5,"reason":"合成"}`
 	// A CLI that echoes the prompt and then prints its answer twice must not be
 	// parsed as one object spanning the noise between the copies.
 	raw := "user\n請回傳 {範例}\ncodex\n" + answer + "\ntokens used\n8,006\n" + answer

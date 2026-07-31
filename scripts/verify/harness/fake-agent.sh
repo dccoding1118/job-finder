@@ -34,6 +34,17 @@ case "${agent}" in
 esac
 
 case "${prompt}" in
+  # The screening gate answers with the JD broken into conditions. The fixture
+  # descriptions drive which of the three outcomes the run exercises.
+  *"硬條件篩選器"*)
+    if [[ "${prompt}" == *"Verification unknown"* ]]; then
+      payload='{"conditions":[{"text":"需相關證照","kind":"required","group":1,"category":"certification","verdict":"unknown","years_required":null,"years_max":null,"industry_keys":[]}]}'
+    elif [[ "${prompt}" == *"Verification unfit"* ]]; then
+      payload='{"conditions":[{"text":"需具備未持有的必備技能","kind":"required","group":1,"category":"skill","verdict":"fail","years_required":null,"years_max":null,"industry_keys":[]}]}'
+    else
+      payload='{"conditions":[{"text":"熟悉 Go 與雲端平台","kind":"required","group":1,"category":"skill","verdict":"pass","years_required":null,"years_max":null,"industry_keys":[]},{"text":"有 Kubernetes 經驗尤佳","kind":"bonus","group":2,"category":"skill","verdict":"fail","years_required":null,"years_max":null,"industry_keys":[]}]}'
+    fi
+    ;;
   *"評分器"*)
 	if [[ -n "${JOBFINDER_VERIFY_AGENT_SIGNAL:-}" ]]; then
 	  : >"${JOBFINDER_VERIFY_AGENT_SIGNAL}"
@@ -42,11 +53,13 @@ case "${prompt}" in
 	  sleep "${JOBFINDER_VERIFY_AGENT_DELAY}"
 	fi
     if [[ "${prompt}" == *"Verification low score"* ]]; then
-      payload='{"hard_skill":60,"domain":60,"seniority":60,"condition":60,"direction":60,"reason":"合成低分情境"}'
+      payload='{"content_fit":60,"benefit_fit":60,"bonus_fit":60,"industry_fit":60,"reason":"合成低分情境"}'
+    elif [[ "${prompt}" == *"Verification unknown"* ]]; then
+      payload='{"content_fit":70,"benefit_fit":70,"bonus_fit":70,"industry_fit":70,"reason":"合成資訊不足情境"}'
     elif [[ "${prompt}" == *"Verification failure"* ]]; then
-      payload='{"hard_skill":80,"domain":80,"seniority":80,"condition":80,"direction":80,"reason":"合成重試情境"}'
+      payload='{"content_fit":80,"benefit_fit":80,"bonus_fit":80,"industry_fit":80,"reason":"合成重試情境"}'
     else
-      payload='{"hard_skill":90,"domain":90,"seniority":90,"condition":90,"direction":90,"reason":"合成核准情境"}'
+      payload='{"content_fit":90,"benefit_fit":90,"bonus_fit":90,"industry_fit":90,"reason":"合成核准情境"}'
     fi
     ;;
   *"起草器"*)

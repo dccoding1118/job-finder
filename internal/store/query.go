@@ -21,26 +21,26 @@ type JobFilter struct {
 
 // Score is the latest matching score retained for a job.
 type Score struct {
-	HardSkill       int       `json:"hard_skill"`
-	Domain          int       `json:"domain"`
-	Seniority       int       `json:"seniority"`
-	Condition       int       `json:"condition"`
-	Direction       int       `json:"direction"`
-	Total           float64   `json:"total"`
-	Reason          string    `json:"reason"`
-	Runner          string    `json:"runner"`
-	CreatedAt       time.Time `json:"created_at"`
-	ProfileRevision *string   `json:"profile_revision"`
+	Content       int       `json:"content_fit"`
+	Benefit       int       `json:"benefit_fit"`
+	Bonus         int       `json:"bonus_fit"`
+	Industry      int       `json:"industry_fit"`
+	Total         float64   `json:"total"`
+	Reason        string    `json:"reason"`
+	Runner        string    `json:"runner"`
+	CreatedAt     time.Time `json:"created_at"`
+	ScoreRevision *string   `json:"score_revision"`
 }
 
 // Letter is an approved or failed letter retained for a job.
 type Letter struct {
-	Content         string    `json:"content"`
-	Status          string    `json:"status"`
-	Rounds          int       `json:"rounds"`
-	ReviewLog       string    `json:"review_log"`
-	CreatedAt       time.Time `json:"created_at"`
-	ProfileRevision *string   `json:"profile_revision"`
+	Content        string    `json:"content"`
+	Status         string    `json:"status"`
+	Rounds         int       `json:"rounds"`
+	ReviewLog      string    `json:"review_log"`
+	CreatedAt      time.Time `json:"created_at"`
+	FilterRevision *string   `json:"filter_revision"`
+	ScoreRevision  *string   `json:"score_revision"`
 }
 
 // StatusEvent records a process or application-state transition.
@@ -57,6 +57,7 @@ type JobDetail struct {
 	Job    Job
 	Score  *Score
 	Letter *Letter
+	Filter *FilterResult
 	Events []StatusEvent
 }
 
@@ -84,9 +85,13 @@ func (s *Store) GetJobDetail(ctx context.Context, id int64) (JobDetail, bool, er
 	if err != nil {
 		return JobDetail{}, false, err
 	}
+	detail.Filter, err = s.CurrentFilterResult(ctx, id)
+	if err != nil {
+		return JobDetail{}, false, err
+	}
 	var letter Letter
 	var letterCreatedAt string
-	err = s.db.QueryRowContext(ctx, `SELECT content, status, rounds, review_log, created_at, profile_revision FROM letters WHERE job_id=? ORDER BY created_at DESC, id DESC LIMIT 1`, id).Scan(&letter.Content, &letter.Status, &letter.Rounds, &letter.ReviewLog, &letterCreatedAt, &letter.ProfileRevision)
+	err = s.db.QueryRowContext(ctx, `SELECT content, status, rounds, review_log, created_at, filter_revision, score_revision FROM letters WHERE job_id=? ORDER BY created_at DESC, id DESC LIMIT 1`, id).Scan(&letter.Content, &letter.Status, &letter.Rounds, &letter.ReviewLog, &letterCreatedAt, &letter.FilterRevision, &letter.ScoreRevision)
 	if err == nil {
 		letter.CreatedAt, err = parseTimestamp(letterCreatedAt)
 		if err != nil {
@@ -123,10 +128,10 @@ func (s *Store) GetJobDetail(ctx context.Context, id int64) (JobDetail, bool, er
 func (s *Store) CurrentScore(ctx context.Context, jobID int64) (*Score, error) {
 	var score Score
 	var createdAt string
-	err := s.db.QueryRowContext(ctx, `SELECT s.dim_hard_skill, s.dim_domain, s.dim_seniority, s.dim_condition, s.dim_direction, s.total, s.reason, s.runner, s.created_at, s.profile_revision
+	err := s.db.QueryRowContext(ctx, `SELECT s.dim_content, s.dim_benefit, s.dim_bonus, s.dim_industry, s.total, s.reason, s.runner, s.created_at, s.score_revision
 		FROM scores s JOIN jobs j ON j.id=s.job_id
-		WHERE s.job_id=? AND s.profile_revision IS j.profile_revision
-		ORDER BY s.created_at DESC, s.id DESC LIMIT 1`, jobID).Scan(&score.HardSkill, &score.Domain, &score.Seniority, &score.Condition, &score.Direction, &score.Total, &score.Reason, &score.Runner, &createdAt, &score.ProfileRevision)
+		WHERE s.job_id=? AND s.score_revision IS j.score_revision
+		ORDER BY s.created_at DESC, s.id DESC LIMIT 1`, jobID).Scan(&score.Content, &score.Benefit, &score.Bonus, &score.Industry, &score.Total, &score.Reason, &score.Runner, &createdAt, &score.ScoreRevision)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -144,7 +149,7 @@ func (s *Store) CurrentScore(ctx context.Context, jobID int64) (*Score, error) {
 func (s *Store) LatestScore(ctx context.Context, jobID int64) (*Score, error) {
 	var score Score
 	var createdAt string
-	err := s.db.QueryRowContext(ctx, `SELECT dim_hard_skill, dim_domain, dim_seniority, dim_condition, dim_direction, total, reason, runner, created_at, profile_revision FROM scores WHERE job_id=? ORDER BY created_at DESC, id DESC LIMIT 1`, jobID).Scan(&score.HardSkill, &score.Domain, &score.Seniority, &score.Condition, &score.Direction, &score.Total, &score.Reason, &score.Runner, &createdAt, &score.ProfileRevision)
+	err := s.db.QueryRowContext(ctx, `SELECT dim_content, dim_benefit, dim_bonus, dim_industry, total, reason, runner, created_at, score_revision FROM scores WHERE job_id=? ORDER BY created_at DESC, id DESC LIMIT 1`, jobID).Scan(&score.Content, &score.Benefit, &score.Bonus, &score.Industry, &score.Total, &score.Reason, &score.Runner, &createdAt, &score.ScoreRevision)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -198,7 +203,7 @@ func (s *Store) ListRuns(ctx context.Context) ([]Run, error) {
 // instant. The daily budget is derived from it rather than a stored counter, so
 // a restart never resets the remaining allowance.
 func (s *Store) CountAgentCallsSince(ctx context.Context, role string, since time.Time) (int, error) {
-	if role != "scorer" && role != "drafter" && role != "reviewer" && role != "calibrator" {
+	if !validAgentRole(role) {
 		return 0, fmt.Errorf("store: invalid agent role %q", role)
 	}
 	count := 0
@@ -256,10 +261,10 @@ func (s *Store) ListJobs(ctx context.Context, filter JobFilter, sort JobSort) ([
 	if sort != "" && sort != JobSortNewest && sort != JobSortScore {
 		return nil, fmt.Errorf("store: invalid job sort %q", sort)
 	}
-	query := `SELECT j.id, j.source, j.external_id, j.url, j.title, j.company_name, j.company_info, j.description, j.salary_min, j.salary_max, j.location, j.remote_type, j.process_state, j.apply_state, j.content_hash, j.filter_hits, j.profile_revision, latest_score.total
+	query := `SELECT j.id, j.source, j.external_id, j.url, j.title, j.company_name, j.company_info, j.description, j.salary_min, j.salary_max, j.location, j.remote_type, j.process_state, j.apply_state, j.content_hash, j.filter_hits, j.filter_revision, j.score_revision, latest_score.total
 		FROM jobs j
 		LEFT JOIN scores latest_score ON latest_score.id = (
-			SELECT id FROM scores WHERE job_id = j.id AND profile_revision IS j.profile_revision ORDER BY created_at DESC, id DESC LIMIT 1
+			SELECT id FROM scores WHERE job_id = j.id AND score_revision IS j.score_revision ORDER BY created_at DESC, id DESC LIMIT 1
 		)
 		WHERE j.process_state <> 'merged'
 		  AND (? = '' OR j.process_state = ?)
@@ -308,12 +313,14 @@ func (s *Store) ListJobs(ctx context.Context, filter JobFilter, sort JobSort) ([
 // left on an older Profile revision waits for the user to ask for it to be
 // reprocessed, so picking it would return work the caller can only discard —
 // and, because the oldest rows sort first, would starve every eligible job
-// behind it.
+// behind it. Each stage matches its own gate's revision column; `filter_unknown`
+// belongs to no stage, because only the user releases a job from it.
 func (s *Store) PickForStage(ctx context.Context, stage, revision string, limit int) ([]Job, error) {
 	if limit <= 0 {
 		return nil, fmt.Errorf("store: invalid pick limit %d", limit)
 	}
 	stateByStage := map[string]string{"filter": "new", "score": "queued", "letter": "letter_requested"}
+	columnByStage := map[string]string{"filter": "filter_revision", "score": "score_revision"}
 	state, ok := stateByStage[stage]
 	if !ok {
 		return nil, fmt.Errorf("store: invalid pipeline stage %q", stage)
@@ -322,8 +329,9 @@ func (s *Store) PickForStage(ctx context.Context, stage, revision string, limit 
 	// alias must cost no filter, score, or letter work whatever else changes.
 	query := "SELECT " + jobColumns + " FROM jobs WHERE process_state = ? AND process_state <> 'merged'"
 	args := []any{state}
-	if revision != "" {
-		query += " AND profile_revision = ?"
+	if column, matched := columnByStage[stage]; matched && revision != "" {
+		// #nosec G202 -- column comes from the fixed stage table above.
+		query += " AND " + column + " = ?"
 		args = append(args, revision)
 	}
 	query += " ORDER BY updated_at, id LIMIT ?"

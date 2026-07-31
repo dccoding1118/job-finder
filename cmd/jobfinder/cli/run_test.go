@@ -10,7 +10,11 @@ import (
 )
 
 func TestRoutedAgentsUsesEachRoleConfiguration(t *testing.T) {
-	scorer, drafter, reviewer, err := routedAgents(roleRoutes{
+	screener, scorer, drafter, reviewer, err := routedAgents(roleRoutes{
+		Filter: roleRoute{
+			Primary:  roleEndpoint{Agent: "claude", Model: "filter-model"},
+			Fallback: roleEndpoint{Agent: "codex", Model: "gpt-5.6-terra"},
+		},
 		Scorer: roleRoute{
 			Primary:  roleEndpoint{Agent: "codex", Model: "gpt-5.6-terra"},
 			Fallback: roleEndpoint{Agent: "claude", Model: "claude-sonnet-5"},
@@ -24,8 +28,13 @@ func TestRoutedAgentsUsesEachRoleConfiguration(t *testing.T) {
 			Fallback: roleEndpoint{Agent: "claude", Model: "review-fallback-model"},
 		},
 	}, time.Minute)
-	if err != nil || scorer.Primary.Name() != "codex" || drafter.Primary.Name() != "claude" || reviewer.Primary.Name() != "codex" {
+	if err != nil || screener.Primary.Name() != "claude" || scorer.Primary.Name() != "codex" || drafter.Primary.Name() != "claude" || reviewer.Primary.Name() != "codex" {
 		t.Fatalf("unexpected routes: %v", err)
+	}
+	// Screening routes on its own: it is condition-by-condition fact checking and
+	// may sit on a cheaper model than scoring.
+	if !containsPair(screener.Primary.(agents.CommandRunner).Args, "--model", "filter-model") {
+		t.Fatalf("filter does not use its role-specific model")
 	}
 	command := scorer.Primary.(agents.CommandRunner)
 	if !containsPair(command.Args, "--model", "gpt-5.6-terra") {
@@ -35,10 +44,10 @@ func TestRoutedAgentsUsesEachRoleConfiguration(t *testing.T) {
 	if !containsPair(reviewerCommand.Args, "--model", "review-model") {
 		t.Fatalf("reviewer does not use its role-specific model: %v", reviewerCommand.Args)
 	}
-	if _, _, _, err := routedAgents(roleRoutes{Scorer: roleRoute{Primary: roleEndpoint{Agent: "invalid", Model: "model"}}}, time.Minute); err == nil {
+	if _, _, _, _, err := routedAgents(roleRoutes{Scorer: roleRoute{Primary: roleEndpoint{Agent: "invalid", Model: "model"}}}, time.Minute); err == nil {
 		t.Fatal("accepted incomplete or invalid routes")
 	}
-	if _, _, _, err := routedAgents(roleRoutes{Scorer: roleRoute{Primary: roleEndpoint{Agent: "claude"}}}, time.Minute); err == nil || !strings.Contains(err.Error(), "endpoint model is required") {
+	if _, _, _, _, err := routedAgents(roleRoutes{Filter: roleRoute{Primary: roleEndpoint{Agent: "claude"}}}, time.Minute); err == nil || !strings.Contains(err.Error(), "endpoint model is required") {
 		t.Fatalf("empty role model error = %v", err)
 	}
 }
@@ -53,8 +62,21 @@ func TestParseFileConfigRejectsUnknownFields(t *testing.T) {
 	}
 }
 
+// The pause switch is the only way to collect without judging, so a config that
+// asks for it must not be silently read as the default running worker.
+func TestParseFileConfigReadsThePausedWorker(t *testing.T) {
+	cfg, err := parseFileConfig([]byte("worker:\n  paused: true\n"))
+	if err != nil || !cfg.Worker.Paused {
+		t.Fatalf("paused worker config = %v, err = %v", cfg.Worker.Paused, err)
+	}
+	cfg, err = parseFileConfig([]byte("worker:\n  scan_interval: 5s\n"))
+	if err != nil || cfg.Worker.Paused {
+		t.Fatalf("default worker config = %v, err = %v", cfg.Worker.Paused, err)
+	}
+}
+
 func TestDirectionQueriesKeepsAtMostThreeDirectionGroups(t *testing.T) {
-	p := profile.Profile{Preferences: profile.Preferences{Directions: []profile.Direction{
+	p := profile.Profile{Search: profile.Search{Directions: []profile.Direction{
 		{Key: "P1", Keywords: []string{"cloud", "platform"}},
 		{Key: "P2", Keywords: []string{"backend", "Go"}},
 		{Key: "P3", Keywords: []string{"Kubernetes", "reliability"}},

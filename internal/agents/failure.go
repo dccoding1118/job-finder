@@ -15,7 +15,10 @@ const (
 	FailureInvalidJSON     = "invalid_json"
 	FailureReasonTooLong   = "reason_too_long"
 	FailureScoreOutOfRange = "score_out_of_range"
-	FailureInvalidContent  = "invalid_content"
+	// FailureInvalidCondition covers a Filter answer whose condition list broke
+	// the contract: an unknown category, a non-positive group, or negative years.
+	FailureInvalidCondition = "invalid_condition"
+	FailureInvalidContent   = "invalid_content"
 )
 
 // ClassifyFailure reports why an audited call with ok=false was rejected. The
@@ -33,6 +36,10 @@ func ClassifyFailure(role, output string) string {
 		return FailureNoJSON
 	}
 	switch role {
+	case "filter":
+		if _, err := parseFilter(output); err != nil {
+			return classifyFilter(err)
+		}
 	case "scorer":
 		return classifyScore(match)
 	case "drafter":
@@ -58,7 +65,7 @@ func classifyScore(match string) string {
 	if err := json.Unmarshal([]byte(match), &parsed); err != nil {
 		return FailureInvalidJSON
 	}
-	for _, value := range []int{parsed.HardSkill, parsed.Domain, parsed.Seniority, parsed.Condition, parsed.Direction} {
+	for _, value := range []int{parsed.Content, parsed.Benefit, parsed.Bonus, parsed.Industry} {
 		if value < 0 || value > 100 {
 			return FailureScoreOutOfRange
 		}
@@ -67,6 +74,13 @@ func classifyScore(match string) string {
 		return FailureReasonTooLong
 	}
 	return FailureInvalidContent
+}
+
+func classifyFilter(err error) string {
+	if strings.Contains(err.Error(), "invalid condition") {
+		return FailureInvalidCondition
+	}
+	return classifyGeneric(err)
 }
 
 func classifyGeneric(err error) string {

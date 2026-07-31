@@ -23,39 +23,52 @@ type VerificationSnapshot struct {
 }
 
 type VerificationJob struct {
-	ID                int64               `json:"id"`
-	Source            string              `json:"source"`
-	ExternalID        string              `json:"external_id"`
-	URL               string              `json:"url"`
-	Title             string              `json:"title"`
-	CompanyName       string              `json:"company_name"`
-	CompanyInfo       string              `json:"company_info"`
-	DescriptionSHA256 string              `json:"description_sha256"`
-	DescriptionLength int                 `json:"description_length"`
-	SalaryMin         *int                `json:"salary_min"`
-	SalaryMax         *int                `json:"salary_max"`
-	Location          string              `json:"location"`
-	RemoteType        string              `json:"remote_type"`
-	ProcessState      string              `json:"process_state"`
-	ApplyState        *string             `json:"apply_state"`
-	ContentHash       *string             `json:"content_hash"`
-	FilterHits        []string            `json:"filter_hits"`
-	ProfileRevision   *string             `json:"profile_revision"`
-	Score             *VerificationScore  `json:"score"`
-	Letter            *VerificationLetter `json:"letter"`
-	Events            []VerificationEvent `json:"events"`
+	ID                int64                         `json:"id"`
+	Source            string                        `json:"source"`
+	ExternalID        string                        `json:"external_id"`
+	URL               string                        `json:"url"`
+	Title             string                        `json:"title"`
+	CompanyName       string                        `json:"company_name"`
+	CompanyInfo       string                        `json:"company_info"`
+	DescriptionSHA256 string                        `json:"description_sha256"`
+	DescriptionLength int                           `json:"description_length"`
+	SalaryMin         *int                          `json:"salary_min"`
+	SalaryMax         *int                          `json:"salary_max"`
+	Location          string                        `json:"location"`
+	RemoteType        string                        `json:"remote_type"`
+	ProcessState      string                        `json:"process_state"`
+	ApplyState        *string                       `json:"apply_state"`
+	ContentHash       *string                       `json:"content_hash"`
+	FilterHits        []string                      `json:"filter_hits"`
+	FilterRevision    *string                       `json:"filter_revision"`
+	ScoreRevision     *string                       `json:"score_revision"`
+	FilterOutcome     *string                       `json:"filter_outcome"`
+	FilterConditions  []VerificationFilterCondition `json:"filter_conditions"`
+	Score             *VerificationScore            `json:"score"`
+	Letter            *VerificationLetter           `json:"letter"`
+	Events            []VerificationEvent           `json:"events"`
+}
+
+// VerificationFilterCondition is one screening condition reduced to its contract
+// fields. Rule is only set for the structural rules, whose names are a fixed
+// vocabulary; a semantically derived condition's text comes from the JD and is
+// therefore never carried into the snapshot.
+type VerificationFilterCondition struct {
+	Rule     string `json:"rule"`
+	Kind     string `json:"kind"`
+	Category string `json:"category"`
+	Verdict  string `json:"verdict"`
 }
 
 type VerificationScore struct {
-	HardSkill       int     `json:"hard_skill"`
-	Domain          int     `json:"domain"`
-	Seniority       int     `json:"seniority"`
-	Condition       int     `json:"condition"`
-	Direction       int     `json:"direction"`
-	Total           float64 `json:"total"`
-	ReasonSHA256    string  `json:"reason_sha256"`
-	Runner          string  `json:"runner"`
-	ProfileRevision *string `json:"profile_revision"`
+	Content       int     `json:"content_fit"`
+	Benefit       int     `json:"benefit_fit"`
+	Bonus         int     `json:"bonus_fit"`
+	Industry      int     `json:"industry_fit"`
+	Total         float64 `json:"total"`
+	ReasonSHA256  string  `json:"reason_sha256"`
+	Runner        string  `json:"runner"`
+	ScoreRevision *string `json:"score_revision"`
 }
 
 type VerificationLetter struct {
@@ -68,7 +81,8 @@ type VerificationLetter struct {
 	RunnerReview          string  `json:"runner_review"`
 	HasNamePlaceholder    bool    `json:"has_name_placeholder"`
 	HasContactPlaceholder bool    `json:"has_contact_placeholder"`
-	ProfileRevision       *string `json:"profile_revision"`
+	FilterRevision        *string `json:"filter_revision"`
+	ScoreRevision         *string `json:"score_revision"`
 }
 
 type VerificationEvent struct {
@@ -78,11 +92,12 @@ type VerificationEvent struct {
 }
 
 type VerificationAgentCalls struct {
-	Role            string  `json:"role"`
-	Runner          string  `json:"runner"`
-	OK              bool    `json:"ok"`
-	Count           int     `json:"count"`
-	ProfileRevision *string `json:"profile_revision"`
+	Role           string  `json:"role"`
+	Runner         string  `json:"runner"`
+	OK             bool    `json:"ok"`
+	Count          int     `json:"count"`
+	FilterRevision *string `json:"filter_revision"`
+	ScoreRevision  *string `json:"score_revision"`
 }
 
 // SnapshotForVerification reads only safe summaries needed to reconstruct E2E assertions.
@@ -131,7 +146,20 @@ func (s *Store) SnapshotForVerification(ctx context.Context) (VerificationSnapsh
 			Title: job.Title, CompanyName: job.CompanyName, CompanyInfo: job.CompanyInfo,
 			SalaryMin: job.SalaryMin, SalaryMax: job.SalaryMax, Location: job.Location,
 			RemoteType: job.RemoteType, ProcessState: job.ProcessState, ApplyState: job.ApplyState,
-			ContentHash: job.ContentHash, FilterHits: []string{}, ProfileRevision: job.ProfileRevision, Events: []VerificationEvent{},
+			ContentHash: job.ContentHash, FilterHits: []string{}, FilterRevision: job.FilterRevision,
+			ScoreRevision: job.ScoreRevision, Events: []VerificationEvent{},
+			FilterConditions: []VerificationFilterCondition{},
+		}
+		if detail.Filter != nil {
+			outcome := detail.Filter.Outcome
+			item.FilterOutcome = &outcome
+			for _, condition := range detail.Filter.Conditions {
+				entry := VerificationFilterCondition{Kind: condition.Kind, Category: condition.Category, Verdict: condition.Verdict}
+				if condition.Category == "other" {
+					entry.Rule = condition.Text
+				}
+				item.FilterConditions = append(item.FilterConditions, entry)
+			}
 		}
 		if job.Description != nil {
 			item.DescriptionSHA256 = digest(*job.Description)
@@ -148,10 +176,9 @@ func (s *Store) SnapshotForVerification(ctx context.Context) (VerificationSnapsh
 		}
 		if detail.Score != nil {
 			item.Score = &VerificationScore{
-				HardSkill: detail.Score.HardSkill, Domain: detail.Score.Domain,
-				Seniority: detail.Score.Seniority, Condition: detail.Score.Condition,
-				Direction: detail.Score.Direction, Total: detail.Score.Total,
-				ReasonSHA256: digest(detail.Score.Reason), Runner: detail.Score.Runner, ProfileRevision: detail.Score.ProfileRevision,
+				Content: detail.Score.Content, Benefit: detail.Score.Benefit,
+				Bonus: detail.Score.Bonus, Industry: detail.Score.Industry, Total: detail.Score.Total,
+				ReasonSHA256: digest(detail.Score.Reason), Runner: detail.Score.Runner, ScoreRevision: detail.Score.ScoreRevision,
 			}
 		}
 		if detail.Letter != nil {
@@ -169,7 +196,8 @@ func (s *Store) SnapshotForVerification(ctx context.Context) (VerificationSnapsh
 				ReviewEntries: entries, RunnerDraft: draft, RunnerReview: review,
 				HasNamePlaceholder:    strings.Contains(detail.Letter.Content, "[你的姓名]"),
 				HasContactPlaceholder: strings.Contains(detail.Letter.Content, "[你的聯絡方式]"),
-				ProfileRevision:       detail.Letter.ProfileRevision,
+				FilterRevision:        detail.Letter.FilterRevision,
+				ScoreRevision:         detail.Letter.ScoreRevision,
 			}
 		}
 		for _, event := range detail.Events {
@@ -182,7 +210,7 @@ func (s *Store) SnapshotForVerification(ctx context.Context) (VerificationSnapsh
 	if err != nil {
 		return out, err
 	}
-	callRows, err := s.db.QueryContext(ctx, `SELECT role, runner, ok, profile_revision, COUNT(*) FROM agent_calls GROUP BY role, runner, ok, profile_revision ORDER BY role, runner, ok, profile_revision`)
+	callRows, err := s.db.QueryContext(ctx, `SELECT role, runner, ok, filter_revision, score_revision, COUNT(*) FROM agent_calls GROUP BY role, runner, ok, filter_revision, score_revision ORDER BY role, runner, ok, filter_revision, score_revision`)
 	if err != nil {
 		return out, fmt.Errorf("verification: summarize agent calls: %w", err)
 	}
@@ -191,7 +219,7 @@ func (s *Store) SnapshotForVerification(ctx context.Context) (VerificationSnapsh
 	for callRows.Next() {
 		var call VerificationAgentCalls
 		var ok int
-		if err := callRows.Scan(&call.Role, &call.Runner, &ok, &call.ProfileRevision, &call.Count); err != nil {
+		if err := callRows.Scan(&call.Role, &call.Runner, &ok, &call.FilterRevision, &call.ScoreRevision, &call.Count); err != nil {
 			return out, fmt.Errorf("verification: scan agent calls: %w", err)
 		}
 		call.OK = ok == 1

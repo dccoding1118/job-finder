@@ -34,14 +34,20 @@ func newServeCmd() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		if err := lockWorker(rt.cfg.DB.Path); err != nil {
-			return err
+		// A paused worker still serves the API and still collects: jobs accumulate
+		// at `new` and no stage consumes them, which is what a run needs while the
+		// Profile is not yet settled. The worker lock is left unheld so the stages
+		// can then be driven in batches by hand with `run --stage`.
+		if !rt.workerPaused {
+			if err := lockWorker(rt.cfg.DB.Path); err != nil {
+				return err
+			}
+			defer unlockWorker(rt.cfg.DB.Path)
+			worker := &pipeline.Worker{Pipeline: rt.pipeline, ScanInterval: rt.scanInterval}
+			workerCtx, stopWorker := context.WithCancel(cmd.Context())
+			defer stopWorker()
+			go func() { _ = worker.Run(workerCtx) }()
 		}
-		defer unlockWorker(rt.cfg.DB.Path)
-		worker := &pipeline.Worker{Pipeline: rt.pipeline, ScanInterval: rt.scanInterval}
-		workerCtx, stopWorker := context.WithCancel(cmd.Context())
-		defer stopWorker()
-		go func() { _ = worker.Run(workerCtx) }()
 		go func() {
 			<-cmd.Context().Done()
 			_ = server.Shutdown(context.Background())

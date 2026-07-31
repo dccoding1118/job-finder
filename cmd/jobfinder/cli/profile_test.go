@@ -52,30 +52,35 @@ func TestProfileLintRejectsDenylistMatch(t *testing.T) {
 }
 
 func TestDefaultScoringWeights(t *testing.T) {
-	want := [5]float64{.30, .15, .15, .20, .20}
+	want := [4]float64{.50, .20, .15, .15}
 	if got := defaultScoringWeights(); got != want {
 		t.Fatalf("defaultScoringWeights() = %v, want %v", got, want)
 	}
 }
 
-const testProfileYAML = `summary: anonymous engineering profile
-years_of_experience: 8
-education: {degree: master, field: computer science}
-experiences:
-  - role: backend engineer
-    org_type: technology provider
-    years: 4
-    summary: service delivery
-    achievements: [reliable delivery]
-    skills: [Go]
-skills: {expert: [Java], proficient: [Go], familiar: [Kubernetes]}
-certifications: []
-preferences:
+const testProfileYAML = `search:
+  directions: [{key: P1, title: cloud architecture, keywords: [cloud]}]
+  locations: [Taipei]
+requirements:
   salary_min: 0
-  salary_target: 0
   locations: [Taipei]
   remote: preferred
-  directions: [{key: P1, title: cloud architecture, keywords: [cloud]}]
   industry_avoid: []
+intents:
+  salary_target: 0
+  content_likes: [anonymous engineering work]
+experiences:
+  - industry: technology services
+    years: 4
+    is_management: false
+    skills: [Go]
+    org_type: technology provider
+    role: backend engineer
+    achievements: [reliable delivery]
+qualifications:
+  education: [{level: master, field: computer science, status: graduated}]
+  skills: [{name: Go, level: proficient}]
+  certifications: []
+  languages: []
 honesty_bounds: [configuration focused]
 `

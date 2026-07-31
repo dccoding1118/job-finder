@@ -28,45 +28,48 @@ manifest 以固定 key 產生穩定 unpacked extension ID，最低支援 Chrome 
 
 ## 3. Side Panel 儀表板（B4）
 
-「系統」頁的 Profile 卡依 API 呈現 `missing`／`invalid`／`ready`：missing 提供「開始設定」，invalid 顯示安全問題摘要與人工修復提示，ready 顯示年資、技能數、經歷數、方向與 revision 短碼。卡片開啟 extension 自有的全頁編輯器，不建立獨立 Web UI。
+「系統」頁的 Profile 卡依 API 呈現 `missing`／`invalid`／`ready`：missing 提供「開始設定」，invalid 顯示安全問題摘要與人工修復提示，ready 顯示物化年資、技能數、經歷數、方向與兩個 revision 短碼。卡片開啟 extension 自有的全頁編輯器，不建立獨立 Web UI。
 
-編輯器依序包含專業摘要、學歷、經歷與成就、技能與證照、求職方向與條件、產業避開與篩選、誠實邊界；陣列可新增、刪除與排序。欄位使用業務用語，前端即時檢查只提供提示，後端驗證是唯一權威。
+編輯器依 Profile 六個區段依序呈現：搜尋條件（方向與關鍵字）、硬性條件（薪資下限、地區（下拉選單，台灣各直轄市與縣市＋全台＋海外）、遠端四值、工作型態（四選項複選）、排除產業／職稱／內文／公司）、軟性偏好（目標薪資、想做與不想做的工作內容、期許產業）、工作經歷（一份工作一列：產業、年資、是否管理職、是否計入加總、技能、角色與量化成就）、資格（學歷與狀態、技能與熟練度、證照與狀態、語言與程度；技能、證照與語言各為一項一列，便於一眼看出漏了什麼）、誠實邊界；陣列可新增、刪除與排序。表單以文案說明每區段影響哪一關：硬性條件決定「適合與否」、軟性偏好決定「推不推薦」。
+
+`derived` 的年資加總為唯讀，隨經歷列表即時重算顯示，不可手動編輯。`qualifications.skills` 提供「從經歷載入」按鈕，把各段經歷列到的技能補進總表（預設熟練度 `expert`），帶入項標示來源；已在表上的技能不重複帶入且熟練度不被改寫，故重複按下不會覆蓋使用者調過的值。使用者再自行調整熟練度並補上工作外取得的技能。欄位使用業務用語，前端即時檢查只提供提示，後端驗證是唯一權威。
 
 - 草稿只存在 editor page 記憶體；重新整理、關閉或 extension reload 後不保留，有未儲存內容時離頁確認。
 - 儲存確認說明新擷取職缺會立即使用新版、既有職缺保留原評分；確認後才以 GET 的 ETag 送出 `PUT`。
 - 儲存成功顯示 revision 短碼；`412 profile_conflict` 保留草稿並要求重新載入，不提供強制覆蓋。
-- Job 清單與詳情將分數四捨五入為整數，並以綠色「Profile revision · 最新」或黃色「Profile revision · 待重評」呈現評分版本；Letter stale 另行提示，不改 verdict／apply。
+- Job 清單與詳情將分數四捨五入為整數，並以綠色「最新」或黃色「待重評」分別呈現篩選版本（`filter_stale`）與評分版本（`score_stale`）；Letter stale 另行提示，不改 verdict／apply。
 - 動態陣列新增後，焦點移至該按鈕所屬區塊的新欄位並以最近距離捲入畫面，不跳到其他同型清單。
 
 Side Panel 固定提供「目前職缺、待看、推薦、系統」四個頁籤。sticky header 顯示品牌、API 連線、目前頁面脈絡、主題切換與重新整理；內容在 320px 以上維持單欄；目前職缺的主要動作置於 sticky action dock。toolbar action 以 `chrome.sidePanel.setPanelBehavior({openPanelOnActionClick: true})` 開啟 Side Panel。
 
 | 頁籤 | 資料 | 使用者動作 |
 |---|---|---|
-| 目前職缺 | active tab capture context 對應的 Job 詳情；或使用者從推薦清單選取的 Job | 檢視判定、總分／命中條件、理由、五維、JD、求職信與投遞狀態；檢視同一職缺的其他來源連結；重新評分這一筆；開啟原始連結 |
-| 待看 | `discovered` Job 的職稱、公司、薪資、地點與原始連結 | 以明確使用者動作開啟原始頁面；以「載入更多」追加下一頁 |
+| 目前職缺 | active tab capture context 對應的 Job 詳情；或使用者從推薦清單選取的 Job | 檢視判定、總分／篩選逐條結論、理由、四維、JD、求職信與投遞狀態；檢視同一職缺的其他來源連結；重新處理這一筆；開啟原始連結 |
+| 待看 | `discovered` Job 的職稱、公司、薪資、地點與原始連結 | 以明確使用者動作開啟原始頁面補全文；以「載入更多」追加下一頁 |
 | 推薦 | 預設 `verdict=recommended` 且按 Match Score 排序的清單；進階篩選可切換判定、處理、投遞與來源 | 選取一筆後切到目前職缺；不自動開啟原始頁面 |
 | 系統 | 依序呈現「連線與設定」「Profile」「疑似重複」「自動與手動批次」「處理進度」「Agent 呼叫紀錄」「批次歷程」群組 | 開啟 Options、開始設定／編輯 Profile、更新過時評分、查看每日 08:30 排程、手動抓取、檢視待處理量、裁決疑似重複職缺、檢視 Agent 呼叫結果與歷程 |
 
-清單預設顯示判定為推薦的職缺，依最新 Match Score 由高至低排序。推薦與待看清單各自讀取 API 第一頁；回應有 `next_cursor` 時在該清單底部顯示「載入更多」，使用者按下後帶回 cursor（推薦清單並帶回相同篩選）追加下一頁，已載入項目不被覆蓋、重複 id 不重複追加。請求期間停用該按鈕；末頁不顯示按鈕。追加完成不得改變目前捲動位置。變更篩選或重新整理會清除兩份 cursor 並從第一頁載入，過期分頁回應不得寫回新篩選結果。四個頁籤在頁面生命週期內各自保存捲動位置；從推薦清單選取職缺後切至目前職缺，返回推薦頁時恢復原位置，待看頁在頁籤往返後同樣恢復原位置。使用者開啟過的推薦職缺於當次頁面標示「已看」，不持久化。無分數或投遞狀態時顯示「—」。複製使用 `navigator.clipboard.writeText`，manifest 僅為此功能宣告 `clipboardRead`／`clipboardWrite`；失敗時保留可選取文字並顯示說明。五維分數以技能、領域、資歷、條件、方向與總分呈現；Run 統計逐項顯示，不得顯示為物件字串。判定與狀態不得只以顏色表達，須同時有文字或圖示；所有控制項可用鍵盤操作並有可辨識名稱。
+清單預設顯示判定為推薦的職缺，依最新 Match Score 由高至低排序。推薦與待看清單各自讀取 API 第一頁；回應有 `next_cursor` 時在該清單底部顯示「載入更多」，使用者按下後帶回 cursor（推薦清單並帶回相同篩選）追加下一頁，已載入項目不被覆蓋、重複 id 不重複追加。請求期間停用該按鈕；末頁不顯示按鈕。追加完成不得改變目前捲動位置。變更篩選或重新整理會清除兩份 cursor 並從第一頁載入，過期分頁回應不得寫回新篩選結果。四個頁籤在頁面生命週期內各自保存捲動位置；從推薦清單選取職缺後切至目前職缺，返回推薦頁時恢復原位置，待看頁在頁籤往返後同樣恢復原位置。使用者開啟過的推薦職缺於當次頁面標示「已看」，不持久化。無分數或投遞狀態時顯示「—」。複製使用 `navigator.clipboard.writeText`，manifest 僅為此功能宣告 `clipboardRead`／`clipboardWrite`；失敗時保留可選取文字並顯示說明。四維分數以工作內容、待遇與制度、加分條件、產業與總分呈現；判不適合或待看者以逐條清單呈現未通過與資訊不足的條件（必備與加分分區），不只顯示條件名稱字串。Run 統計逐項顯示，不得顯示為物件字串。判定與狀態不得只以顏色表達，須同時有文字或圖示；所有控制項可用鍵盤操作並有可辨識名稱。
 
 主題以 `data-theme="light|dark"` 套用 `ui-design/DESIGN.md` 的語意 token。使用者選擇存於 extension local storage 的 `theme` 欄位；切換只改視覺，不重設 active tab、選取 Job、表單或 busy 狀態。JD、求職信與 Job response 只存在當次頁面記憶體，離線時可繼續閱讀，但不得寫入 extension storage。
 
 **求職信生成入口**（PRD R5.0、R6.8）：對照區依 API 回傳的 `letter_state` 決定呈現——`none` 顯示「產生求職信」按鈕；按下後送出 `POST /api/v1/jobs/{id}/letter`，立即轉為處理中並停用按鈕（回應為受理，不等待完成）；`requested` 顯示處理中與說明「後端完成後可重新載入」；`ready` 顯示求職信與複製；`failed` 顯示未過審與「再次產生」。生成結果由使用者重新整理或下次載入時取得，插件不得為此輪詢高頻請求。
 
-**單筆重新評分**：`process_state` 為 `scored` 或 `shortlisted` 且連線正常時，action dock 顯示次要按鈕「重新評分」；按下後送出 `POST /api/v1/jobs/{id}/rescore`，請求期間停用按鈕，成功後該筆立即呈現為評分中並依 §4.2 輪詢結果。已進入求職信階段的職缺不顯示此按鈕；後端拒絕時以 toast 說明，不改變畫面狀態。
+**單筆重新處理**：`process_state` 為 `filtered_out`、`scored` 或 `shortlisted` 且連線正常時，action dock 顯示次要按鈕「重新處理」；按下後送出 `POST /api/v1/jobs/{id}/reprocess`，請求期間停用按鈕，成功後該筆立即呈現為篩選中並依 §4.2 輪詢結果。判定為不適合的職缺同樣提供此入口——使用者不同意的判定既可能出在評分關，也可能出在篩選關。處理中的職缺與求職信階段的職缺不顯示此按鈕；後端拒絕時以 toast 說明，不改變畫面狀態。
+
 
 **同一職缺的其他來源**（PRD R2.8、R6.12）：Job 回應帶 `group` 時，目前職缺於原始連結旁列出同群其他來源的平台與連結，供使用者選擇從哪個平台投遞；不重複顯示評分與求職信——那些屬於整個 group，只有一份。
 
 **疑似重複**：系統頁讀取 `GET /api/v1/duplicates`，逐筆併排兩邊的職稱、公司、地區、來源與相似度，提供「合併」與「忽略」；合併後清單即少一筆，忽略後不再出現。合併與忽略都是使用者的明確動作，插件不自動裁決。已合併的職缺可於目前職缺以「取消合併」還原。
 
-**處理進度**：系統頁讀取 `GET /api/v1/status`，以待補全文、待條件篩選、待評分、信件產生中四項筆數呈現常駐 worker 的待消化量，並顯示當日評分額度餘額（未設上限時顯示「不限」）。Agent 呼叫紀錄逐筆顯示角色、runner、呼叫成功或未完成、職缺 ID 與耗時秒數；未完成者另以中文說明後端回傳的失敗類別並附截斷回應。低分或不推薦的評分是成功呼叫，不得呈現為失敗。此區只在重新整理或載入時取得，不輪詢。
+**處理進度**：系統頁讀取 `GET /api/v1/status`，以待補全文、待篩選、待看（資訊不足）、待評分、信件產生中五項筆數呈現常駐 worker 的待消化量，並顯示當日篩選與評分額度餘額（未設上限時顯示「不限」）。Agent 呼叫紀錄逐筆顯示角色、runner、呼叫成功或未完成、職缺 ID 與耗時秒數；未完成者另以中文說明後端回傳的失敗類別並附截斷回應。低分或不推薦的評分是成功呼叫，不得呈現為失敗。此區只在重新整理或載入時取得，不輪詢。
 
 ## 4. 半被動擷取與目前分頁 context（104：B5；Cake：B6）
 
 | 模式 | 觸發頁面 | 擷取內容 | API 行為 |
 |---|---|---|---|
-| 列表收割 | 104 搜尋結果頁／職缺通知頁、Cake 搜尋與職類列表頁 | 每筆可見項目的 external_id、url、職稱、公司、薪資、地區 | `POST /api/v1/capture/list` → 既有 Job 直接回現行判定；新職缺 → 可用條件篩選 → `discovered` ∣ `filtered_out`。回傳每筆 verdict 供就地標記 |
-| 內頁擷取 | 職缺內頁載入完成 | 104：JSON-LD `JobPosting` 優先、DOM 片段備援；Cake：`__NEXT_DATA__` 的 `pageProps.job` | `POST /api/v1/capture/job` → 補全文 → 條件篩選；同步回 `unfit` 或快取評分，否則回 `pending_score` 由 Side Panel 輪詢（§4.2） |
+| 列表收割 | 104 搜尋結果頁／職缺通知頁、Cake 搜尋與職類列表頁 | 每筆可見項目的 external_id、url、職稱、公司、薪資、地區 | `POST /api/v1/capture/list` → 既有 Job 直接回現行判定；新職缺 → 可用的結構化硬規則 → `discovered` ∣ `filtered_out`。回傳每筆 verdict 供就地標記 |
+| 內頁擷取 | 職缺內頁載入完成 | 104：JSON-LD `JobPosting` 優先、DOM 片段備援；Cake：`__NEXT_DATA__` 的 `pageProps.job` | `POST /api/v1/capture/job` → 補全文 → 結構化硬規則；同步回 `unfit` 或快取評分，否則回 `pending_screen` 由 Side Panel 輪詢語意篩選與評分結果（§4.2） |
 
 payload 一律帶 `source`（`104` / `cake`），由 API 分派至對應解析器（[design-crawler](design-crawler.md) §2.1、§4）。判定回傳與就地標記兩平台共用同一套語意；插件不因平台不同而改變呈現規則。
 
@@ -108,7 +111,7 @@ Cake 是單頁應用（SPA）：使用者從列表頁點進職缺內頁**不會�
 **列表以 `__NEXT_DATA__` 為主、DOM 為輔**：`__NEXT_DATA__` 是結構化資料，欄位比 DOM 穩定得多，且 content script 可直接讀取該 `<script>` 的文字節點，不需注入 page world。但它只反映**首次 SSR 的那組條件**——使用者在頁內改條件或翻頁後不會更新。因此每次收割先比對 `props.pageProps.ssr.search` 與目前 `location.search`。該欄位是**物件**（`query`、`page`、`filters`），不是 URL 的 query string，比對一律保守：
 
 - URL 的條件只有 `query` 與 `page`、且與 `ssr.search` 的同名值一致（`filters` 為空）⇒ 直接取 `initialState.jobSearch.entityByPathId`。
-- 其餘一切情況（帶任何其他參數、`filters` 非空、缺 `__NEXT_DATA__`）⇒ 退回 DOM 收割，並以 MutationObserver 涵蓋後續注入的項目。巡邏 URL 一律帶條件參數，因此實務上走的是 DOM 收割。
+- 其餘一切情況（帶任何其他參數、`filters` 非空、缺 `__NEXT_DATA__`）⇒ 退回 DOM 收割，並以 MutationObserver 涵蓋後續注入的項目。使用者一旦在 Cake 加上搜尋條件即落入此情況，因此實務上走的是 DOM 收割。
 
 `filters` 與 URL 參數之間的映射不得靠推測補齊：條件對不上就當作過時，否則會把別組條件的職缺歸給畫面上這組搜尋。
 
@@ -141,15 +144,17 @@ Cake 沒有 104 那種置頂廣告職缺，不需排除規則；`external_id` �
 
 | `verdict` | 標記 | 附帶資訊 |
 |---|---|---|
-| `unfit` | 紅底＋排除圖示，項目降低視覺權重 | 命中的條件名稱（`filter_hits`） |
+| `unfit` | 紅底＋排除圖示，項目降低視覺權重 | 未通過的條件名稱（`filter_hits`） |
 | `recommended` | 綠底＋推薦圖示 | 總分 |
 | `not_recommended` | 紫底＋淡化 | 總分 |
 | `pending_detail` | 藍底「待看」 | 提示點開內頁可取得完整評估 |
-| `pending_score` | 黃底「評分中」 | 無 |
+| `pending_score` | 黃底「處理中」 | 無 |
 
 五種標記各有專屬底色與外框，彼此可一眼區分。
 
-`unfit` 與 `pending_detail` 兩者，是清單頁以「較少欄位」能得到的全部結論——列表沒有 JD 全文，不足以支撐五維評分，插件不得在此模式顯示或臆測分數。`recommended` 與 `not_recommended` 只會出現在**已存在於資料庫**的職缺（先前批次抓取或已點開過內頁），屬直接取用既有判定，不重跑任何階段。
+`unfit` 與 `pending_detail` 兩者，是清單頁以「較少欄位」能得到的全部結論——列表沒有 JD 全文，不足以支撐語意篩選與四維評分，插件不得在此模式顯示或臆測分數。`recommended` 與 `not_recommended` 只會出現在**已存在於資料庫**的職缺（先前批次抓取或已點開過內頁），屬直接取用既有判定，不重跑任何階段。
+
+**判定快取的失效**（兩平台共用）：已取得判定的項目在該份文件內以 external_id 快取重用，節點被虛擬捲動回收再出現時直接重貼。分頁自隱藏轉為可見時，該快取與每筆的次數配額一併清除並重新收割——使用者點開內頁會改變該筆的判定，而那發生在另一個分頁，清單自己不會知道。已存在的職缺在 `capture/list` 只被讀取、不重新篩選，因此重問不產生任何 Agent 呼叫。
 
 **送出時機與重試**（兩平台共用）：收割以 MutationObserver 觸發，項目累積成一批後，於**清單停止變動 400ms** 才送出，最長不超過首次變動後 1.5 秒；換頁與改條件是把新結果注入同一份文件，故此延遲確保讀到的是渲染完成的欄位，而非半渲染狀態下缺漏的職稱或公司名。回應未涵蓋的 external_id **不視為已處理**：該筆保留可再問狀態，由後續收割最多再問 2 次（同一份結果最多 3 次）；URL 改變時重置每筆的次數配額。請求失敗不計入次數。若無此重試，任何一次讀取不全都會讓該筆在使用者重新整理前永遠無標記。
 
@@ -157,21 +162,23 @@ Cake 沒有 104 那種置頂廣告職缺，不需排除規則；`external_id` �
 
 ### 4.2 內頁 Side Panel（PRD R9.2）
 
-評分是非同步的（[design-pipeline](design-pipeline.md) §2.2），因此 Side Panel 依 `capture/job` 回應與後續輪詢的 `verdict` 呈現：
+語意篩選與評分都是非同步的（[design-pipeline](design-pipeline.md) §2.2），因此 Side Panel 依 `capture/job` 回應與後續輪詢的 `verdict` 呈現：
 
 | `verdict` | 呈現 | 何時出現 |
 |---|---|---|
-| `unfit` | 不適合＋命中的 `filter_hits` | `capture/job` 同步回應即得 |
-| `recommended`／`not_recommended`（`cached`） | 總分、五維與 reason，標示「快取」 | `capture/job` 同步回應即得 |
-| `pending_score` | 評分中 | `capture/job` 同步回應；轉入輪詢 |
-| `pending_score` ＋ `budget_exhausted` | 已達今日評分上限 | 同上；不輪詢 |
-| `recommended`／`not_recommended` | 總分、五維與 reason | 輪詢取得 |
+| `unfit` | 不適合＋未通過的 `filter_hits` | `capture/job` 同步回應即得（結構化條件） |
+| `recommended`／`not_recommended`（`cached`） | 總分、四維與 reason，標示「快取」 | `capture/job` 同步回應即得 |
+| `pending_score` | 處理中 | `capture/job` 同步回應；轉入輪詢 |
+| `pending_score` ＋ `budget_exhausted` | 已達今日上限 | 同上；不輪詢 |
+| `unfit` | 不適合＋未通過的條件逐條清單 | 輪詢取得（語意篩選） |
+| `pending_screen` | 篩選中 | 擷取當下（尚未完成篩選） |
+| `recommended`／`not_recommended` | 總分、四維與 reason | 輪詢取得 |
 
-**條件篩選不耗用 LLM，因此 `unfit` 一律是同步的**——被排除的職缺當場就有結論，不進入輪詢。只有通過篩選、確實要送 LLM 的職缺才等待。
+**結構化硬規則不耗用 LLM，因此該類 `unfit` 一律是同步的**——被排除的職缺當場就有結論，不進入輪詢。只有通過結構化條件、確實要送 LLM 的職缺才等待。
 
-`pending_score` 時 Side Panel 以 3 秒間隔輪詢 `GET /api/v1/jobs/{id}`，至 verdict 轉為終態或達 5 分鐘上限為止；逾時後停止輪詢並顯示「仍在處理，可稍後重新整理」。輪詢對象是 localhost API，不觸及 104 也不觸發 LLM，因此與 §3 求職信「不得為此輪詢」的規則不衝突——該規則針對的是使用者未必在看的清單場景，而目前職缺畫面是使用者正在等待的互動情境。分頁關閉不影響後端消化，重新開啟時 `capture/job` 會直接命中快取。
+`pending_screen` 與 `pending_score` 時 Side Panel 以 3 秒間隔輪詢 `GET /api/v1/jobs/{id}`，至 verdict 轉為終態或達 5 分鐘上限為止；逾時後停止輪詢並顯示「仍在處理，可稍後重新整理」。輪詢對象是 localhost API，不觸及 104 也不觸發 LLM，因此與 §3 求職信「不得為此輪詢」的規則不衝突——該規則針對的是使用者未必在看的清單場景，而目前職缺畫面是使用者正在等待的互動情境。分頁關閉不影響後端消化，重新開啟時 `capture/job` 會直接命中快取。
 
-使用流程：使用者以 `jobfinder queries urls --source 104|cake` 產生巡邏 URL，或開啟 104 通知頁；列表收割後就地看到判定，不適合者當場排除，待看者在 Side Panel 的待看清單累積；使用者點開一筆原始連結時才由內頁 script 擷取，Side Panel 顯示完整評估與下一步。email 僅作提醒，不解析。
+使用流程：使用者在 104／Cake 自行設定搜尋條件瀏覽結果，或開啟 104 通知頁；列表收割後就地看到判定，不適合者當場排除，待看者在 Side Panel 的待看清單累積；使用者點開一筆原始連結時才由內頁 script 擷取，Side Panel 顯示完整評估與下一步。email 僅作提醒，不解析。
 
 **頁面結構的取樣方式**：104 的搜尋頁、通知頁與內頁結構由**使用者本人瀏覽時人工取樣**取得——使用者開啟自己要看的頁面，複製一筆項目的容器片段與內頁的 JSON-LD 供結構分析。不做伺服器端抓取，也不為取樣以插件或腳本自動開頁（[design-crawler](design-crawler.md) §1 判準）。取樣素材改寫為**結構仿真、內容合成**的 fixture；真實 JD 與公司資料不進 repo。欄位映射屬 104 解析器，見 [design-crawler](design-crawler.md) §2.2。
 
@@ -187,7 +194,7 @@ Cake 沒有 104 那種置頂廣告職缺，不需排除規則；`external_id` �
 ## 6. 測試與交付物
 
 - Side Panel、Options、service worker 訊息與 API error mapping 以 mock API 單元測試；不使用真實 JD、Profile、token 或 104 頁面。
-- B4 隔離 Chromium 自動模擬使用固定 unpacked ID，保存不含 token/body 的 request 摘要與 Side Panel screenshot，並驗證 light／dark 主題、來源／流程／投遞／判定篩選、五維對照、求職信生成要求、clipboard、SQLite apply 回寫與結構化 Run history；實際 Chrome 另走人工 gate。
+- B4 隔離 Chromium 自動模擬使用固定 unpacked ID，保存不含 token/body 的 request 摘要與 Side Panel screenshot，並驗證 light／dark 主題、來源／流程／投遞／判定篩選、四維對照與篩選逐條結論、求職信生成要求、clipboard、SQLite apply 回寫與結構化 Run history；實際 Chrome 另走人工 gate。
 - 104 script 的實機驗收見 [verify](../verify.md) V5、Cake script 見 V6；兩者都必須由驗收者載入測試版插件，以使用者導覽完成列表就地標記、內頁 context 與待看流程。
 - 交付 `extension/` 的 MV3 manifest、Side Panel、Profile editor、Options、service worker、各平台 content scripts、列表標記、疑似重複裁決介面與測試；API capture endpoint 與 crawler 的 `parse104/`、`parsecake/` 分屬各自模組交付。
 

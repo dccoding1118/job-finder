@@ -51,13 +51,16 @@ func newMockSourceCmd() *cobra.Command {
 				ids := map[string][]int{
 					"cloud,platform":         {1000, 1001},
 					"Go,backend":             {1001, 1002},
-					"Kubernetes,reliability": {1002, 1003},
+					"Kubernetes,reliability": {1002, 1003, 1004},
 				}[strings.Join(terms, ",")]
 				fixtures := map[int]map[string]any{
 					1000: {"id": 1000, "name": "Verification intern platform engineer", "path": "/jobs/1000", "salary": "NT$ 60,000 - 70,000", "location": "Taipei", "company": map[string]string{"brand": "Example Learning"}},
 					1001: {"id": 1001, "name": "Verification failure remote platform engineer", "path": "/jobs/1001", "salary": "NT$ 100,000 - 120,000", "location": "Taipei", "company": map[string]string{"brand": "Example Platform"}},
 					1002: {"id": 1002, "name": "Verification ready hybrid backend engineer", "path": "/jobs/1002", "salary": "NT$ 110,000 - 130,000", "location": "Taipei", "company": map[string]string{"brand": "Example Services"}},
 					1003: {"id": 1003, "name": "Verification low score cloud engineer", "path": "/jobs/1003", "salary": "NT$ 90,000 - 100,000", "location": "Taipei", "company": map[string]string{"brand": "Example Operations"}},
+					// 1004 withholds its salary so screening has to answer "unknown"
+					// rather than reject; it is the fixture behind the 待看 outcome.
+					1004: {"id": 1004, "name": "Verification unknown salary platform engineer", "path": "/jobs/1004", "salary": "面議", "location": "Taipei", "company": map[string]string{"brand": "Example Ventures"}},
 				}
 				jobs := make([]map[string]any, 0, len(ids))
 				for _, id := range ids {
@@ -69,6 +72,7 @@ func newMockSourceCmd() *cobra.Command {
 			mux.HandleFunc("/jobs/1001", mockJobPage("Verification failure remote platform engineer", "Build Go &amp; cloud platform services"))
 			mux.HandleFunc("/jobs/1002", mockJobPage("Verification ready hybrid backend engineer", "Build <strong>Go</strong> backend services"))
 			mux.HandleFunc("/jobs/1003", mockJobPage("Verification low score cloud engineer", "Maintain cloud operations services"))
+			mux.HandleFunc("/jobs/1004", mockJobPage("Verification unknown salary platform engineer", "Operate cloud platform services"))
 			handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if logFile != nil && r.URL.Path != "/healthz" {
 					logMu.Lock()

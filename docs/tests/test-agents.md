@@ -1,6 +1,6 @@
 # 測試規格 — agents（`internal/agents`）
 
-對應 [agents 模組設計](../designs/design-agents.md)、PRD R4、R5、R8.2。B2 實作 Runner 與 Scorer；B3 擴充 Drafter、Reviewer 與求職信防線。本文件是 L1 模組測試規格：以 fake Runner、合成 Profile 與合成 JD 驗證結構化輸出、重試策略與防線，不呼叫實際 claude 或 codex CLI。
+對應 [agents 模組設計](../designs/design-agents.md)、PRD R3.2、R4、R5、R8.2。B2 實作 Runner 與 Scorer；B3 擴充 Drafter、Reviewer 與求職信防線；B7 新增 Filter 並改為四維評分。本文件是 L1 模組測試規格：以 fake Runner、合成 Profile 與合成 JD 驗證結構化輸出、重試策略與防線，不呼叫實際 claude 或 codex CLI。
 
 ## 1. 程式面閘門
 
@@ -32,8 +32,8 @@
 | AT-04 | 回覆沒有 JSON、JSON 不完整，或含多個無法判定的物件 | 視為輸出驗證失敗，不產生結果 |
 | AT-18 | prompt 經 stdin 傳入，stdout 為 JSON envelope | 取 envelope 的 `result` 欄位為回覆；`is_error` 為真或 `subtype` 非 `success` 時視為 Invoke 失敗 |
 | AT-19 | CLI 將最終訊息寫入 `-o` 指定的暫存檔，stdout 另含 transcript | 以該檔內容為回覆，不受 stdout transcript 影響；暫存檔隨 invocation 暫存目錄清除 |
-| AT-20 | CLI 在 transcript 中回音 prompt，並將同一答案輸出兩次 | 解析取最後一個完整物件，不把兩份答案之間的雜訊併入 |
-| AT-05 | Scorer 回傳五維 0–100 整數與 100 字內理由 | 解析為合法 `ScoreResult`，五維與理由完整保留 |
+| AT-07 | CLI 在 transcript 中回音 prompt，並將同一答案輸出兩次 | 解析取最後一個完整物件，不把兩份答案之間的雜訊併入 |
+| AT-05 | Scorer 回傳四維 0–100 整數與 100 字內理由 | 解析為合法 `ScoreResult`，四維與理由完整保留 |
 | AT-06 | Scorer 缺少任一維度、分數超出範圍、分數非整數或理由過長 | 拒絕輸出，回傳契約錯誤 |
 
 ### 3.2 呼叫策略與稽核
@@ -44,11 +44,11 @@
 | AT-11 | primary Runner 兩次皆失敗，fallback 成功 | 依序呼叫 primary 兩次與 fallback 一次，回傳 fallback 的合法結果 |
 | AT-12 | primary 與 fallback 均失敗，或均回傳非法 JSON | 回傳失敗；不回傳部分 `ScoreResult` |
 | AT-13 | 成功、程序失敗與 JSON 驗證失敗的各次呼叫 | 每次均建立正確 role、runner、input、raw output、ok、duration 的稽核資料；輸入與輸出不含 PII |
-| AT-14 | 以合成 Profile 與 Job 產生 Scorer prompt | prompt 含五個評分維度、Profile、JD 與僅輸出 JSON 的約束；不要求 Agent 自算總分 |
-| AT-15 | 三個角色各自指定合法的 primary 與 fallback endpoint | 載入 `llm.roles` 後，評分、信件起草與信件審查各使用自己的 agent/model；agent 只接受 `claude` 或 `codex` |
+| AT-14 | 以合成 Profile 與 Job 產生 Scorer prompt | prompt 含四個評分維度、基準分規則、`intents` 與資格清單、JD 與僅輸出 JSON 的約束；不含履歷敘事；不要求 Agent 自算總分 |
+| AT-15 | 四個常駐角色各自指定合法的 primary 與 fallback endpoint | 載入 `llm.roles` 後，篩選、評分、信件起草與信件審查各使用自己的 agent/model；agent 只接受 `claude` 或 `codex` |
 | AT-16 | 每個 role endpoint 指定 agent 與 model | subprocess argv 精確包含該角色對應的 `--model`；同一 agent 在不同角色可使用不同 model；缺漏、空白或未知設定在外部呼叫前失敗 |
 | AT-17 | Runner 執行正常、非零或逾時 | 每次使用新的空暫存 cwd；正常回傳 stdout，非零與 timeout 回安全錯誤並清理 cwd |
-| AT-16 | 任一角色缺少路由、runner 名稱不合法，或設定在兩輪執行間變更 | 拒絕不完整設定；下一輪建立的 Pipeline 使用新路由，既有執行不改變 |
+| AT-08 | 任一角色缺少路由、runner 名稱不合法，或設定在兩輪執行間變更 | 拒絕不完整設定；下一輪建立的 Pipeline 使用新路由，既有執行不改變 |
 
 ## 4. B3 單元測試案例：Drafter、Reviewer 與防線
 
@@ -78,22 +78,36 @@
 | AT-37 | 以合成 Profile、Job 與 Reviewer issues 產生 Drafter／Reviewer prompt | Drafter prompt 限制可用事實、語言、字數與佔位符；Reviewer prompt 要求檢查幻覺、誇大與空泛詞 |
 | AT-38 | 初稿或 Reviewer `edited_letter` 未通過防線 | 不呼叫 Reviewer，或不接受其 `approve`；以具體防線問題要求 Drafter 重寫，並計入兩次重寫上限 |
 | AT-39 | Drafter 或 Reviewer 的 primary、重試與 fallback 呼叫交錯發生 | 每次嘗試都以正確 role 和 runner 寫稽核資料；成功結果只採用通過契約驗證者 |
-| AT-40 | 分類被拒回應：CLI 自報錯誤（含 rate limit）、空輸出、無 JSON、JSON 無法解析、`reason` 超過上限、五維超出範圍、其他內容不合法 | 各回對應失敗類別；CLI 自報錯誤優先於內容驗證 |
-| AT-41 | 五維皆為低分但格式合法的評分回應 | 通過驗證並視為成功呼叫；低分不得被判定為失敗 |
+| AT-40 | 分類被拒回應：CLI 自報錯誤（含 rate limit）、空輸出、無 JSON、JSON 無法解析、`reason` 超過上限、四維超出範圍、Filter 條件欄位不合法、其他內容不合法 | 各回對應失敗類別（含 `invalid_condition`）；CLI 自報錯誤優先於內容驗證 |
+| AT-41 | 四維皆為低分但格式合法的評分回應 | 通過驗證並視為成功呼叫；低分不得被判定為失敗 |
 | AT-42 | `reason` 恰為 100 字與 101 字 | 前者通過驗證；後者被拒 |
+
+## 4.4 B7 單元測試案例：Filter 與四維 Scorer
+
+| 編號 | 測試情境 | 預期結果 |
+|---|---|---|
+| AT-50 | fake Runner 回合法 `FilterResult` | 解析出 `conditions[]` 各欄位與列舉；每條的 `kind`、`group`、`category`、`verdict` 完整保留 |
+| AT-51 | 缺欄位、列舉非法、`group` 非正整數或 `years_required` 為負 | 驗證失敗並歸類為 `invalid_condition`；不部分採用 |
+| AT-52 | `conditions` 為空陣列（JD 未載明條件） | 視為合法結果，彙總為全 `pass` |
+| AT-53 | 年資、管理年資與產業類條件 | Agent 回的 `verdict` 被忽略；程式以 `derived` 加總比較後決定，且只採用 `years_required`／`years_max`／`industry_keys` |
+| AT-54 | 以合成 Profile 與 Job 產生 Filter prompt | prompt 含 `qualifications`、經歷的 `industry` key 清單與 JD；**不含** `intents` 與履歷敘事；明確要求判不出來回 `unknown`、不得猜測為 `fail` |
+| AT-55 | Filter 的 primary 失敗後重試與 fallback | 與其他角色相同的三次嘗試策略；每次以 `role='filter'` 寫稽核 |
+| AT-56 | JD 完全未揭露某評分維度所需資訊 | Scorer 該維回基準分並通過驗證；不因缺資訊被判失敗 |
+| AT-57 | Scorer 的 `bonus_fit` 面對未滿足的加分條件 | 不低於基準分（只加不減） |
 
 ## 4.3 Calibrator（S1，尚未實作）
 
 | 編號 | 測試情境 | 預期結果 |
 |---|---|---|
 | AT-45 | fake Runner 回合法 `CalibrationResult` | 解析出 `summary` 與 `suggestions[]`，各欄位型別與列舉正確；寫入 `role='calibrator'`、`job_id` 為 NULL 的稽核 |
-| AT-46 | `suggestions[].field` 指向 `skills`、`experiences`、`summary` 或 `honesty_bounds` | 拒絕**整份**建議並回安全錯誤；不部分採用白名單內的項目 |
+| AT-46 | `suggestions[].field` 指向 `experiences`、`qualifications`、`honesty_bounds` 或 `derived` | 拒絕**整份**建議並回安全錯誤；不部分採用白名單內的項目 |
 | AT-47 | `suggestions` 為空陣列 | 視為合法結果（證據不足，不建議調整）；不報錯、不重試 |
 | AT-48 | 輸出非法 JSON、缺欄位、`action`／`confidence` 非列舉值或 `value` 型別不相容 | 驗證失敗即結束，不以變體 prompt 重試；失敗仍寫入稽核 |
 
 ## 5. 模組驗收
 
 - `mise run fmt`、`mise run lint` 與 `mise run test` 全數通過。
-- B2 能以合法結構化回覆取得五維分數與理由，並正確處理 Runner 重試、fallback 與稽核資料。
+- B2 能以合法結構化回覆取得各維分數與理由，並正確處理 Runner 重試、fallback 與稽核資料。
+- B7 的 Filter 能拆解 JD 條件並逐條給 `pass`／`fail`／`unknown`；年資類判定由程式覆寫，加分條件不進篩選彙總；Scorer prompt 不含履歷敘事。
 - B3 能在初稿後最多重寫兩次；只有通過佔位符、技術詞、PII 與字數防線且 Reviewer 核准的信件才能成為 approved 結果。
 - 真實 claude / codex CLI、真實職缺與可供使用者檢閱的求職信，僅依 [verify](../verify.md) 的 B2、B3 手動驗收案例檢查，不進 L1 或例行 CI。

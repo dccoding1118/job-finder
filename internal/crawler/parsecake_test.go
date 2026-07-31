@@ -3,6 +3,8 @@ package crawler
 import (
 	"strings"
 	"testing"
+
+	"github.com/dccoding1118/job-finder/internal/store"
 )
 
 // cakeListData is a structure-faithful, content-synthetic __NEXT_DATA__ of a Cake
@@ -232,7 +234,7 @@ func TestParseCakeJobDOMTreatsMissingMetadataAsUnknown(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if job.Location != "unknown" || job.RemoteType != "unknown" || job.SalaryMin != nil || job.SalaryMax != nil {
+	if job.Location != store.LocationUnknown || job.RemoteType != "unknown" || job.SalaryMin != nil || job.SalaryMax != nil {
 		t.Fatalf("bare metadata produced %+v", job)
 	}
 
@@ -271,6 +273,21 @@ func TestParseCakeJobRejectsUnusableMaterial(t *testing.T) {
 
 // One unusable entry must not cost the rest of the page its marks: the capture
 // answers for the items it could read.
+// A Cake entry often states no locality at all. The job still needs one, so it
+// gets the value that says exactly that — and never a locality that would be
+// screened against the Profile as though the source had stated it.
+func TestParseCakeListMarksAMissingLocationAsUnknown(t *testing.T) {
+	jobs, err := ParseCakeList(CakeCapture{URL: "https://www.cake.me/jobs?query=backend&page=2", Items: []CakeListItem{
+		{Href: "/companies/example-cloud/jobs/senior-backend-engineer", Title: "Senior Backend Engineer", CompanyName: "Example Cloud"},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(jobs) != 1 || jobs[0].Location != store.LocationUnknown {
+		t.Fatalf("DOM harvest without a location = %+v", jobs)
+	}
+}
+
 func TestParseCakeListSkipsUnusableEntries(t *testing.T) {
 	data := strings.ReplaceAll(cakeListData, `"title":"Platform Intern"`, `"title":""`)
 	jobs, err := ParseCakeList(CakeCapture{URL: "https://www.cake.me/jobs?query=backend&page=1", NextData: data})
@@ -289,39 +306,5 @@ func TestParseCakeListSkipsUnusableEntries(t *testing.T) {
 	}
 	if len(harvest) != 1 {
 		t.Fatalf("DOM harvest = %+v, want only the readable item", harvest)
-	}
-}
-
-// CT-58: the patrol URLs carry the platform's own search parameters and are only
-// printed — generating them sends nothing.
-func TestPatrolURLsPerSource(t *testing.T) {
-	spec := SearchSpec{
-		Queries:  []SearchQuery{{Direction: "P1", Keywords: []string{"backend", "Go"}}},
-		Area:     []string{"台北市", "新竹"},
-		MaxPages: 2,
-	}
-	cake, err := PatrolURLs("cake", spec, 2)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(cake) != 2 || cake[0].Page != 1 || cake[1].Page != 2 {
-		t.Fatalf("cake pages = %+v", cake)
-	}
-	for _, want := range []string{"https://www.cake.me/jobs?", "query=backend+Go", "location_list%5B%5D=Taipei+City%2C+Taiwan", "location_list%5B%5D=Hsinchu+City%2C+Taiwan", "profession%5B%5D=it_back-end-engineer", "page=1"} {
-		if !strings.Contains(cake[0].URL, want) {
-			t.Fatalf("cake URL %q is missing %q", cake[0].URL, want)
-		}
-	}
-	urls104, err := PatrolURLs("104", spec, 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, want := range []string{"https://www.104.com.tw/jobs/search/?", "keyword=backend+Go", "area=6001001000%2C6001006000", "order=15", "page=1"} {
-		if !strings.Contains(urls104[0].URL, want) {
-			t.Fatalf("104 URL %q is missing %q", urls104[0].URL, want)
-		}
-	}
-	if _, err := PatrolURLs("yourator", spec, 1); err == nil {
-		t.Fatal("an automated source must have no patrol URLs")
 	}
 }

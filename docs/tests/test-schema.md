@@ -26,7 +26,7 @@
 
 | 編號 | 測試情境 | 預期結果 |
 |---|---|---|
-| ST-01 | 對空資料庫執行 migration | 建立 `jobs`、`scores`、`letters`、`status_events`、`runs`、`agent_calls`，並將 `PRAGMA user_version` 設為最新版本 |
+| ST-01 | 對空資料庫執行 migration | 建立 `jobs`、`scores`、`filter_results`、`letters`、`status_events`、`runs`、`agent_calls`、`job_groups`、`job_dupe_candidates`，並將 `PRAGMA user_version` 設為最新版本 |
 | ST-02 | 對已在最新版本的資料庫再次執行 migration | 成功完成；schema、資料與版本不變 |
 | ST-03 | 建立重複 `(source, external_id)` 的 Job | 寫入被唯一鍵拒絕；store 的 upsert 不產生第二筆 Job |
 | ST-04 | 寫入依附不存在 Job 的 score、letter、status event 或 agent call | 外鍵約束拒絕寫入 |
@@ -49,7 +49,7 @@
 
 | 編號 | 測試情境 | 預期結果 |
 |---|---|---|
-| ST-20 | 依設計表執行各合法轉換 | `discovered→filtered_out/new`、`new→filtered_out/queued`、`queued→scored/shortlisted`、`shortlisted→letter_requested`、`letter_requested→letter_ready/letter_failed`、`letter_failed→letter_requested` 成功 |
+| ST-20 | 依設計表執行各合法轉換 | `discovered→filtered_out/new`、`new→filtered_out/queued/discovered`、`queued→scored/shortlisted`、`shortlisted→letter_requested`、`letter_requested→letter_ready/letter_failed`、`letter_failed→letter_requested` 成功 |
 | ST-25 | 嘗試 `shortlisted→letter_ready`／`letter_failed`，即跳過使用者要求直接生成 | 回傳非法轉換錯誤；`letter_requested` 是進入 letter 終態的唯一前置狀態 |
 | ST-21 | 有全文的任一非終態 Job 因內容雜湊變更而轉為 `new` | 狀態重置成功，並寫入一筆 process event |
 | ST-22 | 嘗試跳過流程、回退或自終態轉換 | 回傳非法轉換錯誤；Job 狀態與事件數均不變 |
@@ -70,13 +70,16 @@
 
 | 編號 | 測試情境 | 預期結果 |
 |---|---|---|
-| ST-40 | 為同一 Job 連續儲存不同 revision 的 score | 兩筆皆保留；取得現行評分時只回與 `jobs.profile_revision` 相同的最新一筆 |
+| ST-40 | 為同一 Job 連續儲存不同 revision 的 score | 兩筆皆保留；取得現行評分時只回與 `jobs.score_revision` 相同的最新一筆 |
 | ST-41 | 儲存 score 的任一維度超出 0–100、reason 超過 100 字、runner 非法 | 被拒絕且不寫入資料 |
+| ST-46 | `SaveFilterResult` 的 `outcome` 分別為 `fail`／摘要 `unknown`／`pass`／全文 `unknown` | 同一交易內附加一筆 `filter_results` 並轉為 `filtered_out`（含 `filter_hits`）／`discovered`／`queued`；全文而 `unknown` 回錯且不落地；逐條 `conditions` 完整保留 |
+| ST-47 | 為同一 Job 連續儲存不同 `filter_revision` 的篩選結果 | 兩筆皆保留；現行判定只取與 `jobs.filter_revision` 相同的最新一筆 |
+| ST-48 | `SaveFilterResult` 的 `outcome`、`conditions` 列舉或 `stage` 非法 | 被拒絕且不寫入資料，狀態不變 |
 | ST-42 | 儲存 approved 或 failed letter | 完整保留內容、輪數、審查紀錄、draft/review runner 與建立時間 |
 | ST-43 | 儲存 letter 時 status、rounds、runner 或內容不合法 | 被拒絕且不寫入資料 |
 | ST-44 | `ListJobs` 以 process state、apply state、source 篩選與評分排序 | 僅回傳符合篩選的 Job，排序與指定條件一致 |
-| ST-45 | `PickForStage` 分別取得 filter、score、letter 階段工作 | 僅選取 `new`、`queued`、`letter_requested` Job，並遵守 limit；`shortlisted` Job 不被任何階段取件 |
-| ST-80 | `PickForStage` 帶 revision，佇列中同時有舊 revision（`updated_at` 較早）與 active revision 的 Job | 只取得 active revision 者；舊 revision 的 Job 不佔用取件上限 |
+| ST-45 | `PickForStage` 分別取得 filter、score、letter 階段工作 | 僅選取 `new`、`queued`、`letter_requested` Job，並遵守 limit；`shortlisted` 與 `discovered` Job 不被任何階段取件 |
+| ST-80 | `PickForStage` 帶 revision，佇列中同時有舊 revision（`updated_at` 較早）與 active revision 的 Job | 只取得 active revision 者（filter 比對 `filter_revision`、score 比對 `score_revision`）；舊 revision 的 Job 不佔用取件上限 |
 
 ### 3.6 Run 與 Agent 稽核紀錄
 
@@ -96,14 +99,16 @@
 
 | 編號 | 測試情境 | 預期結果 |
 |---|---|---|
-| ST-60 | migration 升級既有資料 | Job／Score／Letter／Agent call 新欄位存在；legacy rows 保持 NULL，不猜測 revision |
+| ST-60 | migration 升級既有資料至 v6 | Job／Score／Letter／Agent call 的雙 revision 欄位與 `scores` 四維欄位存在；`filter_results` 表建立；既有 `filtered_out`／`queued`／`scored`／`shortlisted` 職缺一律重置為 `new` 且兩個 revision 清為 NULL；`discovered` 維持；求職信階段職缺、既有 Letter 與 apply 歷史不被改寫或刪除 |
 | ST-61 | 保存新 Score、Letter 與 Profile 相關 agent call | 寫入實際 revision；歷史 append-only，不覆蓋舊產出 |
-| ST-62 | 查詢現行 Score | 只取與 `jobs.profile_revision` 相同的最新 Score；不同 revision／NULL 不當成現行值 |
-| ST-63 | 新 revision activation 狀態矩陣 | partial 與 full Job 依設計重設；letter_requested／ready／failed、Letter 與 apply 歷史完全不變 |
+| ST-62 | 查詢現行 Score | 只取與 `jobs.score_revision` 相同的最新 Score；不同 revision／NULL 不當成現行值 |
+| ST-63 | `filter_revision` 變更的 activation 狀態矩陣 | 有全文者重設回 `new`、只有摘要者重做可用條件後留在 `discovered`；letter_requested／ready／failed、Letter 與 apply 歷史完全不變 |
+| ST-63A | 只有 `score_revision` 變更的 activation | `queued`／`scored`／`shortlisted` 切新 `score_revision` 並回到／維持 `queued`、篩選結果保留；`filtered_out`／`discovered` 完全不動 |
 | ST-64 | 同 revision activation | no-op；不新增狀態事件、不重設狀態 |
-| ST-65 | 舊 worker 以舊 revision 寫 filter／Score／transition | expected state＋revision CAS 拒絕；現行 Job 與 Score 不變 |
-| ST-66 | `scored`／`shortlisted` Job 呼叫 `RequeueScore` | 狀態改為 `queued`、採用傳入 revision、寫 `manual rescore` 事件；舊 Score 保留且仍是現行分數；該 Job 可被 score 階段取件 |
-| ST-67 | 重複 requeue、對信件階段 Job 或不存在的 Job requeue | 已 `queued` 為 no-op；信件階段回 `ErrRescoreNotAllowed` 且狀態不變；不存在的 Job 回無資料錯誤 |
+| ST-65 | 舊 worker 以舊 revision 寫篩選結果／Score／transition | expected state＋該面 revision 的 CAS 拒絕；現行 Job、篩選結果與 Score 不變 |
+| ST-66 | 有 JD 全文的 Job 呼叫 `ReprocessJob` | 狀態改為 `new`、採用傳入 `filter_revision`、清空 `filter_hits`／`score_revision`／`filter_results`、寫 `manual reprocess` 事件；舊 Score 保留且仍是現行分數；該 Job 可被 filter 階段取件 |
+| ST-66B | 只有摘要的 `filtered_out` Job 呼叫 `ReprocessJob` | 狀態改為 `discovered` 而非 `new`，命中清空 |
+| ST-67 | 重複 reprocess、對信件階段 Job 或不存在的 Job reprocess | 重複呼叫為冪等且不重複寫事件；信件階段與 `merged` 回 `ErrReprocessNotAllowed` 且狀態不變；不存在的 Job 回無資料錯誤 |
 | ST-68 | 查詢處理進度 | 各處理狀態筆數正確；最近 Agent 呼叫依時間新到舊，失敗附截斷輸出、成功不附任何輸出；非正整數 limit 被拒 |
 
 ### 3.8 跨來源分群與合併（B6）
@@ -119,8 +124,7 @@
 | ST-76 | 重複觸發同一組合併或候選 | 候選唯一鍵不重複寫入；已合併的再次呼叫為 no-op，不新增事件 |
 | ST-77 | `PickForStage` 與 `ListJobs` 遇 `merged` | 一律排除；alias 不被任何階段取件、不出現在清單 |
 | ST-81 | 同一來源的兩筆職缺，公司相同且職稱完全相等／高度相似 | 皆不合併也不寫入候選；跨來源的同一職缺仍正常合併，且合併後該群組涵蓋的來源全部排除於後續比較 |
-| ST-82 | 已 `scored` 的職缺以新 revision 重新 ingest 且內容雜湊變更 | 內容欄位更新、狀態維持 `scored`、`profile_revision` 保留該評分所屬 revision；`ListJobs` 與 `CurrentScore` 仍讀得到該評分 |
-| ST-83 | 資料庫的 `jobs.profile_revision` 下查無 Score、但該 Job 有 Score（舊版寫入的損壞列） | migration 將該欄位改為最新一筆 Score 的 revision；清單重新讀得到分數，且不新增或刪除任何評分 |
+| ST-82 | 已 `scored` 的職缺以新 revision 重新 ingest 且內容雜湊變更 | 內容欄位更新、狀態維持 `scored`、兩個 revision 保留該判定所屬值；`ListJobs` 與 `CurrentScore` 仍讀得到該評分 |
 | ST-78 | `UnmergeJob` | alias 還原為合併事件記錄的合併前狀態與獨立群組；既有 score／letter 不被刪除 |
 | ST-79 | `dedupe.enabled` 為 false | 完全不建立群組關聯與候選；既有已合併資料不受影響 |
 

@@ -18,7 +18,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const schemaVersion = 5
+const schemaVersion = 7
 
 //go:embed schema.sql
 var schemaSQL string
@@ -71,6 +71,72 @@ var upgrades = map[int]string{
 	)
 	WHERE EXISTS (SELECT 1 FROM scores WHERE job_id = jobs.id)
 	  AND NOT EXISTS (SELECT 1 FROM scores WHERE job_id = jobs.id AND profile_revision IS jobs.profile_revision);`,
+	// The hard/soft split replaces one revision with two and the five scoring
+	// dimensions with four. Old scores are dropped rather than converted: the
+	// dimensions mean something else now, and there is no rate to convert at.
+	// Every job that had been screened or scored returns to `new`, because both
+	// verdicts were produced by rules that no longer exist. Letter stages, letters
+	// and application history are left untouched — they are the user's own output.
+	5: `ALTER TABLE jobs ADD COLUMN filter_revision TEXT;
+	ALTER TABLE jobs ADD COLUMN score_revision TEXT;
+	ALTER TABLE jobs DROP COLUMN profile_revision;
+	ALTER TABLE letters ADD COLUMN filter_revision TEXT;
+	ALTER TABLE letters ADD COLUMN score_revision TEXT;
+	UPDATE letters SET score_revision = profile_revision;
+	ALTER TABLE letters DROP COLUMN profile_revision;
+	ALTER TABLE agent_calls ADD COLUMN filter_revision TEXT;
+	ALTER TABLE agent_calls ADD COLUMN score_revision TEXT;
+	UPDATE agent_calls SET score_revision = profile_revision;
+	ALTER TABLE agent_calls DROP COLUMN profile_revision;
+	DROP TABLE scores;
+	CREATE TABLE scores (
+		id INTEGER PRIMARY KEY,
+		job_id INTEGER NOT NULL REFERENCES jobs(id),
+		dim_content INTEGER NOT NULL,
+		dim_benefit INTEGER NOT NULL,
+		dim_bonus INTEGER NOT NULL,
+		dim_industry INTEGER NOT NULL,
+		total REAL NOT NULL,
+		reason TEXT NOT NULL,
+		runner TEXT NOT NULL,
+		score_revision TEXT,
+		created_at TEXT NOT NULL
+	);
+	CREATE TABLE filter_results (
+		id INTEGER PRIMARY KEY,
+		job_id INTEGER NOT NULL REFERENCES jobs(id),
+		outcome TEXT NOT NULL,
+		conditions TEXT NOT NULL,
+		stage TEXT NOT NULL,
+		runner TEXT,
+		filter_revision TEXT,
+		created_at TEXT NOT NULL
+	);
+	CREATE INDEX IF NOT EXISTS filter_results_job_idx ON filter_results(job_id);
+	INSERT INTO status_events (job_id, axis, from_state, to_state, note, created_at)
+		SELECT id, 'process',
+			process_state,
+			CASE WHEN description IS NULL THEN 'discovered' ELSE 'new' END,
+			'hard/soft split reset', updated_at
+		FROM jobs WHERE process_state IN ('filtered_out', 'queued', 'scored', 'shortlisted');
+	-- A job rejected off a list page has no JD text. Resetting it to new would
+	-- offer the screen an excerpt to judge and could end with an empty JD being
+	-- scored, so it goes back to the discovered list to be opened instead.
+	UPDATE jobs SET
+			process_state = CASE WHEN description IS NULL THEN 'discovered' ELSE 'new' END,
+			filter_hits = NULL, updated_at = updated_at
+		WHERE process_state IN ('filtered_out', 'queued', 'scored', 'shortlisted');`,
+	// Token accounting comes straight from the CLI's own structured output
+	// (claude's `usage`/`total_cost_usd`, codex's `turn.completed` usage event),
+	// so existing rows predate the columns and carry NULL/0.
+	6: `ALTER TABLE agent_calls ADD COLUMN model TEXT;
+	ALTER TABLE agent_calls ADD COLUMN input_tokens INTEGER NOT NULL DEFAULT 0;
+	ALTER TABLE agent_calls ADD COLUMN output_tokens INTEGER NOT NULL DEFAULT 0;
+	ALTER TABLE agent_calls ADD COLUMN cache_read_tokens INTEGER NOT NULL DEFAULT 0;
+	ALTER TABLE agent_calls ADD COLUMN cache_write_tokens INTEGER NOT NULL DEFAULT 0;
+	ALTER TABLE agent_calls ADD COLUMN reasoning_tokens INTEGER NOT NULL DEFAULT 0;
+	ALTER TABLE agent_calls ADD COLUMN cost_usd REAL NOT NULL DEFAULT 0;
+	CREATE INDEX IF NOT EXISTS agent_calls_runner_model_created_idx ON agent_calls(runner, model, created_at);`,
 }
 
 var piiPattern = regexp.MustCompile(`(?i)[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}|(?:\+886|0)9\d{8}`)
@@ -82,39 +148,42 @@ type Store struct {
 }
 
 type JobInput struct {
-	Source          string
-	ExternalID      string
-	URL             string
-	Title           string
-	CompanyName     string
-	CompanyInfo     string
-	Description     *string
-	SalaryMin       *int
-	SalaryMax       *int
-	Location        string
-	RemoteType      string
-	ProfileRevision string
+	Source      string
+	ExternalID  string
+	URL         string
+	Title       string
+	CompanyName string
+	CompanyInfo string
+	Description *string
+	SalaryMin   *int
+	SalaryMax   *int
+	Location    string
+	RemoteType  string
+	// FilterRevision is the Profile screening revision a newly stored or reset
+	// job will be screened under.
+	FilterRevision string
 }
 
 type Job struct {
-	ID              int64
-	Source          string
-	ExternalID      string
-	URL             string
-	Title           string
-	CompanyName     string
-	CompanyInfo     string
-	Description     *string
-	SalaryMin       *int
-	SalaryMax       *int
-	Location        string
-	RemoteType      string
-	ProcessState    string
-	ApplyState      *string
-	ContentHash     *string
-	FilterHits      []string
-	ScoreTotal      *float64
-	ProfileRevision *string
+	ID             int64
+	Source         string
+	ExternalID     string
+	URL            string
+	Title          string
+	CompanyName    string
+	CompanyInfo    string
+	Description    *string
+	SalaryMin      *int
+	SalaryMax      *int
+	Location       string
+	RemoteType     string
+	ProcessState   string
+	ApplyState     *string
+	ContentHash    *string
+	FilterHits     []string
+	ScoreTotal     *float64
+	FilterRevision *string
+	ScoreRevision  *string
 }
 
 type UpsertResult struct {
@@ -124,11 +193,11 @@ type UpsertResult struct {
 }
 
 type ScoreInput struct {
-	JobID                                              int64
-	HardSkill, Domain, Seniority, Condition, Direction int
-	Total                                              float64
-	Reason, Runner                                     string
-	ProfileRevision                                    string
+	JobID                             int64
+	Content, Benefit, Bonus, Industry int
+	Total                             float64
+	Reason, Runner                    string
+	ScoreRevision                     string
 }
 
 type LetterInput struct {
@@ -136,15 +205,30 @@ type LetterInput struct {
 	Content, Status, ReviewLog string
 	Rounds                     int
 	RunnerDraft, RunnerReview  string
-	ProfileRevision            string
+	FilterRevision             string
+	ScoreRevision              string
 }
 
 type AgentCallInput struct {
-	JobID                       *int64
-	Role, Runner, Input, Output string
-	OK                          bool
-	DurationMS                  int64
-	ProfileRevision             string
+	JobID                              *int64
+	Role, Runner, Model, Input, Output string
+	OK                                 bool
+	DurationMS                         int64
+	Usage                              AgentCallUsage
+	FilterRevision                     string
+	ScoreRevision                      string
+}
+
+// AgentCallUsage is the token accounting one Agent call reports, read straight
+// out of the CLI's own structured output. CostUSD is 0 when the runner does
+// not price its own calls.
+type AgentCallUsage struct {
+	InputTokens      int
+	OutputTokens     int
+	CacheReadTokens  int
+	CacheWriteTokens int
+	ReasoningTokens  int
+	CostUSD          float64
 }
 
 // RunStats records fetch facts only: filter, score, and letter are consumed by
@@ -161,6 +245,12 @@ const (
 	RunTriggerManualCLI       = "manual-cli"
 	RunTriggerManualExtension = "manual-extension"
 )
+
+// LocationUnknown is the locality of a job whose source stated none. A job's
+// location is a required field, so absence needs a value of its own: without it
+// a missing locality would read as a locality that matches nothing, and the
+// screening rules would reject the job for a fact nobody ever stated.
+const LocationUnknown = "unknown"
 
 // Open opens and migrates a SQLite database at path.
 func Open(path string) (*Store, error) {
@@ -280,9 +370,9 @@ func (s *Store) UpsertJob(ctx context.Context, input JobInput, runID *int64) (Up
 			description, contentHashValue = *input.Description, hash
 		}
 		result, execErr := tx.ExecContext(ctx, `INSERT INTO jobs
-			(source, external_id, url, title, company_name, company_info, description, salary_min, salary_max, location, remote_type, content_hash, process_state, profile_revision, discovered_by_run_id, first_seen_at, last_seen_at, updated_at)
+			(source, external_id, url, title, company_name, company_info, description, salary_min, salary_max, location, remote_type, content_hash, process_state, filter_revision, discovered_by_run_id, first_seen_at, last_seen_at, updated_at)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			input.Source, input.ExternalID, input.URL, input.Title, input.CompanyName, input.CompanyInfo, description, input.SalaryMin, input.SalaryMax, input.Location, input.RemoteType, contentHashValue, state, nullableString(input.ProfileRevision), runID, now, now, now)
+			input.Source, input.ExternalID, input.URL, input.Title, input.CompanyName, input.CompanyInfo, description, input.SalaryMin, input.SalaryMax, input.Location, input.RemoteType, contentHashValue, state, nullableString(input.FilterRevision), runID, now, now, now)
 		if execErr != nil {
 			return UpsertResult{}, fmt.Errorf("insert job: %w", execErr)
 		}
@@ -301,7 +391,7 @@ func (s *Store) UpsertJob(ctx context.Context, input JobInput, runID *int64) (Up
 		if err := tx.Commit(); err != nil {
 			return UpsertResult{}, fmt.Errorf("commit inserted job: %w", err)
 		}
-		job := Job{ID: id, Source: input.Source, ExternalID: input.ExternalID, URL: input.URL, Title: input.Title, CompanyName: input.CompanyName, CompanyInfo: input.CompanyInfo, Description: input.Description, SalaryMin: input.SalaryMin, SalaryMax: input.SalaryMax, Location: input.Location, RemoteType: input.RemoteType, ProcessState: state, ContentHash: stringPtr(hash, !partial), ProfileRevision: stringPtr(input.ProfileRevision, input.ProfileRevision != "")}
+		job := Job{ID: id, Source: input.Source, ExternalID: input.ExternalID, URL: input.URL, Title: input.Title, CompanyName: input.CompanyName, CompanyInfo: input.CompanyInfo, Description: input.Description, SalaryMin: input.SalaryMin, SalaryMax: input.SalaryMax, Location: input.Location, RemoteType: input.RemoteType, ProcessState: state, ContentHash: stringPtr(hash, !partial), FilterRevision: stringPtr(input.FilterRevision, input.FilterRevision != "")}
 		return UpsertResult{Job: job, Created: true}, nil
 	}
 
@@ -327,23 +417,28 @@ func (s *Store) UpsertJob(ctx context.Context, input JobInput, runID *int64) (Up
 	}
 
 	newState := existing.ProcessState
-	// An alias keeps its content current but never returns to the pipeline: only
-	// the user's own unmerge takes a job out of `merged`.
-	if existing.ProcessState != StateMerged && (existing.ContentHash == nil || canReset(existing.ProcessState)) {
+	if canReset(existing.ProcessState) {
 		newState = "new"
 	}
-	// The revision follows the processing, not the content: only a job returning
+	// Both revisions follow the processing, not the content: only a job returning
 	// to `new` will be assessed under the ingesting revision. A job that keeps its
-	// state keeps the revision its score was produced under, because that is the
-	// revision every reader pairs the job with its score by.
-	revision := nullableString(input.ProfileRevision)
+	// state keeps the revisions its screening result and score were produced
+	// under, because those are what every reader pairs it with them by. A reset
+	// job loses its score revision outright: it must pass screening again before
+	// any score of it means anything, and its previous hits with it: they named
+	// the conditions of an assessment that no longer stands.
+	filterRevision, scoreRevision, filterHits := nullableString(input.FilterRevision), any(nil), any(nil)
 	if newState == existing.ProcessState {
-		revision = nullableRevision(existing.ProfileRevision)
+		filterRevision, scoreRevision = nullableRevision(existing.FilterRevision), nullableRevision(existing.ScoreRevision)
+		filterHits = nullableHitsValue(existing.FilterHits)
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE jobs SET url=?, title=?, company_name=?, company_info=?, description=?, salary_min=?, salary_max=?, location=?, remote_type=?, content_hash=?, process_state=?, profile_revision=?, updated_at=?, last_seen_at=? WHERE id=?`, input.URL, input.Title, input.CompanyName, input.CompanyInfo, *input.Description, input.SalaryMin, input.SalaryMax, input.Location, input.RemoteType, hash, newState, revision, now, now, existing.ID); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE jobs SET url=?, title=?, company_name=?, company_info=?, description=?, salary_min=?, salary_max=?, location=?, remote_type=?, content_hash=?, process_state=?, filter_hits=?, filter_revision=?, score_revision=?, updated_at=?, last_seen_at=? WHERE id=?`, input.URL, input.Title, input.CompanyName, input.CompanyInfo, *input.Description, input.SalaryMin, input.SalaryMax, input.Location, input.RemoteType, hash, newState, filterHits, filterRevision, scoreRevision, now, now, existing.ID); err != nil {
 		return UpsertResult{}, fmt.Errorf("update changed job: %w", err)
 	}
 	if newState != existing.ProcessState {
+		if err := dropFilterResults(ctx, tx, existing.ID); err != nil {
+			return UpsertResult{}, err
+		}
 		if err := insertEvent(ctx, tx, existing.ID, "process", existing.ProcessState, newState, "", now); err != nil {
 			return UpsertResult{}, err
 		}
@@ -355,7 +450,7 @@ func (s *Store) UpsertJob(ctx context.Context, input JobInput, runID *int64) (Up
 	existing.Description, existing.SalaryMin, existing.SalaryMax = input.Description, input.SalaryMin, input.SalaryMax
 	existing.Location, existing.RemoteType = input.Location, input.RemoteType
 	if newState != existing.ProcessState {
-		existing.ProfileRevision = stringPtr(input.ProfileRevision, input.ProfileRevision != "")
+		existing.FilterRevision, existing.ScoreRevision, existing.FilterHits = stringPtr(input.FilterRevision, input.FilterRevision != ""), nil, nil
 	}
 	existing.ContentHash, existing.ProcessState = stringPtr(hash, true), newState
 	return UpsertResult{Job: existing, Changed: true}, nil
@@ -446,10 +541,10 @@ func (s *Store) SaveScore(ctx context.Context, input ScoreInput) error {
 	if err := validateScore(input); err != nil {
 		return err
 	}
-	if input.ProfileRevision == "" {
-		input.ProfileRevision = s.jobRevision(ctx, input.JobID)
+	if input.ScoreRevision == "" {
+		input.ScoreRevision = s.jobRevision(ctx, "score_revision", input.JobID)
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO scores (job_id, dim_hard_skill, dim_domain, dim_seniority, dim_condition, dim_direction, total, reason, runner, profile_revision, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, input.JobID, input.HardSkill, input.Domain, input.Seniority, input.Condition, input.Direction, input.Total, input.Reason, input.Runner, nullableString(input.ProfileRevision), s.timestamp())
+	_, err := s.db.ExecContext(ctx, `INSERT INTO scores (job_id, dim_content, dim_benefit, dim_bonus, dim_industry, total, reason, runner, score_revision, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, input.JobID, input.Content, input.Benefit, input.Bonus, input.Industry, input.Total, input.Reason, input.Runner, nullableString(input.ScoreRevision), s.timestamp())
 	if err != nil {
 		return fmt.Errorf("save score: %w", err)
 	}
@@ -460,10 +555,13 @@ func (s *Store) SaveLetter(ctx context.Context, input LetterInput) error {
 	if input.JobID <= 0 || (input.Status != "approved" && input.Status != "failed") || input.Rounds < 1 || input.Content == "" || input.RunnerDraft == "" || (input.Status == "approved" && input.RunnerReview == "") {
 		return errors.New("store: invalid letter")
 	}
-	if input.ProfileRevision == "" {
-		input.ProfileRevision = s.jobRevision(ctx, input.JobID)
+	if input.FilterRevision == "" {
+		input.FilterRevision = s.jobRevision(ctx, "filter_revision", input.JobID)
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO letters (job_id, content, status, rounds, review_log, runner_draft, runner_review, profile_revision, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, input.JobID, input.Content, input.Status, input.Rounds, input.ReviewLog, input.RunnerDraft, input.RunnerReview, nullableString(input.ProfileRevision), s.timestamp())
+	if input.ScoreRevision == "" {
+		input.ScoreRevision = s.jobRevision(ctx, "score_revision", input.JobID)
+	}
+	_, err := s.db.ExecContext(ctx, `INSERT INTO letters (job_id, content, status, rounds, review_log, runner_draft, runner_review, filter_revision, score_revision, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, input.JobID, input.Content, input.Status, input.Rounds, input.ReviewLog, input.RunnerDraft, input.RunnerReview, nullableString(input.FilterRevision), nullableString(input.ScoreRevision), s.timestamp())
 	if err != nil {
 		return fmt.Errorf("save letter: %w", err)
 	}
@@ -471,7 +569,7 @@ func (s *Store) SaveLetter(ctx context.Context, input LetterInput) error {
 }
 
 func (s *Store) SaveAgentCall(ctx context.Context, input AgentCallInput) error {
-	if input.Role != "scorer" && input.Role != "drafter" && input.Role != "reviewer" && input.Role != "calibrator" {
+	if !validAgentRole(input.Role) {
 		return fmt.Errorf("store: invalid agent role %q", input.Role)
 	}
 	if !validRunner(input.Runner) || input.DurationMS < 0 || piiPattern.MatchString(input.Input) || piiPattern.MatchString(input.Output) {
@@ -481,22 +579,40 @@ func (s *Store) SaveAgentCall(ctx context.Context, input AgentCallInput) error {
 	if input.OK {
 		ok = 1
 	}
-	if input.ProfileRevision == "" && input.JobID != nil {
-		input.ProfileRevision = s.jobRevision(ctx, *input.JobID)
+	if input.JobID != nil {
+		if input.FilterRevision == "" {
+			input.FilterRevision = s.jobRevision(ctx, "filter_revision", *input.JobID)
+		}
+		if input.ScoreRevision == "" {
+			input.ScoreRevision = s.jobRevision(ctx, "score_revision", *input.JobID)
+		}
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO agent_calls (job_id, role, runner, input, output, ok, duration_ms, profile_revision, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, input.JobID, input.Role, input.Runner, input.Input, input.Output, ok, input.DurationMS, nullableString(input.ProfileRevision), s.timestamp())
+	_, err := s.db.ExecContext(ctx, `INSERT INTO agent_calls (job_id, role, runner, model, input, output, ok, duration_ms, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, reasoning_tokens, cost_usd, filter_revision, score_revision, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		input.JobID, input.Role, input.Runner, nullableString(input.Model), input.Input, input.Output, ok, input.DurationMS,
+		input.Usage.InputTokens, input.Usage.OutputTokens, input.Usage.CacheReadTokens, input.Usage.CacheWriteTokens, input.Usage.ReasoningTokens, input.Usage.CostUSD,
+		nullableString(input.FilterRevision), nullableString(input.ScoreRevision), s.timestamp())
 	if err != nil {
 		return fmt.Errorf("save agent call: %w", err)
 	}
 	return nil
 }
 
-func (s *Store) jobRevision(ctx context.Context, jobID int64) string {
+// jobRevision reads one of a job's two revision columns; column is a fixed
+// literal chosen by the caller, never user input.
+func (s *Store) jobRevision(ctx context.Context, column string, jobID int64) string {
+	if column != "filter_revision" && column != "score_revision" {
+		return ""
+	}
 	var revision sql.NullString
-	if err := s.db.QueryRowContext(ctx, "SELECT profile_revision FROM jobs WHERE id=?", jobID).Scan(&revision); err == nil && revision.Valid {
+	// #nosec G202 -- column is one of the two literals validated immediately above.
+	if err := s.db.QueryRowContext(ctx, "SELECT "+column+" FROM jobs WHERE id=?", jobID).Scan(&revision); err == nil && revision.Valid {
 		return revision.String
 	}
 	return ""
+}
+
+func validAgentRole(role string) bool {
+	return role == "filter" || role == "scorer" || role == "drafter" || role == "reviewer" || role == "calibrator"
 }
 
 func (s *Store) StartRun(ctx context.Context, trigger string) (int64, error) {
@@ -570,8 +686,10 @@ func contentHash(in JobInput) string {
 
 func validProcessTransition(from, to string) bool {
 	return map[string]map[string]bool{
-		"discovered":       {"filtered_out": true, "new": true},
-		"new":              {"filtered_out": true, "queued": true},
+		"discovered": {"filtered_out": true, "new": true},
+		// `new` reaches `discovered` when the screen finds it has no JD text after
+		// all: an excerpt belongs on the 待看 list, not in front of the scorer.
+		"new":              {"filtered_out": true, "queued": true, "discovered": true},
 		"queued":           {"scored": true, "shortlisted": true},
 		"scored":           {"queued": true},
 		"shortlisted":      {"letter_requested": true, "queued": true},
@@ -586,10 +704,15 @@ func validApplyTransition(from, to string) bool {
 
 // canReset reports whether changed source content may send a job back through
 // the pipeline. An alias is excluded: a merged copy must stay out of every stage
-// however often its own platform reprints it.
+// however often its own platform reprints it. `filtered_out` is excluded too,
+// and that holds for a job screened off a list page just as much as for one
+// screened on its full JD: the hard rules rejected a stated fact, and the JD
+// text arriving later does not unsay it. Reversing such a rejection is the
+// user's own call, through a manual reprocess.
 func canReset(state string) bool {
 	return state != "filtered_out" && state != "scored" && state != "letter_ready" && state != StateMerged
 }
+
 func validRunner(runner string) bool { return runner == "claude" || runner == "codex" }
 func validTrigger(trigger string) bool {
 	return trigger == RunTriggerTimer || trigger == RunTriggerManualCLI || trigger == RunTriggerManualExtension
@@ -627,7 +750,7 @@ func insertEvent(ctx context.Context, tx *sql.Tx, jobID int64, axis, from, to, n
 }
 
 // jobColumns is the single job projection every reader scans with scanJobRow.
-const jobColumns = "id, source, external_id, url, title, company_name, company_info, description, salary_min, salary_max, location, remote_type, process_state, apply_state, content_hash, filter_hits, profile_revision"
+const jobColumns = "id, source, external_id, url, title, company_name, company_info, description, salary_min, salary_max, location, remote_type, process_state, apply_state, content_hash, filter_hits, filter_revision, score_revision"
 
 func findJobTx(ctx context.Context, tx *sql.Tx, source, externalID string) (Job, bool, error) {
 	row := tx.QueryRowContext(ctx, "SELECT "+jobColumns+" FROM jobs WHERE source=? AND external_id=?", source, externalID)
@@ -664,7 +787,7 @@ func scanJob(row rowScanner) (Job, bool, error) {
 func scanJobRow(row rowScanner) (Job, error) {
 	var job Job
 	var filterHits sql.NullString
-	if err := row.Scan(&job.ID, &job.Source, &job.ExternalID, &job.URL, &job.Title, &job.CompanyName, &job.CompanyInfo, &job.Description, &job.SalaryMin, &job.SalaryMax, &job.Location, &job.RemoteType, &job.ProcessState, &job.ApplyState, &job.ContentHash, &filterHits, &job.ProfileRevision); err != nil {
+	if err := row.Scan(&job.ID, &job.Source, &job.ExternalID, &job.URL, &job.Title, &job.CompanyName, &job.CompanyInfo, &job.Description, &job.SalaryMin, &job.SalaryMax, &job.Location, &job.RemoteType, &job.ProcessState, &job.ApplyState, &job.ContentHash, &filterHits, &job.FilterRevision, &job.ScoreRevision); err != nil {
 		return Job{}, err
 	}
 	if filterHits.Valid && filterHits.String != "" {
@@ -683,7 +806,7 @@ func validateScore(input ScoreInput) error {
 	if input.JobID <= 0 || !validRunner(input.Runner) || len([]rune(input.Reason)) > maxScoreReason {
 		return errors.New("store: invalid score")
 	}
-	for _, value := range []int{input.HardSkill, input.Domain, input.Seniority, input.Condition, input.Direction} {
+	for _, value := range []int{input.Content, input.Benefit, input.Bonus, input.Industry} {
 		if value < 0 || value > 100 {
 			return errors.New("store: invalid score dimension")
 		}

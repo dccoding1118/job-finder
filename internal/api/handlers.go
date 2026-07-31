@@ -36,7 +36,7 @@ func (s *Server) jobs(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "internal", "unable to list jobs")
 		return
 	}
-	page, err := pageJobs(jobs, r, s.currentProfileRevision())
+	page, err := pageJobs(jobs, r, s.activeRevisions())
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
@@ -58,8 +58,8 @@ func (s *Server) job(w http.ResponseWriter, r *http.Request) {
 		s.applyJob(w, r, id)
 	case len(parts) == 2 && parts[1] == "letter" && r.Method == http.MethodPost:
 		s.requestLetter(w, r, id)
-	case len(parts) == 2 && parts[1] == "rescore" && r.Method == http.MethodPost:
-		s.rescoreJob(w, r, id)
+	case len(parts) == 2 && parts[1] == "reprocess" && r.Method == http.MethodPost:
+		s.reprocessJob(w, r, id)
 	case len(parts) == 2 && parts[1] == "unmerge" && r.Method == http.MethodPost:
 		s.unmergeJob(w, r, id)
 	default:
@@ -120,20 +120,20 @@ func (s *Server) requestLetter(w http.ResponseWriter, r *http.Request, id int64)
 	writeJSON(w, 200, map[string]any{"status": "requested", "job": s.jobViewWithGroup(r, detail)})
 }
 
-// rescoreJob redoes the score of a single job. It exists so a score produced
-// under an incomplete reading of the JD can be corrected on its own, without
-// spending Agent budget on every other job.
-func (s *Server) rescoreJob(w http.ResponseWriter, r *http.Request, id int64) {
+// reprocessJob returns a single job to the start of the pipeline. It exists so
+// one wrong verdict — a screening rejection as much as a score — can be
+// corrected on its own, without spending Agent budget on every other job.
+func (s *Server) reprocessJob(w http.ResponseWriter, r *http.Request, id int64) {
 	if !s.requireProfile(w) {
 		return
 	}
 	if s.pipeline == nil {
-		writeError(w, 500, "internal", "rescore requests are unavailable")
+		writeError(w, 500, "internal", "reprocess requests are unavailable")
 		return
 	}
-	switch err := s.pipeline.RequestRescore(r.Context(), id); {
-	case errors.Is(err, store.ErrRescoreNotAllowed):
-		writeError(w, http.StatusConflict, "rescore_not_allowed", "only a scored job that has no letter history can be rescored")
+	switch err := s.pipeline.RequestReprocess(r.Context(), id); {
+	case errors.Is(err, store.ErrReprocessNotAllowed):
+		writeError(w, http.StatusConflict, "reprocess_not_allowed", "a job with a letter history or a merged job cannot be reprocessed")
 		return
 	case errors.Is(err, sql.ErrNoRows):
 		writeError(w, http.StatusNotFound, "not_found", "job was not found")
@@ -147,11 +147,9 @@ func (s *Server) rescoreJob(w http.ResponseWriter, r *http.Request, id int64) {
 		writeError(w, 500, "internal", "unable to read job")
 		return
 	}
-	writeJSON(w, 200, map[string]any{"status": "queued", "job": s.jobViewWithGroup(r, detail)})
+	writeJSON(w, 200, map[string]any{"status": detail.Job.ProcessState, "job": s.jobViewWithGroup(r, detail)})
 }
 
-// status reports what the resident worker is doing: the backlog per process
-// state, today's remaining score budget, and the newest audited Agent calls.
 func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method is not allowed")
@@ -167,10 +165,17 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "internal", "unable to read agent calls")
 		return
 	}
-	value := map[string]any{"jobs": counts, "agent_calls": agentCallViews(calls)}
+	usage, err := s.store.AgentUsageByDay(r.Context(), agentUsageDayWindow)
+	if err != nil {
+		writeError(w, 500, "internal", "unable to read agent usage")
+		return
+	}
+	value := map[string]any{"jobs": counts, "agent_calls": agentCallViews(calls), "agent_usage_daily": usage}
 	if s.pipeline != nil {
-		remaining, limited, err := s.pipeline.ScoreBudgetRemaining(r.Context())
-		if err == nil {
+		if remaining, limited, err := s.pipeline.FilterBudgetRemaining(r.Context()); err == nil {
+			value["filter_budget"] = map[string]any{"remaining": remaining, "limited": limited}
+		}
+		if remaining, limited, err := s.pipeline.ScoreBudgetRemaining(r.Context()); err == nil {
 			value["score_budget"] = map[string]any{"remaining": remaining, "limited": limited}
 		}
 	}
@@ -179,6 +184,10 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 
 // recentAgentCallLimit keeps the progress view to the recent past.
 const recentAgentCallLimit = 20
+
+// agentUsageDayWindow bounds the daily token-usage breakdown to a couple of
+// weeks; older days age out of the view rather than growing it without bound.
+const agentUsageDayWindow = 14
 
 // maxAgentCallDetail bounds how much of a rejected response the progress view
 // quotes. The classified failure kind, not the quote, is what the view reads.
@@ -192,8 +201,11 @@ func agentCallViews(calls []store.AgentCall) []map[string]any {
 	views := make([]map[string]any, 0, len(calls))
 	for _, call := range calls {
 		view := map[string]any{
-			"id": call.ID, "job_id": call.JobID, "role": call.Role, "runner": call.Runner,
+			"id": call.ID, "job_id": call.JobID, "role": call.Role, "runner": call.Runner, "model": call.Model,
 			"ok": call.OK, "duration_ms": call.DurationMS, "created_at": call.CreatedAt,
+			"input_tokens": call.Usage.InputTokens, "output_tokens": call.Usage.OutputTokens,
+			"cache_read_tokens": call.Usage.CacheReadTokens, "cache_write_tokens": call.Usage.CacheWriteTokens,
+			"reasoning_tokens": call.Usage.ReasoningTokens, "cost_usd": call.Usage.CostUSD,
 		}
 		if !call.OK {
 			view["failure_kind"] = agents.ClassifyFailure(call.Role, call.Output)
@@ -221,12 +233,14 @@ func (s *Server) queue(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_request", pageErr.Error())
 		return
 	}
-	jobs, err := s.store.ListJobs(r.Context(), store.JobFilter{ProcessState: "discovered"}, store.JobSortNewest)
+	// The queue is what waits on the user rather than on the worker: a job whose
+	// JD text only they can fetch, by opening its page.
+	jobs, err := s.store.ListJobs(r.Context(), store.JobFilter{ProcessStates: []string{"discovered"}}, store.JobSortNewest)
 	if err != nil {
 		writeError(w, 500, "internal", "unable to list queue")
 		return
 	}
-	page, err := pageJobs(jobs, r, s.currentProfileRevision())
+	page, err := pageJobs(jobs, r, s.activeRevisions())
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
@@ -505,25 +519,27 @@ func (s *Server) profile(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		snapshot := s.profiles.Current()
 		w.Header().Set("ETag", snapshot.ETag)
-		estimate, err := s.store.EstimateActivation(r.Context(), snapshot.Revision)
+		estimate, err := s.store.EstimateActivation(r.Context(), store.Revisions{Filter: snapshot.FilterRevision, Score: snapshot.ScoreRevision})
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "internal", "Unable to estimate Profile reprocessing")
 			return
 		}
 		var summary any
 		if snapshot.Profile != nil {
-			directions := make([]string, 0, len(snapshot.Profile.Preferences.Directions))
-			for _, direction := range snapshot.Profile.Preferences.Directions {
+			view := snapshot.Profile.SummaryView()
+			directions := make([]string, 0, len(view.Directions))
+			for _, direction := range view.Directions {
 				directions = append(directions, direction.Title)
 			}
 			summary = map[string]any{
-				"years_of_experience": snapshot.Profile.YearsOfExperience,
-				"skill_count":         len(snapshot.Profile.Skills.Expert) + len(snapshot.Profile.Skills.Proficient) + len(snapshot.Profile.Skills.Familiar),
-				"experience_count":    len(snapshot.Profile.Experiences), "directions": directions,
+				"total_years": view.TotalYears, "management_years": view.ManagementYears,
+				"skill_count": len(view.Skills), "education_count": len(view.Education),
+				"experience_count": view.ExperienceCount, "remote": view.Remote, "directions": directions,
 			}
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
-			"status": snapshot.Status, "profile": snapshot.Profile, "profile_revision": nullableRevision(snapshot.Revision),
+			"status": snapshot.Status, "profile": snapshot.Profile,
+			"filter_revision": nullableRevision(snapshot.FilterRevision), "score_revision": nullableRevision(snapshot.ScoreRevision),
 			"summary": summary, "issues": snapshot.Issues, "reprocess_estimate": activationView(estimate),
 		})
 	case http.MethodPut:
@@ -552,7 +568,10 @@ func (s *Server) profile(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		w.Header().Set("ETag", result.Snapshot.ETag)
-		writeJSON(w, http.StatusOK, map[string]any{"status": "ready", "profile_revision": result.Snapshot.Revision, "semantic_changed": result.SemanticChanged})
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status": "ready", "filter_revision": result.Snapshot.FilterRevision, "score_revision": result.Snapshot.ScoreRevision,
+			"filter_changed": result.FilterChanged, "score_changed": result.ScoreChanged,
+		})
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method is not allowed")
 	}
@@ -576,18 +595,21 @@ func (s *Server) reprocessProfile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal", "Unable to read active Profile")
 		return
 	}
-	activation, err := s.activate(r.Context(), snapshot.Revision, *snapshot.Profile)
+	activation, err := s.activate(r.Context(), profile.Revisions{Filter: snapshot.FilterRevision, Score: snapshot.ScoreRevision}, *snapshot.Profile)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "profile_reprocess_failed", "Unable to reprocess stale jobs")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"status": "queued", "profile_revision": snapshot.Revision, "activation": activation,
+		"status": "queued", "filter_revision": snapshot.FilterRevision, "score_revision": snapshot.ScoreRevision, "activation": activation,
 	})
 }
 
 func activationView(value store.ActivationStats) map[string]int {
-	return map[string]int{"partial_screened": value.PartialScreened, "requeued": value.Requeued, "protected": value.Protected, "unchanged": value.Unchanged}
+	return map[string]int{
+		"partial_screened": value.PartialScreened, "refiltered": value.Refiltered, "requeued": value.Requeued,
+		"protected": value.Protected, "unchanged": value.Unchanged,
+	}
 }
 
 func nullableRevision(value string) any {
@@ -661,27 +683,27 @@ func pageSlice[T any](items []T, r *http.Request) ([]T, *string, error) {
 	return selected, &next, nil
 }
 
-func pageJobs(jobs []store.Job, r *http.Request, revisions ...string) (map[string]any, error) {
+func pageJobs(jobs []store.Job, r *http.Request, active activeRevisions) (map[string]any, error) {
 	selected, next, err := pageSlice(jobs, r)
 	if err != nil {
 		return nil, err
 	}
 	values := make([]any, 0, len(selected))
 	for _, job := range selected {
-		values = append(values, jobListView(job, revisions...))
+		values = append(values, jobListView(job, active))
 	}
 	return map[string]any{"items": values, "next_cursor": next}, nil
 }
 
-func (s *Server) currentProfileRevision() string {
+func (s *Server) activeRevisions() activeRevisions {
 	if s.profiles == nil {
-		return ""
+		return activeRevisions{}
 	}
 	snapshot, err := s.profiles.Ready()
 	if err != nil {
-		return ""
+		return activeRevisions{}
 	}
-	return snapshot.Revision
+	return activeRevisions{Filter: snapshot.FilterRevision, Score: snapshot.ScoreRevision}
 }
 
 func (s *Server) pageRuns(r *http.Request, runs []store.Run) (map[string]any, error) {
