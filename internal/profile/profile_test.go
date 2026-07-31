@@ -3,6 +3,8 @@ package profile
 import (
 	"os"
 	"path/filepath"
+	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -14,40 +16,97 @@ func TestLoadAndValidate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if value.YearsOfExperience != 8 || contents == "" {
+	if len(value.Experiences) != 3 || contents == "" {
 		t.Fatalf("unexpected loaded profile: %+v", value)
+	}
+	if value.Derived.TotalYears != 4.5 {
+		t.Fatalf("derived totals were not materialized: %+v", value.Derived)
 	}
 }
 
 func TestValidateRejectsInvalidValues(t *testing.T) {
 	t.Parallel()
-	for name, replacement := range map[string]string{
-		"degree": "degree: invalid", "remote": "remote: invalid", "duplicate_skill": "- Go\n  familiar:\n    - Go", "negative_years": "years_of_experience: -1",
+	for name, edit := range map[string][2]string{
+		"education_level":  {"level: master", "level: invalid"},
+		"skill_level":      {"level: proficient", "level: guru"},
+		"remote":           {"remote: preferred", "remote: sometimes"},
+		"negative_years":   {"years: 3", "years: -3"},
+		"missing_industry": {"industry: technology services", "industry: \"  \""},
+		"direction":        {"title: cloud architecture", "title: \"\""},
+		"blank_exclusion":  {"exclude_companies: []", "exclude_companies: [\"  \"]"},
+		"duplicate_skill":  {"name: Kubernetes", "name: go"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			contents := validProfileYAML()
-			switch name {
-			case "degree":
-				contents = strings.Replace(contents, "degree: master", replacement, 1)
-			case "remote":
-				contents = strings.Replace(contents, "remote: preferred", replacement, 1)
-			case "negative_years":
-				contents = strings.Replace(contents, "years_of_experience: 8", replacement, 1)
-			case "duplicate_skill":
-				contents = strings.Replace(contents, "proficient: [Go]\n  familiar:", "proficient: [Go]\n  familiar: [Go]\n#", 1)
-			}
+			t.Parallel()
+			contents := strings.Replace(validProfileYAML(), edit[0], edit[1], 1)
 			if _, _, err := Load(writeProfile(t, contents)); err == nil {
-				t.Fatal("Load succeeded")
+				t.Fatalf("Load accepted %s", name)
 			}
 		})
 	}
 }
 
-func TestValidateRejectsBlankScreeningTerm(t *testing.T) {
+// A stored file may carry `derived` because the system wrote it, but a request
+// may not: the totals are computed, not stated.
+func TestDecodeJSONRejectsSuppliedDerived(t *testing.T) {
 	t.Parallel()
-	contents := strings.Replace(validProfileYAML(), "  industry_avoid: []", "  industry_avoid: []\n  screening:\n    exclude_companies: [\"  \"]", 1)
-	if _, _, err := Load(writeProfile(t, contents)); err == nil {
-		t.Fatal("Load accepted a blank screening term")
+	body := `{"derived":{"total_years":99,"management_years":0,"industry_years":{}}}`
+	if _, err := DecodeJSON(strings.NewReader(body)); err == nil {
+		t.Fatal("DecodeJSON accepted a supplied derived section")
+	}
+}
+
+func TestDerivedTotals(t *testing.T) {
+	t.Parallel()
+	value, _, err := Load(writeProfile(t, validProfileYAML()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	derived := value.DerivedTotals()
+	// The second experience is an excluded internship, so it counts nowhere.
+	if derived.TotalYears != 4.5 || derived.ManagementYears != 1.5 {
+		t.Fatalf("derived = %+v", derived)
+	}
+	if derived.IndustryYears["technology services"] != 4.5 || derived.IndustryYears["retail"] != 0 {
+		t.Fatalf("industry years = %+v", derived.IndustryYears)
+	}
+}
+
+func TestGateViewsExcludeTheOtherGate(t *testing.T) {
+	t.Parallel()
+	value, _, err := Load(writeProfile(t, validProfileYAML()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	scoreView, err := MarshalView(value.ScoreView(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, forbidden := range []string{"achievements", "org_type", "honesty_bounds", "backend engineer"} {
+		if strings.Contains(scoreView, forbidden) {
+			t.Fatalf("score view leaked the resume narrative (%q):\n%s", forbidden, scoreView)
+		}
+	}
+	filterView, err := MarshalView(value.FilterView())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(filterView, "content_likes") {
+		t.Fatalf("filter view carried the soft rules:\n%s", filterView)
+	}
+}
+
+func TestLegacyProfileIsMigrated(t *testing.T) {
+	t.Parallel()
+	value, _, err := Load(writeProfile(t, legacyProfileYAML()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if value.Requirements.Remote != remoteAcceptable || len(value.Search.Directions) != 1 {
+		t.Fatalf("migrated profile = %+v", value)
+	}
+	if len(value.Qualifications.Skills) != 3 || value.Experiences[0].Industry == "" {
+		t.Fatalf("migrated qualifications = %+v", value.Qualifications)
 	}
 }
 
@@ -91,6 +150,67 @@ func writeProfile(t *testing.T, contents string) string {
 }
 
 func validProfileYAML() string {
+	return `search:
+  directions:
+    - key: P1
+      title: cloud architecture
+      keywords: [cloud]
+requirements:
+  salary_min: 0
+  locations: [taipei]
+  remote: preferred
+  employment_types: []
+  industry_avoid: []
+  exclude_title_keywords: [intern]
+  exclude_description_keywords: []
+  exclude_companies: []
+intents:
+  salary_target: 0
+  content_likes: [designing operable services]
+  content_dislikes: [manual release procedures]
+  industry_interests: [developer tooling]
+experiences:
+  - industry: technology services
+    years: 3
+    is_management: false
+    skills: [Go]
+    org_type: technology provider
+    role: backend engineer
+    achievements: [reliable delivery]
+  - industry: technology services
+    years: 1.5
+    is_management: true
+    skills: [Go]
+    org_type: technology provider
+    role: engineering lead
+    achievements: [grew the team]
+  - industry: retail
+    years: 0.5
+    is_management: false
+    exclude_from_totals: true
+    org_type: retail chain
+    role: intern
+qualifications:
+  education:
+    - level: master
+      field: computer science
+      status: graduated
+  skills:
+    - name: Go
+      level: proficient
+    - name: Kubernetes
+      level: familiar
+  certifications:
+    - name: cloud certification
+      status: active
+  languages:
+    - name: English
+      level: fluent
+honesty_bounds: [configuration focused]
+`
+}
+
+func legacyProfileYAML() string {
 	return `summary: anonymous engineering profile
 years_of_experience: 8
 education:
@@ -112,7 +232,7 @@ preferences:
   salary_min: 0
   salary_target: 0
   locations: [Taipei]
-  remote: preferred
+  remote: ok
   directions:
     - key: P1
       title: cloud architecture
@@ -120,4 +240,101 @@ preferences:
   industry_avoid: []
 honesty_bounds: [configuration focused]
 `
+}
+
+// Every controlled field accepts a key or any wording of that key and stores
+// the key, so a file written before the vocabulary existed keeps loading. A
+// value outside the vocabulary is rejected rather than silently kept.
+func TestControlledFieldsAreNormalizedOntoTheirVocabulary(t *testing.T) {
+	for _, testCase := range []struct {
+		field, from, want, invalid string
+	}{
+		{"status: graduated", "status: 畢業", "graduated", "status: 在學"},
+		{"status: active", "status: 有效", "active", "status: 申請中"},
+		{"level: fluent", "level: 中等", "intermediate", "level: 母語人士"},
+	} {
+		value, err := DecodeYAML([]byte(strings.Replace(validProfileYAML(), testCase.field, testCase.from, 1)))
+		if err != nil {
+			t.Fatalf("%s: %v", testCase.from, err)
+		}
+		got := value.Qualifications.Education[0].Status + value.Qualifications.Certifications[0].Status + value.Qualifications.Languages[0].Level
+		if !strings.Contains(got, testCase.want) {
+			t.Fatalf("%s normalized to %q, want %q in it", testCase.from, got, testCase.want)
+		}
+		if _, err := DecodeYAML([]byte(strings.Replace(validProfileYAML(), testCase.field, testCase.invalid, 1))); err == nil {
+			t.Fatalf("%s was accepted", testCase.invalid)
+		}
+	}
+}
+
+// A v4 document stated the locality twice — once to widen the search, once to
+// screen with. v5 keeps only the screening list, so the search list is folded
+// into it on load and its wording is normalized onto the canonical keys.
+func TestSearchLocationsAreFoldedIntoRequirements(t *testing.T) {
+	v4 := strings.Replace(validProfileYAML(), "      keywords: [cloud]\n", "      keywords: [cloud]\n  locations: [臺北, Tainan]\n", 1)
+	value, err := DecodeYAML([]byte(v4))
+	if err != nil {
+		t.Fatalf("load v4: %v", err)
+	}
+	if want := []string{"taipei", "tainan"}; !reflect.DeepEqual(value.Requirements.Locations, want) {
+		t.Fatalf("locations = %v, want %v", value.Requirements.Locations, want)
+	}
+}
+
+// A locality is picked from a vocabulary, so its simplified, traditional and
+// English wordings all store the same key and anything else is rejected: a
+// free-typed locality would silently match no JD.
+func TestLocationsAreNormalizedOntoTheVocabulary(t *testing.T) {
+	load := func(list string) (Profile, error) {
+		return DecodeYAML([]byte(strings.Replace(validProfileYAML(), "locations: [taipei]", "locations: "+list, 1)))
+	}
+
+	value, err := load("[臺北, Taipei, 全台, 海外]")
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	want := []string{"taipei", LocationNationwide, LocationOverseas}
+	if got := value.Requirements.Locations; !reflect.DeepEqual(got, want) {
+		t.Fatalf("locations = %v, want %v", got, want)
+	}
+
+	if _, err := load("[新竹科學園區]"); err == nil {
+		t.Fatal("a locality outside the vocabulary was accepted")
+	}
+}
+
+// `nationwide` stands for every locality in Taiwan and deliberately not for
+// `overseas`, which is the one key it must not expand to.
+func TestNationwideExpandsToTaiwanOnly(t *testing.T) {
+	terms := LocationTerms([]string{LocationNationwide})
+	for _, want := range []string{"台北", "臺東", "Kaohsiung", "不限"} {
+		if !slices.Contains(terms, want) {
+			t.Fatalf("nationwide terms are missing %q", want)
+		}
+	}
+	for _, unwanted := range Locations.Aliases(LocationOverseas) {
+		if slices.Contains(terms, unwanted) {
+			t.Fatalf("nationwide terms include the overseas wording %q", unwanted)
+		}
+	}
+}
+
+// Employment type is the vocabulary a list is built from, so it also de-dupes.
+func TestEmploymentTypesAreNormalizedOntoTheVocabulary(t *testing.T) {
+	load := func(list string) (Profile, error) {
+		return DecodeYAML([]byte(strings.Replace(validProfileYAML(), "employment_types: []", "employment_types: "+list, 1)))
+	}
+
+	value, err := load("[full_time, 正職, 約聘, INTERNSHIP]")
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	want := []string{EmploymentFullTime, EmploymentContract, EmploymentInternship}
+	if got := value.Requirements.EmploymentTypes; !reflect.DeepEqual(got, want) {
+		t.Fatalf("employment_types = %v, want %v", got, want)
+	}
+
+	if _, err := load("[freelance]"); err == nil {
+		t.Fatal("a type outside the vocabulary was accepted")
+	}
 }

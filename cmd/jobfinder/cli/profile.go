@@ -40,11 +40,29 @@ func newProfileCmd() *cobra.Command {
 				return err
 			}
 			summary := value.SummaryView()
-			_, err = fmt.Fprintf(cmd.OutOrStdout(), "years_of_experience: %d\neducation: %s (%s)\nexpert: %v\nproficient: %v\nfamiliar: %v\ndirections: %v\nprofile: %s\n", summary.YearsOfExperience, summary.Degree, summary.Field, summary.Expert, summary.Proficient, summary.Familiar, directionLabels(summary.Directions), filepath.Clean(profilePath))
+			_, err = fmt.Fprintf(cmd.OutOrStdout(), "total_years: %.1f\nmanagement_years: %.1f\neducation: %v\nskills: %v\nexperiences: %d\nremote: %s\nsalary_min: %d\ndirections: %v\nprofile: %s\n",
+				summary.TotalYears, summary.ManagementYears, educationLabels(summary.Education), skillLabels(summary.Skills), summary.ExperienceCount,
+				summary.Remote, summary.SalaryMin, directionLabels(summary.Directions), filepath.Clean(profilePath))
 			return err
 		}},
 	)
 	return cmd
+}
+
+func educationLabels(entries []profile.EducationEntry) []string {
+	labels := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		labels = append(labels, entry.Level+":"+entry.Field+" ("+entry.Status+")")
+	}
+	return labels
+}
+
+func skillLabels(skills []profile.SkillEntry) []string {
+	labels := make([]string, 0, len(skills))
+	for _, skill := range skills {
+		labels = append(labels, skill.Name+":"+skill.Level)
+	}
+	return labels
 }
 
 func directionLabels(directions []profile.Direction) []string {

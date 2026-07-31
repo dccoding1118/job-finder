@@ -11,27 +11,60 @@
 
   const state = { draft: null, etag: null, dirty: false, saving: false, status: "loading", theme: "light" };
   const listTargets = {
-    "skills.expert": "skills-expert",
-    "skills.proficient": "skills-proficient",
-    "skills.familiar": "skills-familiar",
-    "preferences.locations": "locations",
-    "preferences.industry_avoid": "industry-avoid",
-    "preferences.screening.exclude_title_keywords": "exclude-title",
-    "preferences.screening.exclude_description_keywords": "exclude-description",
-    "preferences.screening.require_any_keywords": "require-any",
-    "preferences.screening.exclude_companies": "exclude-companies",
+    "requirements.locations": "requirement-locations",
+    "requirements.industry_avoid": "industry-avoid",
+    "requirements.exclude_title_keywords": "exclude-title",
+    "requirements.exclude_description_keywords": "exclude-description",
+    "requirements.exclude_companies": "exclude-companies",
+    "intents.content_likes": "content-likes",
+    "intents.content_dislikes": "content-dislikes",
+    "intents.industry_interests": "industry-interests",
     honesty_bounds: "honesty-bounds",
   };
+  const skillLevels = { expert: "專家", proficient: "熟練", familiar: "了解" };
+  // locations mirrors the backend vocabulary: the stored value is the key, and a
+  // locality's simplified, traditional and English wordings are matched from it.
+  // `nationwide` means any locality in Taiwan and excludes `overseas`.
+  const locations = {
+    taipei: "台北市", new_taipei: "新北市", keelung: "基隆市", taoyuan: "桃園市",
+    hsinchu_city: "新竹市", hsinchu_county: "新竹縣", miaoli: "苗栗縣", taichung: "台中市",
+    changhua: "彰化縣", nantou: "南投縣", yunlin: "雲林縣", chiayi_city: "嘉義市",
+    chiayi_county: "嘉義縣", tainan: "台南市", kaohsiung: "高雄市", pingtung: "屏東縣",
+    yilan: "宜蘭縣", hualien: "花蓮縣", taitung: "台東縣", penghu: "澎湖縣",
+    kinmen: "金門縣", lienchiang: "連江縣", nationwide: "全台", overseas: "海外",
+  };
+  // vocabularyLists are the string lists whose entries are picked from a fixed
+  // vocabulary instead of typed.
+  const vocabularyLists = { "requirements.locations": locations };
+  // employmentTypes mirrors the backend's controlled vocabulary: the stored
+  // value is the key, and the label is only what this form shows.
+  const employmentTypes = { full_time: "全職", part_time: "兼職", contract: "約聘", internship: "實習" };
+  const educationStatuses = { graduated: "畢業", attended: "肄業" };
+  const certificationStatuses = { active: "有效", expired: "過期", renewing: "過期重考中" };
+  const languageLevels = { native: "母語", fluent: "流利", intermediate: "中等", basic: "基礎" };
+
+  // selectOptions renders a controlled vocabulary. Every such field is picked,
+  // never typed: a value outside the vocabulary is rejected on save.
+  function selectOptions(terms, selected, placeholder = "請選擇") {
+    return `<option value="">${placeholder}</option>` + Object.entries(terms).map(([value, label]) => `<option value="${value}" ${selected === value ? "selected" : ""}>${escapeHTML(label)}</option>`).join("");
+  }
 
   function emptyProfile() {
     return {
-      summary: "", years_of_experience: 0, education: { degree: "", field: "" }, experiences: [],
-      skills: { expert: [], proficient: [], familiar: [] }, certifications: [],
-      preferences: {
-        salary_min: 0, salary_target: 0, locations: [], remote: "", directions: [], industry_avoid: [],
-        screening: { exclude_title_keywords: [], exclude_description_keywords: [], require_any_keywords: [], exclude_companies: [] },
-      }, honesty_bounds: [],
+      search: { directions: [] },
+      requirements: {
+        salary_min: 0, locations: [], remote: "", employment_types: [], industry_avoid: [],
+        exclude_title_keywords: [], exclude_description_keywords: [], exclude_companies: [],
+      },
+      intents: { salary_target: 0, content_likes: [], content_dislikes: [], industry_interests: [] },
+      experiences: [],
+      qualifications: { education: [], skills: [], certifications: [], languages: [] },
+      honesty_bounds: [],
     };
+  }
+
+  function emptyExperience() {
+    return { industry: "", years: 0, is_management: false, exclude_from_totals: false, skills: [], org_type: "", role: "", achievements: [] };
   }
 
   function clone(value) { return JSON.parse(JSON.stringify(value)); }
@@ -75,8 +108,10 @@
     return `<button class="mini-button${destructive ? " is-delete" : ""}" type="button" data-action="${action}" aria-label="${label}" ${disabled ? "disabled" : ""}>${action === "up" ? "↑" : action === "down" ? "↓" : "×"}</button>`;
   }
 
+  // Only the rows this list owns: an experience card contains its own nested
+  // rows, which carry their own data-index and belong to a different array.
   function bindArrayControls(root, array, render) {
-    root.querySelectorAll("[data-index]").forEach((row) => {
+    root.querySelectorAll(":scope > [data-index]").forEach((row) => {
       const index = Number(row.dataset.index);
       row.querySelector('[data-action="delete"]')?.addEventListener("click", () => { array.splice(index, 1); render(); markDirty(); });
       row.querySelector('[data-action="up"]')?.addEventListener("click", () => { [array[index - 1], array[index]] = [array[index], array[index - 1]]; render(); markDirty(); });
@@ -87,9 +122,33 @@
   function renderStringList(path) {
     const root = document.querySelector(`#${listTargets[path]}`);
     const array = getPath(path);
-    root.innerHTML = array.map((value, index) => `<div class="compact-row" data-index="${index}"><input value="${escapeHTML(value)}" data-path="${path}.${index}" aria-label="${escapeHTML(path)} 第 ${index + 1} 項" required /><span class="row-actions">${controlButton("向上移動", "up", index === 0)}${controlButton("向下移動", "down", index === array.length - 1)}${controlButton("刪除", "delete", false, true)}</span></div>`).join("");
-    root.querySelectorAll("input").forEach((input, index) => input.addEventListener("input", () => { array[index] = input.value; markDirty(); }));
+    const terms = vocabularyLists[path];
+    root.innerHTML = array.map((value, index) => `<div class="compact-row" data-index="${index}">${terms ? `<select class="grow" data-path="${path}.${index}" aria-label="${escapeHTML(path)} 第 ${index + 1} 項" required>${selectOptions(remainingTerms(terms, array, value), value)}</select>` : `<input value="${escapeHTML(value)}" data-path="${path}.${index}" aria-label="${escapeHTML(path)} 第 ${index + 1} 項" required />`}<span class="row-actions">${controlButton("向上移動", "up", index === 0)}${controlButton("向下移動", "down", index === array.length - 1)}${controlButton("刪除", "delete", false, true)}</span></div>`).join("");
+    root.querySelectorAll("input,select").forEach((field, index) => field.addEventListener(terms ? "change" : "input", () => {
+      array[index] = field.value;
+      markDirty();
+      if (terms) renderStringList(path);
+    }));
     bindArrayControls(root, array, () => renderStringList(path));
+  }
+
+  // remainingTerms hides the values other rows already hold, so the same地區 cannot
+  // be picked twice; the row's own value stays so it renders as selected.
+  function remainingTerms(terms, chosen, own) {
+    const taken = new Set(chosen.filter((value) => value !== own));
+    return Object.fromEntries(Object.entries(terms).filter(([key]) => !taken.has(key)));
+  }
+
+  // Employment type is a fixed vocabulary, so it is picked rather than typed —
+  // a free-typed wording would silently match no JD.
+  function renderEmploymentTypes() {
+    const root = document.querySelector("#employment-types");
+    const selected = new Set(state.draft.requirements.employment_types);
+    root.innerHTML = Object.entries(employmentTypes).map(([value, label]) => `<label class="option-chip"><input type="checkbox" value="${value}" ${selected.has(value) ? "checked" : ""} /> ${escapeHTML(label)}</label>`).join("");
+    root.querySelectorAll("input").forEach((input) => input.addEventListener("change", () => {
+      state.draft.requirements.employment_types = Object.keys(employmentTypes).filter((value) => root.querySelector(`input[value="${value}"]`).checked);
+      markDirty();
+    }));
   }
 
   function nestedListHTML(values, path, label) {
@@ -101,13 +160,37 @@
     bindArrayControls(root, values, render);
   }
 
+  // derivedTotals mirrors the totals the backend materializes on save, so the
+  // years a hard rule will compare against are visible while editing.
+  function derivedTotals() {
+    const totals = { total: 0, management: 0, industries: new Map() };
+    for (const item of state.draft.experiences) {
+      if (item.exclude_from_totals) continue;
+      const years = Number(item.years) || 0;
+      totals.total += years;
+      if (item.is_management) totals.management += years;
+      if (item.industry) totals.industries.set(item.industry, (totals.industries.get(item.industry) || 0) + years);
+    }
+    return totals;
+  }
+
+  function renderDerived() {
+    const totals = derivedTotals();
+    const industries = [...totals.industries.entries()].map(([industry, years]) => `${industry} ${years}`).join("、") || "—";
+    document.querySelector("#derived-summary").textContent = `年資加總：總計 ${totals.total} 年、管理職 ${totals.management} 年；各產業 ${industries}（由下方經歷自動計算，不可手動編輯）`;
+  }
+
   function renderExperiences() {
     const root = document.querySelector("#experiences");
     const array = state.draft.experiences;
-    root.innerHTML = array.map((item, index) => `<article class="item-card" data-index="${index}"><div class="item-card-header"><strong>經歷 ${index + 1}</strong><span class="row-actions">${controlButton("向上移動經歷", "up", index === 0)}${controlButton("向下移動經歷", "down", index === array.length - 1)}${controlButton("刪除經歷", "delete", false, true)}</span></div><div class="field-grid"><label class="field">角色<input data-key="role" data-path="experiences.${index}.role" value="${escapeHTML(item.role)}" required /></label><label class="field">組織類型<input data-key="org_type" data-path="experiences.${index}.org_type" value="${escapeHTML(item.org_type)}" required /></label><label class="field">年資<input data-key="years" data-path="experiences.${index}.years" type="number" min="0" step="0.1" value="${escapeHTML(item.years)}" required /></label></div><label class="field">職責摘要<textarea data-key="summary" data-path="experiences.${index}.summary" rows="3" required>${escapeHTML(item.summary)}</textarea></label><div class="nested-list"><div class="subheading"><h3>量化成就</h3><button class="text-button" type="button" data-add-nested="achievements">＋ 新增</button></div><div class="compact-list" data-list="achievements">${nestedListHTML(item.achievements, `experiences.${index}.achievements`, "量化成就")}</div></div><div class="nested-list"><div class="subheading"><h3>使用技能</h3><button class="text-button" type="button" data-add-nested="skills">＋ 新增</button></div><div class="compact-list" data-list="skills">${nestedListHTML(item.skills, `experiences.${index}.skills`, "使用技能")}</div></div></article>`).join("");
+    root.innerHTML = array.map((item, index) => `<article class="item-card" data-index="${index}"><div class="item-card-header"><strong>經歷 ${index + 1}</strong><span class="row-actions">${controlButton("向上移動經歷", "up", index === 0)}${controlButton("向下移動經歷", "down", index === array.length - 1)}${controlButton("刪除經歷", "delete", false, true)}</span></div><div class="field-grid"><label class="field">產業<input data-key="industry" data-path="experiences.${index}.industry" value="${escapeHTML(item.industry)}" required /></label><label class="field">年資<input data-key="years" data-path="experiences.${index}.years" type="number" min="0" step="0.1" value="${escapeHTML(item.years)}" required /></label></div><div class="field-grid"><label class="field is-checkbox"><input data-key="is_management" data-path="experiences.${index}.is_management" type="checkbox" ${item.is_management ? "checked" : ""} /> 這段是管理職</label><label class="field is-checkbox"><input data-key="exclude_from_totals" data-path="experiences.${index}.exclude_from_totals" type="checkbox" ${item.exclude_from_totals ? "checked" : ""} /> 不計入年資加總（實習或非相關經歷）</label></div><div class="field-grid"><label class="field">組織類型<input data-key="org_type" data-path="experiences.${index}.org_type" value="${escapeHTML(item.org_type)}" /></label><label class="field">角色<input data-key="role" data-path="experiences.${index}.role" value="${escapeHTML(item.role)}" /></label></div><div class="nested-list"><div class="subheading"><h3>量化成就</h3><button class="text-button" type="button" data-add-nested="achievements">＋ 新增</button></div><div class="compact-list" data-list="achievements">${nestedListHTML(item.achievements, `experiences.${index}.achievements`, "量化成就")}</div></div><div class="nested-list"><div class="subheading"><h3>使用技能</h3><button class="text-button" type="button" data-add-nested="skills">＋ 新增</button></div><div class="compact-list" data-list="skills">${nestedListHTML(item.skills, `experiences.${index}.skills`, "使用技能")}</div></div></article>`).join("");
     root.querySelectorAll(".item-card").forEach((card) => {
       const index = Number(card.dataset.index); const item = array[index];
-      card.querySelectorAll("[data-key]").forEach((input) => input.addEventListener("input", () => { item[input.dataset.key] = input.type === "number" ? Number(input.value) : input.value; markDirty(); }));
+      card.querySelectorAll("[data-key]").forEach((input) => input.addEventListener("input", () => {
+        if (input.type === "checkbox") item[input.dataset.key] = input.checked;
+        else item[input.dataset.key] = input.type === "number" ? Number(input.value) : input.value;
+        renderDerived(); markDirty();
+      }));
       for (const key of ["achievements", "skills"]) {
         const list = card.querySelector(`[data-list="${key}"]`);
         bindNestedList(list, item[key], renderExperiences);
@@ -118,26 +201,105 @@
         });
       }
     });
-    bindArrayControls(root, array, renderExperiences);
+    bindArrayControls(root, array, () => { renderExperiences(); renderDerived(); });
+    renderDerived();
+  }
+
+  // syncSkillsFromExperiences carries every skill named on an experience into the
+  // totals list at the highest proficiency, for the user to lower where it does
+  // not hold. It runs only when asked: a skill already on the list keeps both its
+  // place and its proficiency, so loading again never overwrites an adjustment.
+  function syncSkillsFromExperiences() {
+    const skills = state.draft.qualifications.skills;
+    const known = new Set(skills.map((skill) => skill.name.trim().toLowerCase()));
+    let added = false;
+    for (const experience of state.draft.experiences) {
+      for (const name of experience.skills) {
+        const key = name.trim().toLowerCase();
+        if (!key || known.has(key)) continue;
+        known.add(key);
+        skills.push({ name, level: "expert", from_experience: true });
+        added = true;
+      }
+    }
+    if (added) { renderSkills(); markDirty(); }
+    return added;
+  }
+
+  // The three qualification lists are one item per row: what matters when reading
+  // them back is whether anything is missing from the set, which a stack of cards
+  // hides. Each row is a name plus its one graded field.
+  function renderSkills() {
+    const root = document.querySelector("#skills"); const array = state.draft.qualifications.skills;
+    root.innerHTML = array.map((item, index) => gradedRow({
+      index, total: array.length, path: `qualifications.skills.${index}`, label: "技能",
+      name: item.name, namePlaceholder: "技能名稱", field: "level", value: item.level,
+      terms: skillLevels, placeholder: "請選擇熟練度", note: item.from_experience ? "來自經歷" : "",
+    })).join("");
+    bindRowFields(root, array, renderSkills);
+  }
+
+  // gradedRow is one compact row of a qualification list: a name that grows and a
+  // fixed-width vocabulary field beside it. The note slot is always laid out,
+  // even empty, so every row of every list keeps the same column edges.
+  function gradedRow({ index, total, path, label, name, namePlaceholder, field, value, terms, placeholder, note = "" }) {
+    return `<div class="compact-row" data-index="${index}"><input class="grow" data-key="name" data-path="${path}.name" value="${escapeHTML(name)}" placeholder="${escapeHTML(namePlaceholder)}" aria-label="${label} ${index + 1} 名稱" required /><select class="fixed" data-key="${field}" data-path="${path}.${field}" aria-label="${label} ${index + 1}" required>${selectOptions(terms, value, placeholder)}</select><span class="row-note">${escapeHTML(note)}</span><span class="row-actions">${controlButton("向上移動", "up", index === 0)}${controlButton("向下移動", "down", index === total - 1)}${controlButton("刪除", "delete", false, true)}</span></div>`;
+  }
+
+  function bindRowFields(root, array, render) {
+    root.querySelectorAll(":scope > [data-index]").forEach((row) => {
+      const item = array[Number(row.dataset.index)];
+      row.querySelectorAll("[data-key]").forEach((field) => field.addEventListener(field.tagName === "SELECT" ? "change" : "input", () => { item[field.dataset.key] = field.value; markDirty(); }));
+    });
+    bindArrayControls(root, array, render);
+  }
+
+  function renderEducation() {
+    const root = document.querySelector("#education"); const array = state.draft.qualifications.education;
+    const levels = { bachelor: "學士", master: "碩士", phd: "博士" };
+    root.innerHTML = array.map((item, index) => `<div class="item-card" data-index="${index}"><div class="item-card-header"><strong>學歷 ${index + 1}</strong><span class="row-actions">${controlButton("向上移動", "up", index === 0)}${controlButton("向下移動", "down", index === array.length - 1)}${controlButton("刪除", "delete", false, true)}</span></div><div class="field-grid"><label class="field">學位<select data-key="level" data-path="qualifications.education.${index}.level" required>${selectOptions(levels, item.level)}</select></label><label class="field">科系領域<input data-key="field" data-path="qualifications.education.${index}.field" value="${escapeHTML(item.field)}" required /></label><label class="field">狀態<select data-key="status" data-path="qualifications.education.${index}.status" required>${selectOptions(educationStatuses, item.status)}</select></label></div></div>`).join("");
+    bindItemFields(root, array, renderEducation);
   }
 
   function renderCertifications() {
-    const root = document.querySelector("#certifications"); const array = state.draft.certifications;
-    root.innerHTML = array.map((item, index) => `<div class="item-card" data-index="${index}"><div class="item-card-header"><strong>證照 ${index + 1}</strong><span class="row-actions">${controlButton("向上移動", "up", index === 0)}${controlButton("向下移動", "down", index === array.length - 1)}${controlButton("刪除", "delete", false, true)}</span></div><div class="field-grid"><label class="field">名稱<input data-key="name" data-path="certifications.${index}.name" value="${escapeHTML(item.name)}" required /></label><label class="field">狀態<input data-key="status" data-path="certifications.${index}.status" value="${escapeHTML(item.status)}" required /></label></div></div>`).join("");
-    root.querySelectorAll(".item-card").forEach((card) => { const item = array[Number(card.dataset.index)]; card.querySelectorAll("[data-key]").forEach((input) => input.addEventListener("input", () => { item[input.dataset.key] = input.value; markDirty(); })); });
-    bindArrayControls(root, array, renderCertifications);
+    const root = document.querySelector("#certifications"); const array = state.draft.qualifications.certifications;
+    root.innerHTML = array.map((item, index) => gradedRow({
+      index, total: array.length, path: `qualifications.certifications.${index}`, label: "證照",
+      name: item.name, namePlaceholder: "證照名稱", field: "status", value: item.status,
+      terms: certificationStatuses, placeholder: "請選擇狀態",
+    })).join("");
+    bindRowFields(root, array, renderCertifications);
+  }
+
+  function renderLanguages() {
+    const root = document.querySelector("#languages"); const array = state.draft.qualifications.languages;
+    root.innerHTML = array.map((item, index) => gradedRow({
+      index, total: array.length, path: `qualifications.languages.${index}`, label: "語言",
+      name: item.name, namePlaceholder: "語言", field: "level", value: item.level,
+      terms: languageLevels, placeholder: "請選擇程度",
+    })).join("");
+    bindRowFields(root, array, renderLanguages);
+  }
+
+  function bindItemFields(root, array, render) {
+    root.querySelectorAll(".item-card").forEach((card) => {
+      const item = array[Number(card.dataset.index)];
+      card.querySelectorAll("[data-key]").forEach((input) => input.addEventListener("input", () => { item[input.dataset.key] = input.value; markDirty(); }));
+    });
+    bindArrayControls(root, array, render);
   }
 
   function renderDirections() {
-    const root = document.querySelector("#directions"); const array = state.draft.preferences.directions;
-    root.innerHTML = array.map((item, index) => `<article class="item-card" data-index="${index}"><div class="item-card-header"><strong>方向 ${index + 1}</strong><span class="row-actions">${controlButton("向上移動", "up", index === 0)}${controlButton("向下移動", "down", index === array.length - 1)}${controlButton("刪除", "delete", false, true)}</span></div><div class="field-grid"><label class="field">代碼<input data-key="key" data-path="preferences.directions.${index}.key" value="${escapeHTML(item.key)}" placeholder="P1" required /></label><label class="field">名稱<input data-key="title" data-path="preferences.directions.${index}.title" value="${escapeHTML(item.title)}" required /></label></div><div class="nested-list"><div class="subheading"><h3>方向關鍵字</h3><button class="text-button" type="button" data-add-keyword>＋ 新增</button></div><div class="compact-list" data-keywords>${nestedListHTML(item.keywords, `preferences.directions.${index}.keywords`, "方向關鍵字")}</div></div></article>`).join("");
-    root.querySelectorAll(".item-card").forEach((card) => { const index = Number(card.dataset.index); const item = array[index]; card.querySelectorAll("[data-key]").forEach((input) => input.addEventListener("input", () => { item[input.dataset.key] = input.value; markDirty(); })); const list = card.querySelector("[data-keywords]"); bindNestedList(list, item.keywords, renderDirections); card.querySelector("[data-add-keyword]").addEventListener("click", () => { const itemIndex = item.keywords.length; item.keywords.push(""); renderDirections(); markDirty(); focusPath(`preferences.directions.${index}.keywords.${itemIndex}`); }); });
+    const root = document.querySelector("#directions"); const array = state.draft.search.directions;
+    root.innerHTML = array.map((item, index) => `<article class="item-card" data-index="${index}"><div class="item-card-header"><strong>方向 ${index + 1}</strong><span class="row-actions">${controlButton("向上移動", "up", index === 0)}${controlButton("向下移動", "down", index === array.length - 1)}${controlButton("刪除", "delete", false, true)}</span></div><div class="field-grid"><label class="field">代碼<input data-key="key" data-path="search.directions.${index}.key" value="${escapeHTML(item.key)}" placeholder="P1" required /></label><label class="field">名稱<input data-key="title" data-path="search.directions.${index}.title" value="${escapeHTML(item.title)}" required /></label></div><div class="nested-list"><div class="subheading"><h3>搜尋關鍵字</h3><button class="text-button" type="button" data-add-keyword>＋ 新增</button></div><div class="compact-list" data-keywords>${nestedListHTML(item.keywords, `search.directions.${index}.keywords`, "搜尋關鍵字")}</div></div></article>`).join("");
+    root.querySelectorAll(".item-card").forEach((card) => { const index = Number(card.dataset.index); const item = array[index]; card.querySelectorAll("[data-key]").forEach((input) => input.addEventListener("input", () => { item[input.dataset.key] = input.value; markDirty(); })); const list = card.querySelector("[data-keywords]"); bindNestedList(list, item.keywords, renderDirections); card.querySelector("[data-add-keyword]").addEventListener("click", () => { const itemIndex = item.keywords.length; item.keywords.push(""); renderDirections(); markDirty(); focusPath(`search.directions.${index}.keywords.${itemIndex}`); }); });
     bindArrayControls(root, array, renderDirections);
   }
 
   function renderDynamic() {
     Object.keys(listTargets).forEach(renderStringList);
-    renderExperiences(); renderCertifications(); renderDirections();
+    renderEmploymentTypes();
+    renderDirections(); renderExperiences(); renderEducation(); renderSkills(); renderCertifications(); renderLanguages();
   }
 
   function fillStatic() {
@@ -160,21 +322,44 @@
 
   function addHandlers() {
     document.querySelectorAll("[data-add-list]").forEach((button) => button.addEventListener("click", () => { const path = button.dataset.addList; const index = getPath(path).length; getPath(path).push(""); renderStringList(path); markDirty(); focusPath(`${path}.${index}`); }));
-    document.querySelector('[data-add="experience"]').addEventListener("click", () => { const index = state.draft.experiences.length; state.draft.experiences.push({ role: "", org_type: "", years: 0, summary: "", achievements: [], skills: [] }); renderExperiences(); markDirty(); focusPath(`experiences.${index}.role`); });
-    document.querySelector('[data-add="certification"]').addEventListener("click", () => { const index = state.draft.certifications.length; state.draft.certifications.push({ name: "", status: "" }); renderCertifications(); markDirty(); focusPath(`certifications.${index}.name`); });
-    document.querySelector('[data-add="direction"]').addEventListener("click", () => { const index = state.draft.preferences.directions.length; state.draft.preferences.directions.push({ key: "", title: "", keywords: [] }); renderDirections(); markDirty(); focusPath(`preferences.directions.${index}.key`); });
+    const adders = {
+      experience: { array: () => state.draft.experiences, item: emptyExperience, render: renderExperiences, focus: (index) => `experiences.${index}.industry` },
+      direction: { array: () => state.draft.search.directions, item: () => ({ key: "", title: "", keywords: [] }), render: renderDirections, focus: (index) => `search.directions.${index}.key` },
+      education: { array: () => state.draft.qualifications.education, item: () => ({ level: "", field: "", status: "" }), render: renderEducation, focus: (index) => `qualifications.education.${index}.field` },
+      skill: { array: () => state.draft.qualifications.skills, item: () => ({ name: "", level: "" }), render: renderSkills, focus: (index) => `qualifications.skills.${index}.name` },
+      certification: { array: () => state.draft.qualifications.certifications, item: () => ({ name: "", status: "" }), render: renderCertifications, focus: (index) => `qualifications.certifications.${index}.name` },
+      language: { array: () => state.draft.qualifications.languages, item: () => ({ name: "", level: "" }), render: renderLanguages, focus: (index) => `qualifications.languages.${index}.name` },
+    };
+    document.querySelector("[data-load-experience-skills]").addEventListener("click", () => {
+      if (!syncSkillsFromExperiences()) showMessage("經歷裡的技能都已在技能總表中。", "success");
+    });
+    for (const [key, adder] of Object.entries(adders)) {
+      document.querySelector(`[data-add="${key}"]`).addEventListener("click", () => {
+        const array = adder.array(); const index = array.length;
+        array.push(adder.item()); adder.render(); markDirty(); focusPath(adder.focus(index));
+      });
+    }
   }
 
   function normalizeProfile(profile) {
     const base = emptyProfile(); const input = profile || {};
     return {
-      ...base, ...input,
-      education: { ...base.education, ...(input.education || {}) },
-      experiences: (input.experiences || []).map((item) => ({ role: "", org_type: "", years: 0, summary: "", achievements: [], skills: [], ...item })),
-      skills: { ...base.skills, ...(input.skills || {}) }, certifications: input.certifications || [],
-      preferences: { ...base.preferences, ...(input.preferences || {}), screening: { ...base.preferences.screening, ...(input.preferences?.screening || {}) } },
+      search: { ...base.search, ...(input.search || {}) },
+      requirements: { ...base.requirements, ...(input.requirements || {}) },
+      intents: { ...base.intents, ...(input.intents || {}) },
+      experiences: (input.experiences || []).map((item) => ({ ...emptyExperience(), ...item })),
+      qualifications: { ...base.qualifications, ...(input.qualifications || {}) },
       honesty_bounds: input.honesty_bounds || [],
     };
+  }
+
+  // payload strips the editor's own annotations and `derived`: the totals are
+  // materialized by the backend, and sending them would be rejected.
+  function payload() {
+    const value = clone(state.draft);
+    value.qualifications.skills = value.qualifications.skills.map(({ name, level }) => ({ name, level }));
+    delete value.derived;
+    return value;
   }
 
   function renderForm(profile) {
@@ -202,24 +387,46 @@
 
   function validateDraft() {
     const localIssues = [];
-    if (!state.draft.experiences.length) localIssues.push({ path: "experiences", message: "至少需要一段工作經歷" });
-    if (!state.draft.preferences.locations.length) localIssues.push({ path: "preferences.locations", message: "至少需要一個可接受地點" });
-    const allSkills = [...state.draft.skills.expert, ...state.draft.skills.proficient, ...state.draft.skills.familiar];
-    if (!allSkills.length) localIssues.push({ path: "skills", message: "至少需要一項技能" });
-    if (!state.draft.preferences.directions.length) localIssues.push({ path: "preferences.directions", message: "至少需要一個求職方向" });
-    state.draft.preferences.directions.forEach((direction, index) => {
-      if (!direction.keywords.length) localIssues.push({ path: `preferences.directions.${index}.keywords`, message: "方向至少需要一個關鍵字" });
+    const draft = state.draft;
+    if (!draft.search.directions.length) localIssues.push({ path: "search.directions", message: "至少需要一個求職方向" });
+    draft.search.directions.forEach((direction, index) => {
+      if (!direction.keywords.length) localIssues.push({ path: `search.directions.${index}.keywords`, message: "方向至少需要一個關鍵字" });
     });
-    if (!state.draft.honesty_bounds.length) localIssues.push({ path: "honesty_bounds", message: "至少需要一項誠實邊界" });
-    const skillPaths = ["skills.expert", "skills.proficient", "skills.familiar"];
+    draft.requirements.locations.forEach((value, index) => {
+      if (!locations[value]) localIssues.push({ path: `requirements.locations.${index}`, message: "請選擇地區" });
+    });
+    if (!["required", "preferred", "acceptable", "rejected"].includes(draft.requirements.remote)) localIssues.push({ path: "requirements.remote", message: "請選擇遠端意願" });
+    if (!draft.experiences.length) localIssues.push({ path: "experiences", message: "至少需要一段工作經歷" });
+    draft.experiences.forEach((experience, index) => {
+      if (!experience.industry.trim()) localIssues.push({ path: `experiences.${index}.industry`, message: "經歷需要填寫產業" });
+    });
+    if (!draft.qualifications.skills.length) localIssues.push({ path: "qualifications.skills", message: "至少需要一項技能" });
     const seen = new Map();
-    skillPaths.forEach((path) => getPath(path).forEach((skill, index) => {
-      const key = skill.trim().toLowerCase();
-      if (key && seen.has(key)) localIssues.push({ path: `${path}.${index}`, message: `技能「${skill}」不可跨分級重複` });
-      else if (key) seen.set(key, path);
-    }));
+    draft.qualifications.skills.forEach((skill, index) => {
+      const key = skill.name.trim().toLowerCase();
+      if (key && seen.has(key)) localIssues.push({ path: `qualifications.skills.${index}.name`, message: `技能「${skill.name}」重複` });
+      else if (key) seen.set(key, index);
+    });
+    draft.qualifications.skills.forEach((skill, index) => {
+      if (!skillLevels[skill.level]) localIssues.push({ path: `qualifications.skills.${index}.level`, message: "請選擇熟練度" });
+    });
+    draft.qualifications.education.forEach((entry, index) => {
+      if (!educationStatuses[entry.status]) localIssues.push({ path: `qualifications.education.${index}.status`, message: "請選擇學歷狀態" });
+    });
+    draft.qualifications.certifications.forEach((entry, index) => {
+      if (!certificationStatuses[entry.status]) localIssues.push({ path: `qualifications.certifications.${index}.status`, message: "請選擇證照狀態" });
+    });
+    draft.qualifications.languages.forEach((entry, index) => {
+      if (!languageLevels[entry.level]) localIssues.push({ path: `qualifications.languages.${index}.level`, message: "請選擇語言程度" });
+    });
+    if (!draft.honesty_bounds.length) localIssues.push({ path: "honesty_bounds", message: "至少需要一項誠實邊界" });
     if (localIssues.length) { showMessage("請先完成必要欄位，再確認儲存。"); renderIssues(localIssues); return false; }
     return true;
+  }
+
+  function revisionLabel(data) {
+    if (!data?.filter_revision && !data?.score_revision) return "尚未建立 Profile";
+    return `篩選 ${shortRevision(data.filter_revision)} · 評分 ${shortRevision(data.score_revision)}`;
   }
 
   async function loadProfile() {
@@ -227,7 +434,7 @@
     const result = await api("GET");
     if (!result?.ok) { loading.hidden = true; setVisualState("無法連線", "error"); showMessage(result?.error || "無法載入 Profile。請確認 API 服務與 Options 設定。"); return; }
     state.etag = result.etag || '"missing"'; state.status = result.data.status;
-    revision.textContent = result.data.profile_revision ? `revision ${shortRevision(result.data.profile_revision)}` : "尚未建立 Profile";
+    revision.textContent = revisionLabel(result.data);
     if (!["missing", "ready"].includes(result.data.status)) {
       loading.hidden = true; setVisualState("需要人工修復", "error");
       showMessage("後端 Profile 檔案無法安全載入。請先在本機修復 YAML，再重新載入；編輯器不會強制覆蓋現有檔案。");
@@ -241,10 +448,18 @@
     dialog.showModal();
   }
 
+  // savedCopy describes which gates a save actually invalidated, because that is
+  // what decides how much work reprocessing would cost.
+  function savedCopy(data) {
+    if (data.filter_changed) return "硬性條件已變更：更新後既有職缺需重新篩選，通過者再重新評分。";
+    if (data.score_changed) return "只有軟性偏好變更：既有職缺的篩選結論保留，只需重新評分。";
+    return "本次沒有影響判定的欄位變更，不需要重新處理任何職缺。";
+  }
+
   async function saveProfile() {
     if (state.saving) return;
     clearFeedback(); state.saving = true; saveButton.disabled = true; setVisualState("儲存中");
-    const result = await api("PUT", state.draft);
+    const result = await api("PUT", payload());
     state.saving = false; saveButton.disabled = false;
     if (!result?.ok) {
       setVisualState("尚未儲存", "error");
@@ -257,9 +472,9 @@
       return;
     }
     state.etag = result.etag || state.etag; state.dirty = false; state.status = "ready";
-    revision.textContent = `revision ${shortRevision(result.data.profile_revision)}`;
+    revision.textContent = revisionLabel(result.data);
     setVisualState("已儲存", "ready"); document.querySelector("#dirty-copy").textContent = "所有內容已儲存並切換至目前 Profile。";
-    showMessage(`Profile 已儲存（revision ${shortRevision(result.data.profile_revision)}）。既有職缺保留原評分，可在系統頁手動更新。`, "success");
+    showMessage(`Profile 已儲存（${revisionLabel(result.data)}）。${savedCopy(result.data)}既有職缺保留原判定，可在系統頁手動更新。`, "success");
   }
 
   form.addEventListener("submit", (event) => {

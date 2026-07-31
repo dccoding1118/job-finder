@@ -30,76 +30,31 @@ func mustLoadTaipei() *time.Location {
 	return location
 }
 
-type Filter struct {
-	ExcludeTitleKeywords, ExcludeBodyKeywords, RequireAnyKeywords, Locations, ExcludeCompanies []string
-	SalaryFloor                                                                                int
-}
-
-// FilterFromProfile derives every deterministic screening rule from Profile.
-// Job-search preferences intentionally have no duplicate config representation.
-func FilterFromProfile(p profile.Profile) Filter {
-	return Filter{
-		ExcludeTitleKeywords: p.Preferences.Screening.ExcludeTitleKeywords,
-		ExcludeBodyKeywords:  p.Preferences.Screening.ExcludeDescriptionKeywords,
-		RequireAnyKeywords:   p.Preferences.Screening.RequireAnyKeywords,
-		ExcludeCompanies:     p.Preferences.Screening.ExcludeCompanies,
-		Locations:            p.Preferences.Locations,
-		SalaryFloor:          p.Preferences.SalaryMin,
-	}
-}
-
-func (f Filter) Match(j store.Job) []string {
-	hits := []string{}
-	contains := func(value string, terms []string) bool {
-		value = strings.ToLower(value)
-		for _, term := range terms {
-			if strings.Contains(value, strings.ToLower(term)) {
-				return true
-			}
-		}
-		return false
-	}
-	if contains(j.Title, f.ExcludeTitleKeywords) {
-		hits = append(hits, "exclude_title_keywords")
-	}
-	if contains(j.CompanyName, f.ExcludeCompanies) {
-		hits = append(hits, "exclude_companies")
-	}
-	if j.SalaryMax != nil && *j.SalaryMax < f.SalaryFloor {
-		hits = append(hits, "salary_floor")
-	}
-	if j.RemoteType != "remote" && len(f.Locations) > 0 && !contains(j.Location, f.Locations) {
-		hits = append(hits, "locations")
-	}
-	if j.Description != nil {
-		if contains(*j.Description, f.ExcludeBodyKeywords) {
-			hits = append(hits, "exclude_body_keywords")
-		}
-		if len(f.RequireAnyKeywords) > 0 && !contains(j.Title+"\n"+*j.Description, f.RequireAnyKeywords) {
-			hits = append(hits, "require_any_keywords")
-		}
-	}
-	return hits
-}
-
 type Pipeline struct {
 	Store       *store.Store
 	Source      crawler.Source
 	Provider    *profile.Provider
 	Filter      Filter
+	Screener    agents.Filter
 	Scorer      agents.Scorer
 	Drafter     agents.Drafter
 	Reviewer    agents.Reviewer
 	ProfileYAML string
 	Profile     profile.Profile
 	Denylist    []string
-	Weights     [5]float64
-	Threshold   float64
+	// Weights are the four soft dimensions in order: content, benefit, bonus,
+	// industry.
+	Weights   [4]float64
+	Threshold float64
+	// Baseline is the score each dimension starts from, so "no information to
+	// judge this on" reads as neutral rather than as a bad fit.
+	Baseline int
 	// DedupeEnabled turns cross-source grouping on; with it off every source keeps
 	// its own copy of a job, which is the escape hatch while the normalization
 	// rules are being retuned.
 	DedupeEnabled   bool
 	Dedupe          store.DedupeOptions
+	MaxFilterPerDay int
 	MaxScorePerDay  int
 	MaxLetterPerDay int
 	MaxLetterLength int
@@ -118,23 +73,27 @@ func (p Pipeline) logger() *slog.Logger {
 	return slog.Default()
 }
 
+// workProfile is one unit of work's immutable view of the Profile. It carries
+// both revisions because the two gates are versioned apart.
 type workProfile struct {
-	Value    profile.Profile
-	YAML     string
-	Revision string
-	Filter   Filter
+	Value     profile.Profile
+	YAML      string
+	Revisions store.Revisions
+	Filter    Filter
 }
 
 func (p Pipeline) snapshot() (workProfile, error) {
+	value, yaml := p.Profile, p.ProfileYAML
 	if p.Provider != nil {
 		snapshot, err := p.Provider.Ready()
 		if err != nil {
 			return workProfile{}, err
 		}
-		return workProfile{Value: *snapshot.Profile, YAML: snapshot.YAML, Revision: snapshot.Revision, Filter: FilterFromProfile(*snapshot.Profile)}, nil
+		value, yaml = *snapshot.Profile, snapshot.YAML
+		return workProfile{Value: value, YAML: yaml, Revisions: store.Revisions{Filter: snapshot.FilterRevision, Score: snapshot.ScoreRevision}, Filter: FilterFromProfile(value)}, nil
 	}
-	revision, _ := profile.Revision(p.Profile)
-	return workProfile{Value: p.Profile, YAML: p.ProfileYAML, Revision: revision, Filter: p.Filter}, nil
+	filterRevision, scoreRevision, _ := profile.RevisionPair(value)
+	return workProfile{Value: value, YAML: yaml, Revisions: store.Revisions{Filter: filterRevision, Score: scoreRevision}, Filter: p.Filter}, nil
 }
 
 func (p Pipeline) now() time.Time {
@@ -142,6 +101,12 @@ func (p Pipeline) now() time.Time {
 		return p.Now()
 	}
 	return time.Now()
+}
+
+// FilterBudgetRemaining reports how many semantic screening calls today's
+// budget still allows; limited is false when no cap is configured.
+func (p Pipeline) FilterBudgetRemaining(ctx context.Context) (int, bool, error) {
+	return p.budgetRemaining(ctx, "filter", p.MaxFilterPerDay)
 }
 
 // ScoreBudgetRemaining reports how many scoring calls today's budget still
@@ -199,6 +164,7 @@ func stageLimit(limit, remaining int, limited bool) (int, bool) {
 type StageStats struct {
 	Processed   int
 	FilteredOut int
+	Queued      int
 	Shortlisted int
 	LettersOK   int
 	LettersFail int
@@ -244,8 +210,8 @@ func (p Pipeline) LetterWithStats(ctx context.Context, limit int) (StageStats, e
 			}
 		}
 		jobID := job.ID
-		audit := func(role, runner, input, output string, ok bool, duration time.Duration) error {
-			return p.Store.SaveAgentCall(ctx, store.AgentCallInput{JobID: &jobID, Role: role, Runner: runner, Input: input, Output: output, OK: ok, DurationMS: duration.Milliseconds(), ProfileRevision: snapshot.Revision})
+		audit := func(role, runner, model, input, output string, ok bool, duration time.Duration, usage agents.Usage) error {
+			return p.Store.SaveAgentCall(ctx, store.AgentCallInput{JobID: &jobID, Role: role, Runner: runner, Model: model, Input: input, Output: output, OK: ok, DurationMS: duration.Milliseconds(), Usage: storeUsage(usage), FilterRevision: snapshot.Revisions.Filter, ScoreRevision: snapshot.Revisions.Score})
 		}
 		drafter, reviewer := p.Drafter, p.Reviewer
 		drafter.Audit, reviewer.Audit = audit, audit
@@ -253,9 +219,13 @@ func (p Pipeline) LetterWithStats(ctx context.Context, limit int) (StageStats, e
 		if job.Description != nil {
 			desc = *job.Description
 		}
-		p.logger().Info("drafting letter", "stage", "letter", "job_id", jobID, "profile_revision", snapshot.Revision)
+		view, viewErr := profile.MarshalView(snapshot.Value.LetterView())
+		if viewErr != nil {
+			return stats, viewErr
+		}
+		p.logger().Info("drafting letter", "stage", "letter", "job_id", jobID, "filter_revision", snapshot.Revisions.Filter, "score_revision", snapshot.Revisions.Score)
 		startedAt := time.Now()
-		result, e := agents.GenerateLetter(ctx, drafter, reviewer, snapshot.YAML, snapshot.Value, agents.Job{Title: job.Title, CompanyName: job.CompanyName, Description: desc, Location: job.Location, RemoteType: job.RemoteType, SalaryMin: job.SalaryMin, SalaryMax: job.SalaryMax}, p.Denylist, p.MaxLetterLength)
+		result, e := agents.GenerateLetter(ctx, drafter, reviewer, view, snapshot.Value, agents.Job{Title: job.Title, CompanyName: job.CompanyName, Description: desc, Location: job.Location, RemoteType: job.RemoteType, SalaryMin: job.SalaryMin, SalaryMax: job.SalaryMax}, p.Denylist, p.MaxLetterLength)
 		if e != nil {
 			if ctx.Err() != nil {
 				return stats, e
@@ -267,7 +237,7 @@ func (p Pipeline) LetterWithStats(ctx context.Context, limit int) (StageStats, e
 		if result.Status == "failed" {
 			result.Content = "[你的姓名]\n[你的聯絡方式]"
 		}
-		if err := p.Store.SaveLetter(ctx, store.LetterInput{JobID: job.ID, Content: result.Content, Status: result.Status, ReviewLog: result.ReviewLog, Rounds: result.Rounds, RunnerDraft: result.DraftRunner, RunnerReview: result.ReviewRunner, ProfileRevision: snapshot.Revision}); err != nil {
+		if err := p.Store.SaveLetter(ctx, store.LetterInput{JobID: job.ID, Content: result.Content, Status: result.Status, ReviewLog: result.ReviewLog, Rounds: result.Rounds, RunnerDraft: result.DraftRunner, RunnerReview: result.ReviewRunner, FilterRevision: snapshot.Revisions.Filter, ScoreRevision: snapshot.Revisions.Score}); err != nil {
 			return stats, err
 		}
 		state := "letter_failed"
@@ -305,7 +275,7 @@ func (p Pipeline) Fetch(ctx context.Context, spec crawler.SearchSpec, runID *int
 	}
 	stats := FetchStats{}
 	for _, r := range rows {
-		result, e := p.Store.UpsertJob(ctx, jobInput(r, snapshot.Revision), runID)
+		result, e := p.Store.UpsertJob(ctx, jobInput(r, snapshot.Revisions.Filter), runID)
 		if e != nil {
 			return stats, e
 		}
@@ -320,13 +290,26 @@ func (p Pipeline) Fetch(ctx context.Context, spec crawler.SearchSpec, runID *int
 	return stats, nil
 }
 
-func jobInput(r crawler.RawJob, revision string) store.JobInput {
+// storeUsage carries an Agent call's token accounting into the store's own
+// type, keeping the store package free of a dependency on internal/agents.
+func storeUsage(usage agents.Usage) store.AgentCallUsage {
+	return store.AgentCallUsage{
+		InputTokens:      usage.InputTokens,
+		OutputTokens:     usage.OutputTokens,
+		CacheReadTokens:  usage.CacheReadTokens,
+		CacheWriteTokens: usage.CacheWriteTokens,
+		ReasoningTokens:  usage.ReasoningTokens,
+		CostUSD:          usage.CostUSD,
+	}
+}
+
+func jobInput(r crawler.RawJob, filterRevision string) store.JobInput {
 	description := r.Description
 	var ptr *string
 	if !r.Partial() {
 		ptr = &description
 	}
-	return store.JobInput{Source: r.Source, ExternalID: r.ExternalID, URL: r.URL, Title: r.Title, CompanyName: r.CompanyName, CompanyInfo: companyInfo(r.CompanyInfo), Description: ptr, SalaryMin: r.SalaryMin, SalaryMax: r.SalaryMax, Location: r.Location, RemoteType: r.RemoteType, ProfileRevision: revision}
+	return store.JobInput{Source: r.Source, ExternalID: r.ExternalID, URL: r.URL, Title: r.Title, CompanyName: r.CompanyName, CompanyInfo: companyInfo(r.CompanyInfo), Description: ptr, SalaryMin: r.SalaryMin, SalaryMax: r.SalaryMax, Location: r.Location, RemoteType: r.RemoteType, FilterRevision: filterRevision}
 }
 
 func (p Pipeline) FilterJobs(ctx context.Context, limit int) (int, error) {
@@ -334,41 +317,128 @@ func (p Pipeline) FilterJobs(ctx context.Context, limit int) (int, error) {
 	return stats.Processed, err
 }
 
+// FilterJobsWithStats applies the hard rules in two passes. The structural pass
+// costs nothing, so a job it rejects never reaches the Agent; only a job that
+// passes every deterministic condition is worth one semantic call.
 func (p Pipeline) FilterJobsWithStats(ctx context.Context, limit int) (StageStats, error) {
 	active, err := p.snapshot()
 	if err != nil {
 		return StageStats{}, err
 	}
-	limit, _ = stageLimit(limit, 0, false)
-	jobs, err := p.Store.PickForStage(ctx, "filter", active.Revision, limit)
+	remaining, limited, err := p.FilterBudgetRemaining(ctx)
+	if err != nil {
+		return StageStats{}, err
+	}
+	limit, ok := stageLimit(limit, remaining, limited)
+	if !ok {
+		p.logger().Debug("filter stage skipped", "stage", "filter", "reason", "daily budget exhausted", "max_per_day", p.MaxFilterPerDay)
+		return StageStats{}, nil
+	}
+	jobs, err := p.Store.PickForStage(ctx, "filter", active.Revisions.Filter, limit)
 	if err != nil {
 		return StageStats{}, err
 	}
 	stats := StageStats{}
-	for _, job := range jobs {
-		snapshot, err := p.snapshot()
-		if err != nil {
-			return stats, err
+	var failures []error
+	log := p.logger()
+	if len(jobs) > 0 {
+		log.Info("filter stage picked jobs", "stage", "filter", "jobs", len(jobs), "budget_remaining", remaining, "budget_limited", limited)
+	}
+	for i, job := range jobs {
+		snapshot, snapshotErr := p.snapshot()
+		if snapshotErr != nil {
+			return stats, snapshotErr
 		}
-		if !jobUsesRevision(job, snapshot.Revision) {
+		if !usesRevision(job.FilterRevision, snapshot.Revisions.Filter) {
 			continue
 		}
-		hits := snapshot.Filter.Match(job)
-		if err := p.Store.CommitFilter(ctx, job.ID, snapshot.Revision, hits); errors.Is(err, store.ErrStaleRevision) {
+		result, semantic, err := p.screenJob(ctx, job, snapshot, i > 0)
+		if err != nil {
+			if ctx.Err() != nil {
+				return stats, err
+			}
+			log.Error("filter failed", "stage", "filter", "job_id", job.ID, "error", err)
+			failures = append(failures, fmt.Errorf("filter job %d: %w", job.ID, err))
+			continue
+		}
+		if err := p.Store.SaveFilterResult(ctx, job.ID, result, snapshot.Revisions); errors.Is(err, store.ErrStaleRevision) {
+			log.Info("filter result discarded as stale", "stage", "filter", "job_id", job.ID, "revision", snapshot.Revisions.Filter)
 			continue
 		} else if err != nil {
 			return stats, err
 		}
-		if len(hits) > 0 {
+		switch result.Outcome {
+		case store.FilterFail:
 			stats.FilteredOut++
+		default:
+			stats.Queued++
 		}
+		log.Info("job screened", "stage", "filter", "job_id", job.ID, "filter_revision", snapshot.Revisions.Filter, "verdict", result.Outcome, "stage_kind", result.Stage, "semantic", semantic)
 		stats.Processed++
 	}
 	if stats.Processed > 0 {
-		p.logger().Info("filter stage completed", "stage", "filter", "processed", stats.Processed, "filtered_out", stats.FilteredOut)
+		log.Info("filter stage completed", "stage", "filter", "processed", stats.Processed, "filtered_out", stats.FilteredOut, "queued", stats.Queued)
 	}
-	return stats, nil
+	return stats, errors.Join(failures...)
 }
+
+// screenJob runs the structural conditions and, only when they all hold, one
+// Filter Agent call. semantic reports whether the Agent was actually consulted.
+func (p Pipeline) screenJob(ctx context.Context, job store.Job, snapshot workProfile, pace bool) (store.FilterResult, bool, error) {
+	partial := job.Description == nil
+	conditions := snapshot.Filter.Evaluate(job, partial)
+	// A structural failure is decisive and costs no call. Anything else still
+	// buys the semantic half, because an undecided structural condition says
+	// nothing about the conditions the JD text carries.
+	if store.SummarizeConditions(conditions) == store.FilterFail || p.Screener.Primary == nil {
+		return store.FilterResult{Outcome: resolveOutcome(conditions, partial), Conditions: conditions, Stage: "structural", Partial: partial}, false, nil
+	}
+	if pace && p.MinInterval > 0 {
+		select {
+		case <-ctx.Done():
+			return store.FilterResult{}, false, ctx.Err()
+		case <-time.After(p.MinInterval):
+		}
+	}
+	view, err := profile.MarshalView(snapshot.Value.FilterView())
+	if err != nil {
+		return store.FilterResult{}, false, err
+	}
+	jobID := job.ID
+	screener := p.Screener
+	screener.Audit = func(role, runner, model, input, output string, ok bool, duration time.Duration, usage agents.Usage) error {
+		return p.Store.SaveAgentCall(ctx, store.AgentCallInput{JobID: &jobID, Role: role, Runner: runner, Model: model, Input: input, Output: output, OK: ok, DurationMS: duration.Milliseconds(), Usage: storeUsage(usage), FilterRevision: snapshot.Revisions.Filter})
+	}
+	description := ""
+	if job.Description != nil {
+		description = *job.Description
+	}
+	output, err := screener.Screen(ctx, view, agents.Job{Title: job.Title, CompanyName: job.CompanyName, Description: description, Location: job.Location, RemoteType: job.RemoteType, SalaryMin: job.SalaryMin, SalaryMax: job.SalaryMax})
+	if err != nil {
+		return store.FilterResult{}, false, err
+	}
+	semantic := resolveDerivedConditions(agentConditions(output.Conditions), snapshot.Value.DerivedTotals())
+	conditions = append(conditions, semantic...)
+	runner := output.Runner
+	return store.FilterResult{Outcome: resolveOutcome(conditions, partial), Conditions: conditions, Stage: "semantic", Runner: &runner, Partial: partial}, true, nil
+}
+
+// agentConditions renumbers the Agent's disjunction groups above the structural
+// ones, so two independently numbered sets cannot collide into one group.
+func agentConditions(conditions []agents.FilterCondition) []store.FilterCondition {
+	out := make([]store.FilterCondition, 0, len(conditions))
+	for _, condition := range conditions {
+		out = append(out, store.FilterCondition{
+			Text: condition.Text, Kind: condition.Kind, Group: condition.Group + agentGroupOffset,
+			Category: condition.Category, Verdict: condition.Verdict,
+			YearsMin: condition.YearsRequired, YearsMax: condition.YearsMax, IndustryKeys: condition.IndustryKeys,
+		})
+	}
+	return out
+}
+
+// agentGroupOffset separates the two condition sources' group numbering.
+const agentGroupOffset = 1000
 
 func (p Pipeline) Score(ctx context.Context, limit int) (int, error) {
 	stats, err := p.ScoreWithStats(ctx, limit)
@@ -389,7 +459,7 @@ func (p Pipeline) ScoreWithStats(ctx context.Context, limit int) (StageStats, er
 		p.logger().Debug("score stage skipped", "stage", "score", "reason", "daily budget exhausted", "max_per_day", p.MaxScorePerDay)
 		return StageStats{}, nil
 	}
-	jobs, err := p.Store.PickForStage(ctx, "score", active.Revision, limit)
+	jobs, err := p.Store.PickForStage(ctx, "score", active.Revisions.Score, limit)
 	if err != nil {
 		return StageStats{}, err
 	}
@@ -404,7 +474,7 @@ func (p Pipeline) ScoreWithStats(ctx context.Context, limit int) (StageStats, er
 		if snapshotErr != nil {
 			return stats, snapshotErr
 		}
-		if !jobUsesRevision(job, snapshot.Revision) {
+		if !usesRevision(job.ScoreRevision, snapshot.Revisions.Score) {
 			continue
 		}
 		if i > 0 && p.MinInterval > 0 {
@@ -420,12 +490,18 @@ func (p Pipeline) ScoreWithStats(ctx context.Context, limit int) (StageStats, er
 		}
 		jobID := job.ID
 		scorer := p.Scorer
-		scorer.Audit = func(role, runner, input, output string, ok bool, duration time.Duration) error {
-			return p.Store.SaveAgentCall(ctx, store.AgentCallInput{JobID: &jobID, Role: role, Runner: runner, Input: input, Output: output, OK: ok, DurationMS: duration.Milliseconds(), ProfileRevision: snapshot.Revision})
+		scorer.Audit = func(role, runner, model, input, output string, ok bool, duration time.Duration, usage agents.Usage) error {
+			return p.Store.SaveAgentCall(ctx, store.AgentCallInput{JobID: &jobID, Role: role, Runner: runner, Model: model, Input: input, Output: output, OK: ok, DurationMS: duration.Milliseconds(), Usage: storeUsage(usage), ScoreRevision: snapshot.Revisions.Score})
 		}
-		log.Info("scoring job", "stage", "score", "job_id", jobID, "source", job.Source, "profile_revision", snapshot.Revision)
+		// The bonus conditions the screening gate already extracted are handed over
+		// rather than re-derived: the JD is broken down once, by one gate.
+		view, viewErr := p.scoreView(ctx, snapshot, job.ID)
+		if viewErr != nil {
+			return stats, viewErr
+		}
+		log.Info("scoring job", "stage", "score", "job_id", jobID, "source", job.Source, "score_revision", snapshot.Revisions.Score)
 		startedAt := time.Now()
-		score, e := scorer.Score(ctx, snapshot.YAML, agents.Job{Title: job.Title, CompanyName: job.CompanyName, Description: desc, Location: job.Location, RemoteType: job.RemoteType, SalaryMin: job.SalaryMin, SalaryMax: job.SalaryMax})
+		score, e := scorer.Score(ctx, view, agents.Job{Title: job.Title, CompanyName: job.CompanyName, Description: desc, Location: job.Location, RemoteType: job.RemoteType, SalaryMin: job.SalaryMin, SalaryMax: job.SalaryMax}, p.baseline())
 		if e != nil {
 			if ctx.Err() != nil {
 				return stats, e
@@ -434,14 +510,14 @@ func (p Pipeline) ScoreWithStats(ctx context.Context, limit int) (StageStats, er
 			failures = append(failures, fmt.Errorf("score job %d: %w", job.ID, e))
 			continue
 		}
-		total := float64(score.HardSkill)*p.Weights[0] + float64(score.Domain)*p.Weights[1] + float64(score.Seniority)*p.Weights[2] + float64(score.Condition)*p.Weights[3] + float64(score.Direction)*p.Weights[4]
+		total := float64(score.Content)*p.Weights[0] + float64(score.Benefit)*p.Weights[1] + float64(score.Bonus)*p.Weights[2] + float64(score.Industry)*p.Weights[3]
 		state := "scored"
 		if total >= p.Threshold {
 			state = "shortlisted"
 			stats.Shortlisted++
 		}
-		if err := p.Store.CommitScore(ctx, store.ScoreInput{JobID: job.ID, HardSkill: score.HardSkill, Domain: score.Domain, Seniority: score.Seniority, Condition: score.Condition, Direction: score.Direction, Total: total, Reason: score.Reason, Runner: score.Runner, ProfileRevision: snapshot.Revision}, state); errors.Is(err, store.ErrStaleRevision) {
-			log.Info("score discarded as stale", "stage", "score", "job_id", jobID, "profile_revision", snapshot.Revision)
+		if err := p.Store.CommitScore(ctx, store.ScoreInput{JobID: job.ID, Content: score.Content, Benefit: score.Benefit, Bonus: score.Bonus, Industry: score.Industry, Total: total, Reason: score.Reason, Runner: score.Runner, ScoreRevision: snapshot.Revisions.Score}, state); errors.Is(err, store.ErrStaleRevision) {
+			log.Info("score discarded as stale", "stage", "score", "job_id", jobID, "score_revision", snapshot.Revisions.Score)
 			continue
 		} else if err != nil {
 			return stats, err
@@ -472,8 +548,38 @@ func (p Pipeline) link(ctx context.Context, jobID int64) (int64, error) {
 	return outcome.CanonicalJobID, nil
 }
 
-func jobUsesRevision(job store.Job, revision string) bool {
-	return job.ProfileRevision != nil && *job.ProfileRevision == revision
+// usesRevision reports whether a job's recorded gate revision is the active
+// one; work produced under any other revision would only be discarded by CAS.
+func usesRevision(recorded *string, active string) bool {
+	return recorded != nil && *recorded == active
+}
+
+// scoreView renders the scoring subset of the Profile, carrying over the bonus
+// conditions the screening gate already extracted from this job's JD.
+func (p Pipeline) scoreView(ctx context.Context, snapshot workProfile, jobID int64) (string, error) {
+	bonus := []string{}
+	result, err := p.Store.CurrentFilterResult(ctx, jobID)
+	if err != nil {
+		return "", err
+	}
+	if result != nil {
+		for _, condition := range result.Conditions {
+			if condition.Kind == "bonus" {
+				bonus = append(bonus, condition.Text)
+			}
+		}
+	}
+	return profile.MarshalView(snapshot.Value.ScoreView(bonus))
+}
+
+// baseline is the neutral score a dimension takes when the JD offers nothing to
+// judge it on. It defaults to the recommendation threshold, which leaves such a
+// job exactly on the line rather than pushing it either way.
+func (p Pipeline) baseline() int {
+	if p.Baseline > 0 {
+		return p.Baseline
+	}
+	return int(p.Threshold)
 }
 
 func companyInfo(v string) string {

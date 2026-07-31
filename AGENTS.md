@@ -15,15 +15,15 @@
 - 累加式整合與驗收：`docs/verify.md`
 - 開發交接：`STATUS.md`
 
-B0–B6 的核心程式已完成並通過 `mise run fmt/lint/test`：schema/store、profile、crawler（Yourator adapter 與 104／Cake 列表／內頁解析、巡邏 URL 生成）、pipeline（排程抓取編排、常駐 worker、條件篩選、每日預算）、agents（Scorer／Drafter／Reviewer 與 `llm.roles` primary／fallback 路由）、localhost API、Chrome 原生 Side Panel 與 systemd unit。求職信按需生成（`letter_requested` 取件）、verdict 導出、cursor 清單分頁、推薦與待看清單載入更多與 104 清單就地標記均已落地。單筆職缺重新評分（`POST /api/v1/jobs/{id}/rescore`）與處理進度讀取面（`GET /api/v1/status`：各處理狀態筆數、當日評分預算、最近 Agent 呼叫）已具備；pipeline 各階段以 `log/slog` 輸出結構化執行記錄，正式部署由 `journalctl --user -u jobfinder-api` 檢視。執行模型為「排程只驅動 fetch，filter／score／letter 由 API service 內常駐 worker 非同步消化」，`runs` 只記抓取事實、判定分布於檢視時即時查詢。
+B0–B6 的核心程式已完成並通過 `mise run fmt/lint/test`：schema/store、profile、crawler（Yourator adapter 與 104／Cake 列表／內頁解析）、pipeline（排程抓取編排、常駐 worker、條件篩選、每日預算）、agents（Scorer／Drafter／Reviewer 與 `llm.roles` primary／fallback 路由）、localhost API、Chrome 原生 Side Panel 與 systemd unit。求職信按需生成（`letter_requested` 取件）、verdict 導出、cursor 清單分頁、推薦與待看清單載入更多與 104 清單就地標記均已落地。單筆職缺重新處理（`POST /api/v1/jobs/{id}/reprocess`：回到管線起點重跑篩選與評分，`filtered_out` 亦可）與處理進度讀取面（`GET /api/v1/status`：各處理狀態筆數、當日評分預算、最近 Agent 呼叫）已具備；pipeline 各階段以 `log/slog` 輸出結構化執行記錄，正式部署由 `journalctl --user -u jobfinder-api` 檢視。執行模型為「排程只驅動 fetch，filter／score／letter 由 API service 內常駐 worker 非同步消化」，`runs` 只記抓取事實、判定分布於檢視時即時查詢。
 
-Cake 半被動擷取與跨來源同一職缺合併已實作：`parsecake` 解析列表（`__NEXT_DATA__` 或 DOM 收割）與內頁（DOM 收割）、capture API 依 payload 的 `source` 分派解析器、`jobfinder queries urls --source 104|cake` 生成巡邏 URL。Cake 是 SPA，因此 `extension/content/` 以 `https://www.cake.me/*` 單一注入，由 `cake.js` 依 URL 路由列表／內頁模式、`nav.js` 通知 SPA 換頁；內頁不讀 `__NEXT_DATA__`（Cake 內頁不帶自己的 listing 狀態），只讀渲染後 DOM。合併以純程式規則（公司／職稱正規化＋地區相容性）判定且**只比較來源未重疊的群組**——同平台的兩筆是兩個開口，不合併也不提出裁決：高信心於單一交易合併並將 alias 轉入 `merged`，灰帶登記 `job_dupe_candidates` 由使用者在系統頁裁決，`POST /api/v1/jobs/{id}/unmerge` 可還原；schema 為 v5。反向校準（Calibrator）不在 MVP 範圍，屬 roadmap S1 且入口為 Side Panel，不做 CLI 指令。
+Cake 半被動擷取與跨來源同一職缺合併已實作：`parsecake` 解析列表（`__NEXT_DATA__` 或 DOM 收割）與內頁（DOM 收割）、capture API 依 payload 的 `source` 分派解析器。半被動來源的搜尋條件由使用者在該平台自行設定，系統不生成搜尋 URL；`jobfinder queries show` 只列印全自動來源的展開 query。Cake 是 SPA，因此 `extension/content/` 以 `https://www.cake.me/*` 單一注入，由 `cake.js` 依 URL 路由列表／內頁模式、`nav.js` 通知 SPA 換頁；內頁不讀 `__NEXT_DATA__`（Cake 內頁不帶自己的 listing 狀態），只讀渲染後 DOM。合併以純程式規則（公司／職稱正規化＋地區相容性）判定且**只比較來源未重疊的群組**——同平台的兩筆是兩個開口，不合併也不提出裁決：高信心於單一交易合併並將 alias 轉入 `merged`，灰帶登記 `job_dupe_candidates` 由使用者在系統頁裁決，`POST /api/v1/jobs/{id}/unmerge` 可還原。反向校準（Calibrator）不在 MVP 範圍，屬 roadmap S1 且入口為 Side Panel，不做 CLI 指令。
 
-`jobs.profile_revision` 記錄「該 Job 現行判定所屬的 Profile revision」，是所有讀取面把 Job 與 Score 配對的鍵。它跟隨**處理**而非內容：內容變更但狀態不重置（`scored` 等終端狀態）時必須保留原 revision，覆寫會使既有評分在清單上讀成無分數。Scorer 的 `reason` 由 prompt 要求 40~60 字、驗證容忍到 100 字——兩者相等會讓略微超出就整筆重跑，白付 token。
+Profile 面已實作：extension 全頁表單編輯單一 YAML 真相、ETag 條件式儲存、runtime snapshot 即時切換、setup mode、既有職缺手動 revision-aware 重新處理與 stale viewmodel。Profile 儲存與服務啟動不自動重評舊職缺，新 ingest 立即使用 active revision。`jobs` 的 revision 欄位記錄「該 Job 現行判定所屬的 Profile revision」，是所有讀取面把 Job 與 Score／篩選結果配對的鍵；它跟隨**處理**而非內容：內容變更但狀態不重置（`scored` 等終端狀態）時必須保留原 revision，覆寫會使既有評分在清單上讀成無分數。Scorer 的 `reason` 由 prompt 要求 40~60 字、驗證容忍到 100 字——兩者相等會讓略微超出就整筆重跑，白付 token。
 
-e2e 驗收 harness（`scripts/verify/`、`assert-positive.mjs`）已對齊非同步／按需模型：`run` 只 fetch、手動 `--stage` 或常駐 worker 消化 filter／score／letter、`runs.stats` 只記抓取事實、求職信「未要求不生成 → `RequestLetter` 後生成」、轉換經 `letter_requested`、`schema_version=3`。`mise run e2e-mock` 的 V1／V2／V4／V5／V7 S30–S36 全綠（32 步，詳見 `docs/verify.md` §4）。真 Yourator live（V3）、`scripts/deploy/` 安裝／更新／回滾與既有 Side Panel 的實際 Chrome 人工 gate 均已通過。
+e2e 驗收 harness（`scripts/verify/`、`assert-positive.mjs`）已對齊非同步／按需模型：`run` 只 fetch、手動 `--stage` 或常駐 worker 消化 filter／score／letter、`runs.stats` 只記抓取事實、求職信「未要求不生成 → `RequestLetter` 後生成」、轉換經 `letter_requested`。`mise run e2e-mock` 的 V1／V2／V4／V5／V7 S30–S36 全綠（詳見 `docs/verify.md` §4）；真 Yourator live（V3）、`scripts/deploy/` 安裝／更新／回滾與既有 Side Panel、Profile editor 的實際 Chrome 人工 gate 均已通過（人工 gate 進度另見 `STATUS.md`）。
 
-Profile editor 與 `profile_revision` 已實作：extension 全頁表單編輯單一 YAML 真相、ETag 條件式儲存、runtime snapshot 即時切換、既有職缺手動 revision-aware 重新處理、setup mode、schema v3 migration 與 stale viewmodel 均已完成；Profile 儲存與服務啟動不自動重評舊職缺，新 ingest 立即使用 active revision。L1、Playwright 與 V7 S30–S36 全綠。Profile editor 的實際 Chrome 人工 gate與正式發布進度見 `docs/changes/change-profile-editor.md` 與 `STATUS.md`。
+硬規則篩選與軟規則評分分離（PRD B7）已實作：Profile schema v5 六區段與 `derived` 加總（舊版檔案於載入時自動遷移：v4 的 `search.locations` 併入 `requirements.locations`，pre-v4 整份對映）、`filter_revision`／`score_revision` 雙 revision、兩段式篩選（結構化條件零 token，全過者才付一次 Filter agent）、四維評分與基準分、store schema v6 與既有職缺重置。**判定與資料重點**：逐條照實記 `pass`／`fail`／`unknown`，彙總時綜合全部條件——任一 `fail` 即不適合；無 `fail` 時清單摘要留 `discovered`（待看，等補全文）、全文 JD 進 `queued`（待評分）；缺資訊絕不判不適合；`remote` 的 `required`／`rejected` 視「未提及」為現場，不產生 `unknown`；年資與產業年資的 verdict 一律由 Go 以 `derived` 覆寫（LLM 只讀出 JD 要求的數值與對應 industry key）；`bonus` 條件不進篩選彙總，只由評分關的 `bonus_fit` 重用；評分關 prompt 不含 `experiences` 的敘事欄位與 `honesty_bounds`。地區只有 `requirements.locations[]` 一份（同時決定收集與判定，半被動來源的收集範圍實際由使用者的搜尋條件決定），存地區鍵並以簡繁英別名比對 JD 地點；`nationwide` 展開為台灣全部縣市但不含 `overseas`。`location` 是必填欄位，來源未陳述地點時存哨兵值 `store.LocationUnknown`（`unknown`），地區規則對它與空字串一律判未決——哨兵值若被當成一般字串比對，缺資訊就會變成不適合。`filtered_out` 對來源內容變更是終局的：列表摘要與全文用的是同一組硬規則，補到全文不推翻摘要階段的 `fail`，因此補全文只更新內容、不重開判定也不再付一次 Filter Agent。推翻它是使用者的權利，經單筆重新處理（`POST /api/v1/jobs/{id}/reprocess`）行使——該入口把職缺送回管線起點重跑篩選與評分，是誤判與局部重跑的唯一救援路徑。判定共六類：`unfit`／`pending_detail`（待看）／`pending_screen`（篩選中，`new`）／`pending_score`（評分中，`queued`）／`not_recommended`／`recommended`；判定名稱說的是系統正在做什麼，不是狀態名。
 
 ## 2. 主要技術與環境
 
@@ -48,13 +48,13 @@ Go 不保證在裸 PATH；以 `mise run <task>` 或 `mise exec -- go <args>` 執
 | 主題 | 先看 | 實作位置 |
 |---|---|---|
 | SQLite schema、migration、實體 CRUD、狀態轉換、跨來源職缺分群與合併 | `docs/designs/design-schema.md` | `internal/store/` |
-| 匿名 Profile、PII 檢核、canonical serialization、ETag／revision、runtime provider、校準建議 | `docs/designs/design-profile.md` | `internal/profile/` |
+| 匿名 Profile、PII 檢核、canonical serialization、ETag／雙 revision、`derived` 加總、runtime provider、校準建議 | `docs/designs/design-profile.md` | `internal/profile/` |
 | Source adapter（Yourator）、去重、內容變更偵測、104／Cake payload 解析 | `docs/designs/design-crawler.md` | `internal/crawler/` |
-| fetch/filter/score/letter 編排、Profile activation／重新處理、單筆重評入隊、執行記錄、revision-aware CAS、每日預算與鎖 | `docs/designs/design-pipeline.md` | `internal/pipeline/` |
-| CLI Runner、Scorer、Drafter、Reviewer、Calibrator 與輸出驗證 | `docs/designs/design-agents.md` | `internal/agents/` |
-| Profile GET／PUT／手動 reprocess、Job stale viewmodel、Job／Run／狀態／verdict／求職信要求／單筆重評／處理進度／手動 run／重複職缺裁決與各平台 capture API | `docs/designs/design-api.md` | `internal/api/` |
+| fetch/filter/score/letter 編排、Profile activation／重新處理、單筆重新處理入隊、執行記錄、revision-aware CAS、每日預算與鎖 | `docs/designs/design-pipeline.md` | `internal/pipeline/` |
+| CLI Runner、Filter、Scorer、Drafter、Reviewer、Calibrator 與輸出驗證 | `docs/designs/design-agents.md` | `internal/agents/` |
+| Profile GET／PUT／手動 reprocess、Job stale viewmodel、Job／Run／狀態／verdict／求職信要求／單筆重新處理／處理進度／手動 run／重複職缺裁決與各平台 capture API | `docs/designs/design-api.md` | `internal/api/` |
 | Side Panel、全頁 Profile editor、104／Cake 列表就地標記與內頁擷取、Cake SPA 模式路由、疑似重複裁決 | `docs/designs/design-extension.md` | `extension/` |
-| 搜尋條件展開與半被動來源的巡邏 URL | `docs/designs/design-crawler.md` §5 | `internal/crawler/patrol.go`、`cmd/jobfinder/cli/queries.go` |
+| 搜尋條件展開（只用於全自動來源） | `docs/designs/design-crawler.md` §5 | `cmd/jobfinder/cli/queries.go` |
 | CLI 命令樹 | 本檔 §4 與各模組的 CLI 介面 | `cmd/jobfinder/cli/` |
 
 `docs/PRD.md` 定義需求；`docs/design.md` 定義系統邊界與模組依賴；詳細設計文件定義各模組契約。`STATUS.md` 只保留未完成任務與未歸檔結論，不承載專案設計。

@@ -20,7 +20,7 @@ MVP 架構中為擴展預留的縫：Source adapter 與半被動解析器（加�
 
 ## 3. 階段規劃
 
-### S0 — 個人 MVP（現在，對應 PRD 交付計畫 B0–B6）
+### S0 — 個人 MVP（現在，對應 PRD 交付計畫 B0–B7）
 
 - **目標**：自己每天用得起來；完成「抓取→評分→生成→手動投遞→狀態追蹤」閉環。
 - **形態**：單人單機（GCP VM）、CLI ＋ localhost API ＋ Chrome 原生 Side Panel（含單一 Profile 全頁編輯器與 104／Cake 半被動擷取）、SQLite、headless CLI LLM；Profile 仍以版控外 YAML 為真相。
@@ -35,9 +35,9 @@ MVP 架構中為擴展預留的縫：Source adapter 與半被動解析器（加�
   - 成效統計頁：投遞數、回應率、各來源/分數帶的轉換率——同時是未來產品的賣點素材。
   - 評分與生成品質迭代（以真實投遞結果當 eval）。
   - 匯入去識別化履歷並產生 Profile 草稿：解析後一律先落草稿，經使用者檢查與確認才寫入；匯入內容同樣受 PII 檢核，不因來自履歷而放行。
-  - 多 Profile（多份履歷）：建立、切換與個別編輯，且每次媒合所使用的 Profile 有明確歸屬——評分與求職信必須可回溯到當時的 Profile 與 revision。單一 Profile 的 `profile_revision` 契約是其前置條件，因此排在 Profile 編輯器與反向校準之後。
+  - 多 Profile（多份履歷）：建立、切換與個別編輯，且每次媒合所使用的 Profile 有明確歸屬——評分與求職信必須可回溯到當時的 Profile 與 revision。單一 Profile 的 revision 契約是其前置條件，因此排在 Profile 編輯器與反向校準之後。
   - 跨來源合併規則的持續調校：以實際誤合併／漏合併回饋同義詞對照表與相似度門檻。
-  - **深入評估（按需）**：推薦職缺提供「深入評估」動作，才產出優缺點、機會分析，並查詢公司與職缺評論等外部即時評價。與求職信同屬按需觸發——每筆職缺的例行評分維持五維＋短理由，把較貴的分析留給使用者真的在考慮的少數職缺。此功能定案前，`ScoreResult` 不擴充 pros/cons 欄位。
+  - **深入評估（按需）**：推薦職缺提供「深入評估」動作，才產出優缺點、機會分析，並查詢公司與職缺評論等外部即時評價。與求職信同屬按需觸發——每筆職缺的例行評分維持四維＋短理由，把較貴的分析留給使用者真的在考慮的少數職缺。此功能定案前，`ScoreResult` 不擴充 pros/cons 欄位。
 - **架構演進**：無重大變更；驗證「事件流→統計」的資料模型。
 
 ### S2 — 私測 Alpha（少量真人試用，單租戶部署）
@@ -76,6 +76,7 @@ MVP 架構中為擴展預留的縫：Source adapter 與半被動解析器（加�
 | 部署走正式版工件 | 由 CI/release 產出帶版號與 checksum 的 binary，正式環境只從該工件部署 | 收斂「開發 checkout 直接 build+install」的路徑；Chrome extension 隨同一 release 打包，版號與 `extension_origin` 一併對齊 |
 | 主程式安裝位置 | `~/.local/bin/jobfinder` | 公開主程式是使用者與 systemd 直接啟動的命令，依 XDG 分類應在 `bin`；`~/.local/lib/jobfinder/` 僅保留 rollback 工件與安裝 metadata。XDG config／data 配置不變 |
 | API 請求層觀測 | localhost API 記錄 method、path、status 與來源 | 排查 capture／badge 問題時需知道插件送了什麼、回了什麼；不記 payload 內容，維持 Zero-PII |
+| 薪資字串解析涵蓋度 | 各來源的薪資寫法都能解析出數值區間 | 目前只認平台原生寫法（如 104 的「月薪120,000~150,000元」）；未涵蓋的寫法解析為 NULL，等同「JD 未揭露」而在清單階段歸待看。擴充解析器可讓 `salary_min` 真正發揮硬性條件的作用 |
 | Agent 重試契約 | Invoke 回錯但輸出已通過契約驗證時不重跑 | 此類「白付重跑」約佔 scorer 失敗的三分之一；其餘為 CLI／API 自報錯誤（不可避）與輸出違反契約（須重跑） |
 
 ## 4. 產品化運作流程與目標架構（S2→S3 形態）
@@ -86,7 +87,7 @@ MVP 架構中為擴展預留的縫：Source adapter 與半被動解析器（加�
 |---|---|---|---|
 | 1 | 註冊 / 登入（Google OAuth） | **Web**（container service） | 建立帳號；通知 Email 存於帳號層（見 §4.4） |
 | 2 | 建立/編輯 Profile、設定偏好與通知 | **Web** → DB | 承接 S0 extension 表單的業務欄位，加入帳號與租戶資料；PII 檢核在送出時執行 |
-| 3 | 每日排程執行 pipeline | **Scheduler** → **Pipeline Job**（container job） | 即現在 MVP 的 `jobfinder run` 打包成 job：抓取 → 初篩 → 評分，逐租戶媒合；求職信依用戶要求生成 |
+| 3 | 每日排程執行 pipeline | **Scheduler** → **Pipeline Job**（container job） | 即現在 MVP 的 `jobfinder run` 打包成 job：抓取 → 篩選 → 評分，逐租戶媒合；求職信依用戶要求生成 |
 | 4 | 推薦通知寄送 | **Pipeline Job** 尾端 → **Email 服務**（SES/SendGrid 類） | 高分職缺摘要；點擊導回站內檢閱與決定是否生成求職信 |
 | 5 | 用戶回站操作 | **Web** | 備選職缺（`scored`，未達閾值）、推薦職缺（`shortlisted`/`letter_ready`）、要求生成求職信、求職信檢閱複製、投遞狀態回報、run 運作歷程、設定配置 |
 | 6 | 回饋閉環 | **Pipeline Job**（校準）＋ **Web**（確認） | 狀態事件累積 → 校準建議 → 用戶站內確認套用 |

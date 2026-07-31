@@ -20,6 +20,7 @@ type runtime struct {
 	pipeline     pipeline.Pipeline
 	provider     *profile.Provider
 	scanInterval time.Duration
+	workerPaused bool
 }
 
 func loadRuntime(path string) (*runtime, error) {
@@ -60,24 +61,28 @@ func loadRuntime(path string) (*runtime, error) {
 	}
 	p := pipeline.Pipeline{
 		Store: db, Provider: provider,
-		Denylist: denylist, Weights: [5]float64{cfg.Scoring.HardSkillWeight, cfg.Scoring.DomainWeight, cfg.Scoring.SeniorityWeight, cfg.Scoring.ConditionWeight, cfg.Scoring.DirectionWeight},
-		DedupeEnabled:  cfg.Dedupe.Enabled == nil || *cfg.Dedupe.Enabled,
-		Dedupe:         store.DedupeOptions{TitleSimilarityThreshold: cfg.Dedupe.TitleSimilarityThreshold, SourcePriority: cfg.Dedupe.SourcePriority},
-		MaxScorePerDay: cfg.LLM.MaxScorePerDay, MaxLetterPerDay: cfg.LLM.MaxLetterPerDay, MaxLetterLength: cfg.LLM.MaxLetterLength, MinInterval: interval,
+		Denylist: denylist, Weights: [4]float64{cfg.Scoring.ContentWeight, cfg.Scoring.BenefitWeight, cfg.Scoring.BonusWeight, cfg.Scoring.IndustryWeight},
+		DedupeEnabled:   cfg.Dedupe.Enabled == nil || *cfg.Dedupe.Enabled,
+		Dedupe:          store.DedupeOptions{TitleSimilarityThreshold: cfg.Dedupe.TitleSimilarityThreshold, SourcePriority: cfg.Dedupe.SourcePriority},
+		MaxFilterPerDay: cfg.LLM.MaxFilterPerDay, MaxScorePerDay: cfg.LLM.MaxScorePerDay,
+		MaxLetterPerDay: cfg.LLM.MaxLetterPerDay, MaxLetterLength: cfg.LLM.MaxLetterLength, MinInterval: interval,
 	}
 	if cfg.Scoring.Threshold == nil {
 		p.Threshold = 75
 	} else {
 		p.Threshold = *cfg.Scoring.Threshold
 	}
-	if p.Weights == [5]float64{} {
+	if p.Weights == [4]float64{} {
 		p.Weights = defaultScoringWeights()
 	}
-	if p.Scorer, p.Drafter, p.Reviewer, err = routedAgents(cfg.LLM.Roles, timeout); err != nil {
+	if cfg.Scoring.Baseline != nil {
+		p.Baseline = *cfg.Scoring.Baseline
+	}
+	if p.Screener, p.Scorer, p.Drafter, p.Reviewer, err = routedAgents(cfg.LLM.Roles, timeout); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
-	return &runtime{cfg: cfg, store: db, pipeline: p, provider: provider, scanInterval: scanInterval}, nil
+	return &runtime{cfg: cfg, store: db, pipeline: p, provider: provider, scanInterval: scanInterval, workerPaused: cfg.Worker.Paused}, nil
 }
 
 func (r *runtime) close() { _ = r.store.Close() }
@@ -112,6 +117,6 @@ func (r *runtime) fetchSource() (crawler.Source, crawler.SearchSpec, error) {
 		}
 	}
 	adapter := crawler.Yourator{BaseURL: source.BaseURL, Client: &http.Client{Timeout: requestTimeout}, RequestDelayMin: requestDelayMin, RequestDelayMax: requestDelayMax, RetryMax: source.RetryMax, RetryBackoff: retryBackoff, CheckRobots: source.CheckRobots}
-	spec := crawler.SearchSpec{Queries: directionQueries(*snapshot.Profile), Area: snapshot.Profile.Preferences.Locations, MaxPages: source.MaxPages}
+	spec := crawler.SearchSpec{Queries: directionQueries(*snapshot.Profile), MaxPages: source.MaxPages}
 	return adapter, spec, nil
 }

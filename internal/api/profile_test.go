@@ -24,7 +24,7 @@ func TestProfileAPISetupCreateConflictAndValidation(t *testing.T) {
 		t.Fatal(err)
 	}
 	activationCalls := 0
-	server, err := New(Config{Addr: "127.0.0.1:0", Token: "test-token", ExtensionOrigin: "chrome-extension://test-id"}, data, nil, nil, ProfileConfig{Provider: provider, Activate: func(context.Context, string, profile.Profile) (profile.Activation, error) {
+	server, err := New(Config{Addr: "127.0.0.1:0", Token: "test-token", ExtensionOrigin: "chrome-extension://test-id"}, data, nil, nil, ProfileConfig{Provider: provider, Activate: func(context.Context, profile.Revisions, profile.Profile) (profile.Activation, error) {
 		activationCalls++
 		return profile.Activation{Requeued: 1}, nil
 	}})
@@ -74,7 +74,7 @@ func TestProfileAPISetupCreateConflictAndValidation(t *testing.T) {
 		t.Fatalf("stale save code=%d", response.Code)
 	}
 
-	value.Summary = "private-name"
+	value.HonestyBounds = []string{"private-name"}
 	request = authedRequest(http.MethodPut, "/api/v1/profile", value)
 	request.Header.Set("If-Match", provider.Current().ETag)
 	response = httptest.NewRecorder()
@@ -96,10 +96,10 @@ func TestProfileReprocessRequiresReadyProfileAndRunsOnlyOnExplicitPost(t *testin
 		t.Fatal(err)
 	}
 	calls := 0
-	server, err := New(Config{Addr: "127.0.0.1:0", Token: "test-token", ExtensionOrigin: "chrome-extension://test-id"}, data, nil, nil, ProfileConfig{Provider: provider, Activate: func(_ context.Context, revision string, value profile.Profile) (profile.Activation, error) {
+	server, err := New(Config{Addr: "127.0.0.1:0", Token: "test-token", ExtensionOrigin: "chrome-extension://test-id"}, data, nil, nil, ProfileConfig{Provider: provider, Activate: func(_ context.Context, revisions profile.Revisions, value profile.Profile) (profile.Activation, error) {
 		calls++
-		if revision == "" || value.Summary == "" {
-			t.Fatal("reprocess did not receive the active Profile")
+		if revisions.Filter == "" || revisions.Score == "" || len(value.Experiences) == 0 {
+			t.Fatal("reprocess did not receive the active Profile and both revisions")
 		}
 		return profile.Activation{Requeued: 2, Protected: 1}, nil
 	}})
@@ -142,11 +142,19 @@ func TestProfileCORSAllowsConditionalPut(t *testing.T) {
 
 func validAPIProfile() profile.Profile {
 	return profile.Profile{
-		Summary: "anonymous engineering profile", YearsOfExperience: 8,
-		Education:     profile.Education{Degree: "master", Field: "computer science"},
-		Experiences:   []profile.Experience{{Role: "backend engineer", OrgType: "technology provider", Years: 4, Summary: "service delivery", Achievements: []string{"reliable delivery"}, Skills: []string{"Go"}}},
-		Skills:        profile.Skills{Expert: []string{"Java"}, Proficient: []string{"Go"}, Familiar: []string{"Kubernetes"}},
-		Preferences:   profile.Preferences{Locations: []string{"Taipei"}, Remote: "preferred", Directions: []profile.Direction{{Key: "P1", Title: "cloud architecture", Keywords: []string{"cloud"}}}, Screening: profile.Screening{}},
+		Search: profile.Search{
+			Directions: []profile.Direction{{Key: "P1", Title: "cloud architecture", Keywords: []string{"cloud"}}},
+		},
+		Requirements: profile.Requirements{Locations: []string{"taipei"}, Remote: "preferred"},
+		Intents:      profile.Intents{ContentLikes: []string{"operable services"}},
+		Experiences: []profile.Experience{{
+			Industry: "technology services", Years: 4, Skills: []string{"Go"},
+			OrgType: "technology provider", Role: "backend engineer", Achievements: []string{"reliable delivery"},
+		}},
+		Qualifications: profile.Qualifications{
+			Education: []profile.EducationEntry{{Level: "master", Field: "computer science", Status: "graduated"}},
+			Skills:    []profile.SkillEntry{{Name: "Go", Level: "proficient"}},
+		},
 		HonestyBounds: []string{"configuration focused"},
 	}
 }

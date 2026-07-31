@@ -9,45 +9,88 @@ import (
 	"github.com/dccoding1118/job-finder/internal/store"
 )
 
+// passTestFilter records the screening pass that puts a job into the score
+// stage under the test revision.
+func passTestFilter(data *store.Store, ctx context.Context, jobID int64) error {
+	result := store.FilterResult{
+		Outcome:    store.FilterPass,
+		Conditions: []store.FilterCondition{{Text: "locations", Kind: "required", Group: 1, Category: "other", Verdict: store.FilterPass}},
+		Stage:      "structural",
+	}
+	return data.SaveFilterResult(ctx, jobID, result, store.Revisions{Filter: testRevision, Score: testRevision})
+}
+
 func seedScoredJob(t *testing.T, data *store.Store, externalID, to string) int64 {
 	t.Helper()
 	ctx := context.Background()
 	description := "Synthetic job description"
-	created, err := data.UpsertJob(ctx, store.JobInput{Source: "yourator", ExternalID: externalID, URL: "https://example.test/jobs/" + externalID, Title: "Engineer", CompanyName: "Example", CompanyInfo: "software", Description: &description, Location: "Taipei", RemoteType: "hybrid", ProfileRevision: testRevision}, nil)
+	created, err := data.UpsertJob(ctx, store.JobInput{Source: "yourator", ExternalID: externalID, URL: "https://example.test/jobs/" + externalID, Title: "Engineer", CompanyName: "Example", CompanyInfo: "software", Description: &description, Location: "Taipei", RemoteType: "hybrid", FilterRevision: testRevision}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := data.CommitFilter(ctx, created.Job.ID, testRevision, nil); err != nil {
+	if err := passTestFilter(data, ctx, created.Job.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := data.CommitScore(ctx, store.ScoreInput{JobID: created.Job.ID, HardSkill: 4, Domain: 4, Seniority: 4, Condition: 3, Direction: 4, Total: 70, Reason: "first pass", Runner: "claude", ProfileRevision: testRevision}, to); err != nil {
+	if err := data.CommitScore(ctx, store.ScoreInput{JobID: created.Job.ID, Content: 4, Benefit: 4, Bonus: 4, Industry: 4, Total: 70, Reason: "first pass", Runner: "claude", ScoreRevision: testRevision}, to); err != nil {
 		t.Fatal(err)
 	}
 	return created.Job.ID
 }
 
-func TestRescoreRequeuesOneJob(t *testing.T) {
+func TestReprocessReturnsOneJobToScreening(t *testing.T) {
 	processor := &fakeProcessor{}
 	server, data := newTestServer(t, processor)
 	processor.store = data
-	jobID := seedScoredJob(t, data, "rescore-job", "scored")
+	jobID := seedScoredJob(t, data, "reprocess-job", "scored")
 
 	response := httptest.NewRecorder()
-	server.Handler().ServeHTTP(response, authedRequest(http.MethodPost, "/api/v1/jobs/1/rescore", nil))
+	server.Handler().ServeHTTP(response, authedRequest(http.MethodPost, "/api/v1/jobs/1/reprocess", nil))
 	if response.Code != http.StatusOK {
-		t.Fatalf("rescore status = %d", response.Code)
+		t.Fatalf("reprocess status = %d", response.Code)
 	}
 	body := decode(t, response)
-	if body["status"] != "queued" || len(processor.rescored) != 1 || processor.rescored[0] != jobID {
-		t.Fatalf("rescore body = %v forwarded = %v", body, processor.rescored)
+	if body["status"] != "new" || len(processor.reprocessed) != 1 || processor.reprocessed[0] != jobID {
+		t.Fatalf("reprocess body = %v forwarded = %v", body, processor.reprocessed)
 	}
 	job := body["job"].(map[string]any)
-	if job["process_state"] != "queued" || job["verdict"] != "pending_score" {
-		t.Fatalf("job after rescore = %v", job)
+	if job["process_state"] != "new" || job["verdict"] != "pending_screen" {
+		t.Fatalf("job after reprocess = %v", job)
 	}
 }
 
-func TestRescoreRejectsLetterHistoryAndUnknownJob(t *testing.T) {
+// A screening rejection is exactly what a manual reprocess exists to undo, so
+// the entry accepts it where the previous rescore-only entry refused it.
+func TestReprocessAcceptsScreenedOutJob(t *testing.T) {
+	processor := &fakeProcessor{}
+	server, data := newTestServer(t, processor)
+	processor.store = data
+	ctx := context.Background()
+	description := "Synthetic job description"
+	created, err := data.UpsertJob(ctx, store.JobInput{Source: "yourator", ExternalID: "unfit-job", URL: "https://example.test/jobs/unfit-job", Title: "Engineer", CompanyName: "Example", CompanyInfo: "software", Description: &description, Location: "Taipei", RemoteType: "hybrid", FilterRevision: testRevision}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := store.FilterResult{
+		Outcome:    store.FilterFail,
+		Conditions: []store.FilterCondition{{Text: "locations", Kind: "required", Group: 1, Category: "other", Verdict: store.FilterFail}},
+		Stage:      "structural",
+	}
+	if err := data.SaveFilterResult(ctx, created.Job.ID, result, store.Revisions{Filter: testRevision, Score: testRevision}); err != nil {
+		t.Fatal(err)
+	}
+
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, authedRequest(http.MethodPost, "/api/v1/jobs/1/reprocess", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("reprocess status = %d", response.Code)
+	}
+	job := decode(t, response)["job"].(map[string]any)
+	if job["verdict"] != "pending_screen" || job["filter_hits"] != nil || job["filter_result"] != nil {
+		t.Fatalf("screened-out job after reprocess = %v", job)
+	}
+}
+
+func TestReprocessRejectsLetterHistoryAndUnknownJob(t *testing.T) {
 	processor := &fakeProcessor{}
 	server, data := newTestServer(t, processor)
 	processor.store = data
@@ -57,18 +100,18 @@ func TestRescoreRejectsLetterHistoryAndUnknownJob(t *testing.T) {
 	}
 
 	response := httptest.NewRecorder()
-	server.Handler().ServeHTTP(response, authedRequest(http.MethodPost, "/api/v1/jobs/1/rescore", nil))
+	server.Handler().ServeHTTP(response, authedRequest(http.MethodPost, "/api/v1/jobs/1/reprocess", nil))
 	if response.Code != http.StatusConflict {
-		t.Fatalf("letter history rescore status = %d, want 409", response.Code)
+		t.Fatalf("letter history reprocess status = %d, want 409", response.Code)
 	}
-	if code := decode(t, response)["error"].(map[string]any)["code"]; code != "rescore_not_allowed" {
+	if code := decode(t, response)["error"].(map[string]any)["code"]; code != "reprocess_not_allowed" {
 		t.Fatalf("error code = %v", code)
 	}
 
 	missing := httptest.NewRecorder()
-	server.Handler().ServeHTTP(missing, authedRequest(http.MethodPost, "/api/v1/jobs/999/rescore", nil))
+	server.Handler().ServeHTTP(missing, authedRequest(http.MethodPost, "/api/v1/jobs/999/reprocess", nil))
 	if missing.Code != http.StatusNotFound {
-		t.Fatalf("unknown job rescore status = %d, want 404", missing.Code)
+		t.Fatalf("unknown job reprocess status = %d, want 404", missing.Code)
 	}
 }
 
@@ -78,8 +121,8 @@ func TestStatusReportsBacklogBudgetAndAgentCalls(t *testing.T) {
 	processor.store = data
 	jobID := seedScoredJob(t, data, "status-job", "scored")
 	for _, call := range []store.AgentCallInput{
-		{JobID: &jobID, Role: "scorer", Runner: "claude", Input: "prompt", Output: `{"hard_skill":10,"domain":10,"seniority":20,"condition":30,"direction":5,"reason":"技能與方向皆不符"}`, OK: true, DurationMS: 8000, ProfileRevision: testRevision},
-		{JobID: &jobID, Role: "scorer", Runner: "claude", Input: "prompt", Output: `{"type":"result","is_error":true,"api_error_status":429,"result":"weekly limit"}`, OK: false, DurationMS: 90000, ProfileRevision: testRevision},
+		{JobID: &jobID, Role: "scorer", Runner: "claude", Input: "prompt", Output: `{"content_fit":10,"benefit_fit":10,"bonus_fit":20,"industry_fit":30,"reason":"技能與方向皆不符"}`, OK: true, DurationMS: 8000, ScoreRevision: testRevision},
+		{JobID: &jobID, Role: "scorer", Runner: "claude", Input: "prompt", Output: `{"type":"result","is_error":true,"api_error_status":429,"result":"weekly limit"}`, OK: false, DurationMS: 90000, ScoreRevision: testRevision},
 	} {
 		if err := data.SaveAgentCall(context.Background(), call); err != nil {
 			t.Fatal(err)

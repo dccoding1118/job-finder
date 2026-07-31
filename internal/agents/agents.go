@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -17,32 +18,55 @@ import (
 )
 
 type (
+	// Usage is the token accounting an Agent call reports, read straight out of
+	// the CLI's own structured output rather than estimated. CostUSD is 0 when
+	// the runner does not price its own calls (codex reports tokens, not cost).
+	Usage struct {
+		InputTokens      int
+		OutputTokens     int
+		CacheReadTokens  int
+		CacheWriteTokens int
+		ReasoningTokens  int
+		CostUSD          float64
+	}
+	// Reply is a Runner's answer: the text every parser reads, plus the usage
+	// that answer cost.
+	Reply struct {
+		Text  string
+		Usage Usage
+	}
 	Runner interface {
 		Name() string
-		Invoke(context.Context, string) (string, error)
+		Model() string
+		Invoke(context.Context, string) (Reply, error)
 	}
 	CommandRunner struct {
-		RunnerName, Command string
-		Args                []string
+		RunnerName, Command, RunnerModel string
+		Args                             []string
 		// PromptViaStdin writes the prompt to stdin instead of appending it as the final argument.
 		PromptViaStdin bool
-		// ResultEnvelope reads stdout as a JSON envelope whose "result" field carries the response.
+		// ResultEnvelope reads stdout as the `claude --output-format json` envelope,
+		// whose "result" field carries the response and "usage"/"total_cost_usd" carry cost.
 		ResultEnvelope bool
 		// LastMessageFlag, when set, receives a temporary file that the CLI writes its final message to.
 		LastMessageFlag string
-		TempRoot        string
-		Timeout         time.Duration
+		// JSONLUsageEvents reads stdout as `codex exec --json` event lines and takes
+		// usage from the last "turn.completed" event.
+		JSONLUsageEvents bool
+		TempRoot         string
+		Timeout          time.Duration
 	}
 )
 
-func (r CommandRunner) Name() string { return r.RunnerName }
-func (r CommandRunner) Invoke(ctx context.Context, prompt string) (string, error) {
+func (r CommandRunner) Name() string  { return r.RunnerName }
+func (r CommandRunner) Model() string { return r.RunnerModel }
+func (r CommandRunner) Invoke(ctx context.Context, prompt string) (Reply, error) {
 	if strings.TrimSpace(r.Command) == "" {
-		return "", fmt.Errorf("agents: %s: command is required", r.RunnerName)
+		return Reply{}, fmt.Errorf("agents: %s: command is required", r.RunnerName)
 	}
 	dir, err := os.MkdirTemp(r.TempRoot, "jobfinder-agent-*")
 	if err != nil {
-		return "", fmt.Errorf("agents: %s: create temporary directory: %w", r.RunnerName, err)
+		return Reply{}, fmt.Errorf("agents: %s: create temporary directory: %w", r.RunnerName, err)
 	}
 	defer func() { _ = os.RemoveAll(dir) }()
 	if r.Timeout > 0 {
@@ -69,43 +93,102 @@ func (r CommandRunner) Invoke(ctx context.Context, prompt string) (string, error
 	if err := c.Run(); err != nil {
 		detail := strings.TrimSpace(stderr.String() + "\n" + stdout.String())
 		if ctx.Err() != nil {
-			return detail, fmt.Errorf("agents: %s: %w", r.RunnerName, ctx.Err())
+			return Reply{Text: detail}, fmt.Errorf("agents: %s: %w", r.RunnerName, ctx.Err())
 		}
-		return detail, fmt.Errorf("agents: %s: %w: %s", r.RunnerName, err, detail)
+		return Reply{Text: detail}, fmt.Errorf("agents: %s: %w: %s", r.RunnerName, err, detail)
+	}
+	usage := Usage{}
+	if r.JSONLUsageEvents {
+		usage = jsonlUsage(stdout.String())
 	}
 	if r.LastMessageFlag != "" {
 		message, err := os.ReadFile(lastMessage) // #nosec G304 -- path is created inside the per-invocation temporary directory.
 		if err != nil {
-			return stdout.String(), fmt.Errorf("agents: %s: read final message: %w", r.RunnerName, err)
+			return Reply{Text: stdout.String(), Usage: usage}, fmt.Errorf("agents: %s: read final message: %w", r.RunnerName, err)
 		}
-		return string(message), nil
+		return Reply{Text: string(message), Usage: usage}, nil
 	}
 	if r.ResultEnvelope {
-		return envelopeResult(r.RunnerName, stdout.String())
+		text, usage, err := envelopeResult(r.RunnerName, stdout.String())
+		return Reply{Text: text, Usage: usage}, err
 	}
-	return stdout.String(), nil
+	return Reply{Text: stdout.String()}, nil
 }
 
-// envelopeResult unwraps the JSON envelope that a CLI prints in structured output mode.
-func envelopeResult(runner, raw string) (string, error) {
+// envelopeResult unwraps the JSON envelope that `claude --output-format json`
+// prints: "result" carries the response text, "usage" and "total_cost_usd"
+// carry what that response cost.
+func envelopeResult(runner, raw string) (string, Usage, error) {
 	var envelope struct {
-		Subtype string `json:"subtype"`
-		IsError bool   `json:"is_error"`
-		Result  string `json:"result"`
+		Subtype      string  `json:"subtype"`
+		IsError      bool    `json:"is_error"`
+		Result       string  `json:"result"`
+		TotalCostUSD float64 `json:"total_cost_usd"`
+		Usage        struct {
+			InputTokens              int `json:"input_tokens"`
+			OutputTokens             int `json:"output_tokens"`
+			CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+			CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+		} `json:"usage"`
 	}
 	if err := json.Unmarshal([]byte(strings.TrimSpace(raw)), &envelope); err != nil {
-		return raw, fmt.Errorf("agents: %s: invalid result envelope: %w", runner, err)
+		return raw, Usage{}, fmt.Errorf("agents: %s: invalid result envelope: %w", runner, err)
+	}
+	usage := Usage{
+		InputTokens:      envelope.Usage.InputTokens,
+		OutputTokens:     envelope.Usage.OutputTokens,
+		CacheReadTokens:  envelope.Usage.CacheReadInputTokens,
+		CacheWriteTokens: envelope.Usage.CacheCreationInputTokens,
+		CostUSD:          envelope.TotalCostUSD,
 	}
 	if envelope.IsError || envelope.Subtype != "success" {
-		return raw, fmt.Errorf("agents: %s: reported %q", runner, envelope.Subtype)
+		return raw, usage, fmt.Errorf("agents: %s: reported %q", runner, envelope.Subtype)
 	}
-	return envelope.Result, nil
+	return envelope.Result, usage, nil
+}
+
+// jsonlUsage reads `codex exec --json` event lines and takes usage from the
+// last "turn.completed" event; codex does not price its own calls, so CostUSD
+// stays 0.
+func jsonlUsage(raw string) Usage {
+	var usage Usage
+	for _, line := range strings.Split(raw, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		var event struct {
+			Type  string `json:"type"`
+			Usage struct {
+				InputTokens           int `json:"input_tokens"`
+				CachedInputTokens     int `json:"cached_input_tokens"`
+				CacheWriteInputTokens int `json:"cache_write_input_tokens"`
+				OutputTokens          int `json:"output_tokens"`
+				ReasoningOutputTokens int `json:"reasoning_output_tokens"`
+			} `json:"usage"`
+		}
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			continue
+		}
+		if event.Type != "turn.completed" {
+			continue
+		}
+		usage = Usage{
+			InputTokens:      event.Usage.InputTokens,
+			OutputTokens:     event.Usage.OutputTokens,
+			CacheReadTokens:  event.Usage.CachedInputTokens,
+			CacheWriteTokens: event.Usage.CacheWriteInputTokens,
+			ReasoningTokens:  event.Usage.ReasoningOutputTokens,
+		}
+	}
+	return usage
 }
 
 func ClaudeRunner(model string, timeout time.Duration) Runner {
 	return CommandRunner{
 		RunnerName:     "claude",
 		Command:        "claude",
+		RunnerModel:    model,
 		Args:           []string{"-p", "--model", model, "--output-format", "json"},
 		PromptViaStdin: true,
 		ResultEnvelope: true,
@@ -115,47 +198,52 @@ func ClaudeRunner(model string, timeout time.Duration) Runner {
 
 func CodexRunner(model string, timeout time.Duration) Runner {
 	return CommandRunner{
-		RunnerName:      "codex",
-		Command:         "codex",
-		Args:            []string{"exec", "--model", model, "--ephemeral", "--skip-git-repo-check", "--sandbox", "read-only", "--color", "never"},
-		LastMessageFlag: "-o",
-		Timeout:         timeout,
+		RunnerName:       "codex",
+		Command:          "codex",
+		RunnerModel:      model,
+		Args:             []string{"exec", "--model", model, "--ephemeral", "--skip-git-repo-check", "--sandbox", "read-only", "--color", "never", "--json"},
+		LastMessageFlag:  "-o",
+		JSONLUsageEvents: true,
+		Timeout:          timeout,
 	}
 }
 
 type (
+	// ScoreResult is the soft-rule assessment. Each dimension starts from the
+	// configured baseline and moves from there, so "nothing in the JD to judge
+	// this on" answers with the baseline rather than a zero.
 	ScoreResult struct {
-		HardSkill int    `json:"hard_skill"`
-		Domain    int    `json:"domain"`
-		Seniority int    `json:"seniority"`
-		Condition int    `json:"condition"`
-		Direction int    `json:"direction"`
-		Reason    string `json:"reason"`
-		Runner    string
+		Content  int    `json:"content_fit"`
+		Benefit  int    `json:"benefit_fit"`
+		Bonus    int    `json:"bonus_fit"`
+		Industry int    `json:"industry_fit"`
+		Reason   string `json:"reason"`
+		Runner   string
 	}
-	Audit  func(role, runner, input, output string, ok bool, duration time.Duration) error
+	Audit  func(role, runner, model, input, output string, ok bool, duration time.Duration, usage Usage) error
 	Scorer struct {
 		Primary, Fallback Runner
 		Audit             Audit
 	}
 )
 
-func (s Scorer) Score(ctx context.Context, profileYAML string, job Job) (ScoreResult, error) {
-	prompt := scorePrompt(profileYAML, job)
+func (s Scorer) Score(ctx context.Context, profileYAML string, job Job, baseline int) (ScoreResult, error) {
+	prompt := scorePrompt(profileYAML, job, baseline)
 	var lastErr error
 	for _, runner := range []Runner{s.Primary, s.Primary, s.Fallback} {
 		if runner == nil {
 			continue
 		}
 		start := time.Now()
-		raw, err := runner.Invoke(ctx, prompt)
+		reply, err := runner.Invoke(ctx, prompt)
+		raw := reply.Text
 		result, parseErr := parseScore(raw)
 		ok := err == nil && parseErr == nil
 		if !ok {
 			lastErr = invocationError(err, parseErr)
 		}
 		if s.Audit != nil {
-			if auditErr := s.Audit("scorer", runner.Name(), prompt, raw, ok, time.Since(start)); auditErr != nil {
+			if auditErr := s.Audit("scorer", runner.Name(), runner.Model(), prompt, raw, ok, time.Since(start), reply.Usage); auditErr != nil {
 				return ScoreResult{}, fmt.Errorf("agents: audit scorer call: %w", auditErr)
 			}
 		}
@@ -208,14 +296,15 @@ func (d Drafter) Draft(ctx context.Context, profileYAML string, job Job, issues 
 			continue
 		}
 		start := time.Now()
-		raw, err := runner.Invoke(ctx, prompt)
+		reply, err := runner.Invoke(ctx, prompt)
+		raw := reply.Text
 		result, parseErr := parseDraft(raw)
 		ok := err == nil && parseErr == nil
 		if !ok {
 			lastErr = invocationError(err, parseErr)
 		}
 		if d.Audit != nil {
-			if auditErr := d.Audit("drafter", runner.Name(), prompt, raw, ok, time.Since(start)); auditErr != nil {
+			if auditErr := d.Audit("drafter", runner.Name(), runner.Model(), prompt, raw, ok, time.Since(start), reply.Usage); auditErr != nil {
 				return DraftResult{}, fmt.Errorf("agents: audit drafter call: %w", auditErr)
 			}
 		}
@@ -235,14 +324,15 @@ func (r Reviewer) Review(ctx context.Context, profileYAML string, job Job, lette
 			continue
 		}
 		start := time.Now()
-		raw, err := runner.Invoke(ctx, prompt)
+		reply, err := runner.Invoke(ctx, prompt)
+		raw := reply.Text
 		result, parseErr := parseReview(raw)
 		ok := err == nil && parseErr == nil
 		if !ok {
 			lastErr = invocationError(err, parseErr)
 		}
 		if r.Audit != nil {
-			if auditErr := r.Audit("reviewer", runner.Name(), prompt, raw, ok, time.Since(start)); auditErr != nil {
+			if auditErr := r.Audit("reviewer", runner.Name(), runner.Model(), prompt, raw, ok, time.Since(start), reply.Usage); auditErr != nil {
 				return ReviewResult{}, fmt.Errorf("agents: audit reviewer call: %w", auditErr)
 			}
 		}
@@ -311,13 +401,9 @@ func Guard(letter string, p profile.Profile, description string, denylist []stri
 	if err := profile.LintText(letter, denylist); err != nil {
 		return fmt.Errorf("guard: %w", err)
 	}
-	allowed := strings.ToLower(description)
-	for _, skills := range [][]string{p.Skills.Expert, p.Skills.Proficient, p.Skills.Familiar} {
-		allowed += " " + strings.ToLower(strings.Join(skills, " "))
-	}
-	for _, experience := range p.Experiences {
-		allowed += " " + strings.ToLower(strings.Join(experience.Skills, " "))
-	}
+	// The whitelist is every skill the Profile states — the totals list plus each
+	// experience's own — together with the JD itself.
+	allowed := strings.ToLower(description) + " " + strings.ToLower(strings.Join(p.SkillNames(), " "))
 	for _, term := range regexp.MustCompile(`(?i)\b(?:java|go|golang|python|rust|kubernetes|docker|terraform|aws|gcp|azure|sql|react|typescript)\b`).FindAllString(letter, -1) {
 		if !strings.Contains(allowed, strings.ToLower(term)) {
 			return fmt.Errorf("guard: unsupported technical term")
@@ -374,8 +460,28 @@ func parseReview(raw string) (ReviewResult, error) {
 	return result, nil
 }
 
-func scorePrompt(profile string, j Job) string {
-	return "你是求職媒合評分器。僅輸出單一 JSON 物件，不要說明。\nProfile YAML:\n" + profile + "\nJob:\ntitle: " + j.Title + "\ncompany: " + j.CompanyName + "\ndescription: " + j.Description + "\nlocation: " + j.Location + "\n請回傳 hard_skill、domain、seniority、condition、direction（皆為 0-100 整數）與 reason（40~60 字，勿超過）。不要計算 total。"
+// scorePrompt asks only what the soft rules can answer. baseline is the score a
+// dimension takes when the JD says nothing to judge it on — a neutral answer,
+// not a bad one.
+func scorePrompt(profileYAML string, j Job, baseline int) string {
+	return `你是求職媒合評分器。僅輸出單一 JSON 物件，不要說明。
+
+四個維度皆以基準分 ` + strconv.Itoa(baseline) + ` 為起點加減，範圍 0-100；該維度在 JD 中無資訊可判時，回基準分。
+- content_fit：工作內容對照 intents.content_likes（加分）與 content_dislikes（扣分）。
+- benefit_fit：薪資對照 salary_target，另計優於勞基法的休假、不打卡或彈性工時、額外獎金；遠端形式依 remote 意願加分（preferred 時 full 加較多、hybrid 加較少、onsite 不加）。
+- bonus_fit：JD 的加分條件對照 skills／certifications／languages。**只加不減**：JD 列出而你沒有的加分項不扣分。
+- industry_fit：公司產品或服務所屬領域對照 intents.industry_interests。
+
+Profile（軟條件子集）:
+` + profileYAML + `
+Job:
+title: ` + j.Title + `
+company: ` + j.CompanyName + `
+location: ` + j.Location + `
+remote: ` + j.RemoteType + `
+description: ` + j.Description + `
+
+回傳 content_fit、benefit_fit、bonus_fit、industry_fit（皆為 0-100 整數）與 reason（40~60 字，勿超過）。不要計算 total。`
 }
 
 // extractObject returns the last balanced top-level JSON object in raw, ignoring
@@ -426,7 +532,7 @@ func parseScore(raw string) (ScoreResult, error) {
 	if err := json.Unmarshal([]byte(match), &r); err != nil {
 		return r, fmt.Errorf("agents: invalid score JSON: %w", err)
 	}
-	for _, v := range []int{r.HardSkill, r.Domain, r.Seniority, r.Condition, r.Direction} {
+	for _, v := range []int{r.Content, r.Benefit, r.Bonus, r.Industry} {
 		if v < 0 || v > 100 {
 			return r, fmt.Errorf("agents: score out of range")
 		}

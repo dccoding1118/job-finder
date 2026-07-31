@@ -1,11 +1,11 @@
-# 模組設計 — pipeline（排程層 / 流程編排與初篩）
+# 模組設計 — pipeline（排程層 / 流程編排與硬規則篩選）
 
 對應需求：R3、R7、R8。`jobfinder run` 的實作主體。
 
 ## 1. 職責邊界
 
-- 抓取的排程編排（fetch），以及 filter → score → letter 三階段的**常駐消化**；各階段從 store 取件、呼叫對應模組、寫回狀態。求職信階段只處理使用者已要求的職缺（`letter_requested`）。
-- Profile 求職條件的篩選實作、Profile activation 與既有 Job 重新處理，以及供 104 半被動擷取使用的 ingest 入口。
+- 抓取的排程編排（fetch），以及 filter（硬規則）→ score（軟規則）→ letter 三階段的**常駐消化**；各階段從 store 取件、呼叫對應模組、寫回狀態。求職信階段只處理使用者已要求的職缺（`letter_requested`）。
+- Profile 硬規則的篩選實作（結構化比對於本模組、語意條件交 agents）、Profile activation 與既有 Job 重新處理，以及供半被動擷取使用的 ingest 入口。
 - 冪等、序列化、LLM rate limit、每日預算、Run 紀錄。
 - 不負責：抓取細節（crawler）、LLM 呼叫（agents）、狀態轉換合法性（store）。
 
@@ -19,7 +19,7 @@
 jobfinder run [--source NAME]
   1. StartRun(trigger)
   2. 逐全自動 source（Yourator）抓取 → store.UpsertJob（記 discovered_by_run_id）
-     → store.LinkOrSuggestDuplicate（跨來源分群，見 §3.1）
+     → store.LinkOrSuggestDuplicate（跨來源分群，見 §3.5）
      source 級錯誤記 stats.errors 續行
   3. FinishRun(stats)
 ```
@@ -38,19 +38,22 @@ worker 隨 API server process 常駐（同 binary、同 systemd service），持
 
 | 階段 | 取件狀態 | 動作 | 結果 |
 |---|---|---|---|
-| filter | `new` | 條件判定（§3） | `filtered_out`（記 `filter_hits`）∣ `queued` |
+| filter | `new` | 硬規則判定（§3）：程式比對結構化條件；全過者呼叫 Filter Agent 取條件拆解與語意條件判定 → SaveFilterResult | 依 §3.4 彙總：`filtered_out`（任一 `fail`）∣ `queued`（其餘）∣ `discovered`（該筆其實只有摘要，退回待看補全文） |
 | score | `queued` | Scorer → SaveScore | `scored`（total < 閾值）∣ `shortlisted`（≥ 閾值） |
 | letter | `letter_requested` | Drafter／Reviewer | `letter_ready` ∣ `letter_failed` |
 
-worker 是 process 內單一消化者，以 process 內 mutex 序列化取件；資料正確性仍由 store 的 expected state ＋ expected `profile_revision` CAS 保證，不能以 mutex 取代。無待處理件時休眠等待，有件即取，因此排程 fetch、CLI 與 extension capture 三個入口寫進來的職缺走的是同一條消化路徑，沒有「等下一輪」的空窗。
+filter 階段是**兩段式**：先跑不耗 token 的結構化比對，任一條 `fail` 即結束（不呼叫 Agent）；只有結構化條件全過的職缺才付一次 Filter Agent 呼叫。LLM 不可用時（額度、認證、服務中斷）該筆不寫任何結果、不改狀態，留在 `new` 由下一輪重跑整套篩選。
 
-filter、score 與 letter 每筆工作開始時各自從 Profile provider 取得一次 immutable snapshot。filter／score 只處理 `jobs.profile_revision` 與 snapshot revision 相符的工作，**該限制下推到取件查詢**（`PickForStage` 帶 active revision）：舊 revision 的職缺等使用者要求重新處理，取件時就排除，否則它們以較舊的 `updated_at` 永遠排在最前面、取滿每次取件上限後被逐筆丟棄，相符的職缺永遠輪不到。letter 記錄工作開始時實際取得的 revision，不要求與既有 Score 相同，取件也不限 revision。Profile 為 `missing`、`invalid` 或 `degraded` 時 worker 暫停取件。
+worker 是 process 內單一消化者，以 process 內 mutex 序列化取件；資料正確性仍由 store 的 expected state ＋ expected revision CAS 保證，不能以 mutex 取代。無待處理件時休眠等待，有件即取，因此排程 fetch、CLI 與 extension capture 三個入口寫進來的職缺走的是同一條消化路徑，沒有「等下一輪」的空窗。
+
+filter、score 與 letter 每筆工作開始時各自從 Profile provider 取得一次 immutable snapshot。filter 只處理 `jobs.filter_revision` 與 snapshot `filter_revision` 相符的工作，score 只處理 `jobs.score_revision` 相符者，**該限制下推到取件查詢**（`PickForStage` 帶該階段的 active revision）：舊 revision 的職缺等使用者要求重新處理，取件時就排除，否則它們以較舊的 `updated_at` 永遠排在最前面、取滿每次取件上限後被逐筆丟棄，相符的職缺永遠輪不到。letter 記錄工作開始時實際取得的 revision，不要求與既有 Score 相同，取件也不限 revision。Profile 為 `missing`、`invalid` 或 `degraded` 時 worker 暫停取件。
 
 **letter 階段只處理使用者已要求的職缺**（PRD R5.0）：`shortlisted` 不是取件狀態，達閾值的推薦職缺停留在該狀態直到使用者要求。使用者的要求由 API（[design-api](design-api.md)）或 `jobfinder letter request --job ID` 經 store 轉為 `letter_requested`，worker 才取件。無待處理要求時，letter 階段自然是零筆、零 Agent 呼叫、零費用。
 
 `RequestLetter(jobID)`：pipeline 提供此入口供 API 呼叫——經 store 將 `shortlisted` 或 `letter_failed` 轉為 `letter_requested` 後即回。worker 自然取件，呼叫端不等待 Agent 完成。
 
-`RequestRescore(jobID)`：pipeline 提供此入口供 API 呼叫——取當下 active snapshot，經 store 將 `scored` 或 `shortlisted` 轉回 `queued` 並寫入該 revision 後即回，worker 隨後以最新 Profile 重新評分該筆。scores 為 append-only，舊 score 保留為歷史，新 score 寫入後才成為現行分數。已進入求職信階段的職缺不得重評，因此單筆重評不改寫求職信與投遞歷史。它的成本是一次 Agent 呼叫，與整批 activation 重新處理互不取代。
+
+`RequestReprocess(jobID)`：pipeline 提供此入口供 API 呼叫——取當下 active snapshot，經 store 把該筆送回管線起點（有 JD 全文者 `new`、只有摘要者 `discovered`）、寫入 active `filter_revision`、清除舊命中與舊篩選結果後即回，worker 隨後以最新 Profile 重新篩選，通過者再評分。scores 為 append-only，舊 score 保留為歷史，新 score 寫入後才成為現行分數。求職信階段與 `merged` 的職缺不得重新處理，因此它不改寫求職信、投遞歷史與合併裁決。它的成本至多是該筆的一次 Filter 與一次 Scorer 呼叫，與整批 activation 重新處理互不取代——後者依 revision 決定範圍，前者是使用者對單一判定的異議。
 
 `jobfinder run --stage filter|score|letter [--job ID]` 是**除錯用**的第二 process 入口，以 DB 同目錄 lock file（flock）與常駐 worker 互斥。worker 常駐時該鎖多半被占用，此入口僅供 worker 停止時的人工重跑，不是常態路徑。
 
@@ -62,44 +65,92 @@ pipeline 提供 **ingest 入口**供 API capture endpoint 呼叫（見 [design-a
 
 | 入口 | 行為 | 回傳 | LLM |
 |---|---|---|---|
-| `IngestList(items)` | 104 解析器 → 逐筆比對 `(source, external_id)`：**既有 Job** 只更新 `last_seen_at`（[design-schema](design-schema.md) §4 partial upsert 語意），不重跑任何階段；**新職缺** upsert partial（`discovered`）→ 同步套用欄位可用的條件篩選（§3）→ `filtered_out` ∣ 留在 `discovered` | 每筆的 job ID、現行 `process_state`、現行 score（無則 NULL）、`filter_hits`（無則 NULL）、是否本次新建 | 不呼叫 |
-| `IngestJob(capture)` | 解析全文 → upsert（partial 補全文 ⇒ `new`，或新建 `new`）→ 同步條件篩選（§3，全欄位） → `filtered_out` ∣ `queued`；已有現行評分且內容雜湊未變者直接回傳快取 | 該筆的現行 `process_state`、現行 score（尚未評分則 NULL）、`filter_hits`（無則 NULL）、是否為快取結果 | 不呼叫 |
+| `IngestList(items)` | 解析器 → 逐筆比對 `(source, external_id)`：**既有 Job** 只更新 `last_seen_at`（[design-schema](design-schema.md) §4 partial upsert 語意），不重跑任何階段；**新職缺** upsert partial（`discovered`）→ 同步套用欄位可用的結構化硬規則（§3）→ `filtered_out` ∣ 留在 `discovered` | 每筆的 job ID、現行 `process_state`、現行 score（無則 NULL）、未通過的條件（無則 NULL）、是否本次新建 | 不呼叫 |
+| `IngestJob(capture)` | 解析全文 → upsert（partial 補全文 ⇒ `new`，或新建 `new`）→ 同步跑結構化硬規則（§3，全欄位） → `filtered_out` ∣ 留在 `new` 待 worker 跑語意篩選；已有現行評分且內容雜湊未變者直接回傳快取 | 該筆的現行 `process_state`、現行 score（尚未評分則 NULL）、未通過的條件（無則 NULL）、是否為快取結果 | 不呼叫 |
 
-兩個 ingest 入口都要求 ready Profile snapshot，並把本次條件判定綁定其 revision；Profile 未 ready 時回 `profile_not_ready`。兩者都**不呼叫 LLM**，皆為同步且毫秒級：條件篩選是純字串比對，不需網路也不需 Agent。差別只在可用的輸入——
+兩個 ingest 入口都要求 ready Profile snapshot，並把本次判定綁定其 `filter_revision`；Profile 未 ready 時回 `profile_not_ready`。兩者都**不呼叫 LLM**，皆為同步且毫秒級：結構化硬規則是純字串與數值比對，不需網路也不需 Agent。差別只在可用的輸入——
 
 | 入口 | 輸入 | 可套用的條件 |
 |---|---|---|
 | `IngestList` | partial（無 JD 全文） | §3 表中「partial 適用」為 ✓ 者 |
-| `IngestJob` | 全文 | §3 全部條件 |
+| `IngestJob` | 全文 | §3 全部結構化條件；語意條件交 worker |
 
-因此同一份篩選規則在兩個時機各跑一次並非重複判定，而是第二次補上第一次做不到的內文條件；第一次即 `filtered_out` 的職缺不會有第二次（已離開取件範圍）。
+因此同一份規則在兩個時機各跑一次並非重複判定，而是第二次補上第一次做不到的內文條件；第一次即 `filtered_out` 的職缺不會有第二次（已離開取件範圍）。
 
-`IngestJob` 通過篩選者留在 `queued` 由 worker 非同步評分，**不在 capture 路徑上等待 Scorer**（PRD R9.2）。被篩掉者的 `filtered_out` 則在同步回應中即得——插件據此立即呈現「不適合」，只有通過篩選的才需等待評分結果（Side Panel 的呈現見 [design-extension](design-extension.md) §4.2）。`IngestJob` 不生成求職信——推薦職缺一律停留在 `shortlisted` 等待使用者決定（PRD R5.0）。
+`IngestJob` 通過結構化條件者留在 `new` 由 worker 非同步完成語意篩選與評分，**不在 capture 路徑上等待任何 Agent**（PRD R9.2）。被篩掉者的 `filtered_out` 則在同步回應中即得——插件據此立即呈現「不適合」，只有通過結構化條件的才需等待後續結果（Side Panel 的呈現見 [design-extension](design-extension.md) §4.2）。`IngestJob` 不生成求職信——推薦職缺一律停留在 `shortlisted` 等待使用者決定（PRD R5.0）。
 
-`IngestList` 的設計約束是**即時性**：使用者仍停在 104 清單頁，回應必須在該頁面可用的時間內完成，因此整條路徑不含任何 LLM 呼叫與網路抓取（PRD R3.4、R9.1）。
+`IngestList` 的設計約束是**即時性**：使用者仍停在 104 清單頁，回應必須在該頁面可用的時間內完成，因此整條路徑不含任何 LLM 呼叫與網路抓取（PRD R3.7、R9.1）。
 
-## 3. 條件篩選（R3）
+## 3. 硬規則篩選（R3）
 
-搜尋條件由 Profile directions 導出，目的是找齊可能合適的職缺；條件篩選使用同一份 Profile 排除平台搜尋難以表達的薪資、地點、公司與關鍵字限制，以及搜尋結果中的贊助或模糊命中職缺。
+搜尋條件由 Profile `search.directions` 導出，目的是找齊可能合適的職缺；硬規則篩選使用同一份 Profile 判定「適合與否」，排除平台搜尋難以表達的限制，以及搜尋結果中的贊助或模糊命中職缺。硬規則的結論不是分數：條件不符即淘汰。
 
-規則由 `profile.yaml` 的 `preferences` 與 `preferences.screening` 導出，任一淘汰條件命中即 `filtered_out`。**partial 職缺（`discovered`，無 JD 全文）只套用欄位可用的條件**——需要內文的條件留待補入全文（→ `new`）後執行，避免以標題錯殺錯類別但實際相關的職缺：
+### 3.1 結構化條件（程式比對，零 token）
 
-| Profile 欄位 | 淘汰條件 | 判定 | partial 適用 |
-|---|---|---|---|
-| `preferences.screening.exclude_title_keywords[]` | 職稱排除 | 職稱含任一關鍵字（如「實習」「約聘」「主管」「業務」） | ✓ |
-| `preferences.screening.exclude_description_keywords[]` | 工作內容排除 | 工作內容含任一關鍵字（如「需輪班」「駐點外派」） | ✗ |
-| `preferences.screening.require_any_keywords[]` | 必要關鍵字 | 職稱與工作內容都未命中任何必要關鍵字 | ✗ |
-| `preferences.locations[]` | 地點 | 地點不在可接受地點且非 remote | ✓ |
-| `preferences.salary_min` | 薪資 | `salary_max` 有值且低於下限（面議 NULL 不淘汰） | ✓ |
-| `preferences.screening.exclude_companies[]` | 公司排除 | 公司名含黑名單字串（如派遣人力公司） | ✓ |
+規則由 `requirements` 導出。**partial 職缺（`discovered`，無 JD 全文）只套用欄位可用的條件**——需要內文的條件留待補入全文（→ `new`）後執行，避免以標題錯殺錯類別但實際相關的職缺：
 
-partial 條件篩選於 `IngestList` 入庫時同步執行（§2.3）；worker 的 filter 階段只處理 `new`。命中條件名稱寫入 `jobs.filter_hits`，供使用者調整求職條件與稽核（R3.2）。關鍵字比對不分大小寫。
+每條逐條判定照常記錄自己的真實結果，包含 `unknown`；`unknown` 對職缺的意義由 §3.4 的彙總決定，不在單條規則上做特例。
+
+| Profile 欄位 | 條件 | `fail` 判定 | `unknown` 判定 | partial 適用 |
+|---|---|---|---|---|
+| `requirements.exclude_title_keywords[]` | 職稱排除 | 職稱含任一關鍵字（如「實習」「約聘」「業務」） | — | ✓ |
+| `requirements.exclude_description_keywords[]` | 工作內容排除 | 工作內容含任一關鍵字（如「需輪班」「駐點外派」） | — | ✗ |
+| `requirements.exclude_companies[]` | 公司排除 | 公司名含黑名單字串（如派遣人力公司） | — | ✓ |
+| `requirements.locations[]` | 地點 | 地點不在可接受地區且非遠端 | 來源未陳述地點（欄位為空或存哨兵值 `unknown`） | ✓ |
+| `requirements.remote` | 遠端 | 依 §3.3 矩陣 | 不產生 | ✓ |
+| `requirements.employment_types[]` | 工作型態 | JD 型態不在所選型態內 | JD 未揭露型態 | ✓ |
+| `requirements.salary_min` | 薪資 | `salary_max` 有值且低於下限 | 薪資面議／未揭露（NULL） | ✓ |
+| `requirements.industry_avoid[]` | 排除產業 | 公司產業命中排除項 | 產業無從判斷 | ✓ |
+
+關鍵字比對不分大小寫。partial 判定於 `IngestList` 入庫時同步執行（§2.3）；worker 的 filter 階段只處理 `new`。
 
 需要內文的條件在 partial 上**不可近似執行**：104 搜尋頁的列表摘要是繞著關鍵字命中處拼接的片段而非 JD 前綴（見 [design-crawler](design-crawler.md) §2.2），片段未出現某詞不表示 JD 無該詞，據此判定會產生假淘汰。此類條件一律等補入全文（→ `new`）後才執行。
 
 批次來源（Yourator）若列表回應不含全文亦會產生 partial 職缺，該類職缺不套用 partial 篩選，停留 `discovered` 進入待看清單——partial 篩選只在清單 capture 路徑上執行，因為只有該路徑需要同步回傳就地標記。
 
-## 3.1 跨來源分群（R2.8）
+### 3.2 語意條件（Filter Agent ＋ 程式加總）
+
+結構化條件全過的職缺才呼叫 Filter Agent 一次（契約見 [design-agents](design-agents.md) §3.1），取得 JD 的條件拆解與語意條件判定：
+
+| 條件 | Agent 負責 | 程式負責 |
+|---|---|---|
+| 學歷／科系 | 判斷是否存在某筆 `qualifications.education[]` 同時滿足級別與科系相容性 | 無 |
+| 必備技能、必要證照、必要語言 | 比對 `qualifications` 的三個清單 | 無 |
+| 年資、管理年資 | 讀出 JD 要求的下限／上限 | 以 `derived.total_years`／`derived.management_years` 比較 |
+| 必要產業經驗 | 回答 JD 要求對應到 profile 的哪些 `industry` key、要求幾年 | 取 `derived.industry_years` 相加後比較 |
+
+年資的「N 年以上」是下限：`derived.total_years >= N` 即 `pass`，年資超出**不扣分、不判不適合**；只有 JD 明確設上限（如「限 3 年以下」）才可能 `fail`。學歷要求必須被**同一筆學歷同時滿足**：例如 profile 為 `[碩士·機械, 學士·資工]` 時，「大學資工」`pass`、「碩士資工」`fail`、「碩士不限科系」`pass`。
+
+拆解中標為**加分**的條件不列入篩選，只進評分關的 `bonus_fit`；標為**必備**且為選言（「A 或 B」）者滿足任一即 `pass`。
+
+### 3.3 遠端矩陣
+
+| `requirements.remote` | 篩選 | `benefit_fit` |
+|---|---|---|
+| `required` | 只有 JD 明寫全遠端才通過；`hybrid`／`onsite`／未提及 ⇒ `fail` | `full` 加分 |
+| `preferred` | 全部通過 | `full` 加較多、`hybrid` 加較少、`onsite` 不加 |
+| `acceptable` | 全部通過 | 不加不減 |
+| `rejected` | JD 提及全遠端或部分遠端 ⇒ `fail`；`onsite` 與未提及皆通過 | 不加不減 |
+
+JD 未提及遠端即等於現場：`required` 與 `rejected` 都據此定案，此條永遠不會是 `unknown`。`required` 與 `rejected` 是絕對要求，沉默是答案而非資訊缺口。
+
+### 3.4 彙總與保存
+
+彙總一律看**全部條件的綜合結果**，不對個別欄位開特例：
+
+| 綜合結果 | partial（清單摘要） | 全文 JD |
+|---|---|---|
+| 任一必備條件 `fail` | `filtered_out`（不適合） | `filtered_out`（不適合） |
+| 無 `fail`、有 `unknown` | 維持 `discovered`（待看），待補全文後重判 | `queued`（待評分） |
+| 全 `pass` | 維持 `discovered` | `queued`（待評分） |
+
+`fail` 恆為決定性，不論同時有多少條 `unknown`。`unknown` 只在「還有資料會進來」時才擋得住職缺：清單摘要是節錄，補上全文後可能就判得出來；全文 JD 則不會再有新資訊，此時扣住它只會讓它永遠停在待看，故一律放行進評分。**缺資訊絕不判不適合。**
+
+待看完全由等待補全文的 `discovered` 承載——沒有另一個「資訊不足」狀態。全文 JD 走到這裡若仍是 `unknown`，是彙總的契約違反，store 會回錯而非落地成狀態。
+
+逐條判定（條件名稱、`pass`／`fail`／`unknown`、必備／加分標記）與 JD 條件拆解一併保存（見 [design-schema](design-schema.md) §2.8），供 UI 呈現「為什麼判不適合」、供使用者調整求職條件（R3.5），並由評分關的 `bonus_fit` 重用，兩關不各自重解一次。
+
+### 3.5 跨來源分群（R2.8）
 
 每次 upsert 之後（fetch 與兩個 capture 入口皆同）呼叫 `store.LinkOrSuggestDuplicate`，規則與交易語意由 store 定義（見 [design-schema](design-schema.md) §4.2）。pipeline 的責任只有三件：
 
@@ -115,26 +166,31 @@ partial 條件篩選於 `IngestList` 入庫時同步執行（§2.3）；worker �
 
 Profile 儲存產生新語意 revision 時只切換 provider snapshot；既有 Job、Score 與處理狀態保持原 revision，服務啟動也不自動 activation。新擷取職缺由 ingest 寫入當下 snapshot revision。使用者在系統頁明確要求更新過時評分後，pipeline 以當下 active snapshot 呼叫 store activation transaction，完成本地重新篩選與入隊；常駐 worker 隨後依既有輪詢消化。
 
-| 現行資料 | activation 行為 |
-|---|---|
-| `discovered`／partial `filtered_out` | 切換 revision、清除舊 filter hits，重做 partial 條件；可在 `discovered` 與 `filtered_out` 間改判。 |
-| 有全文的 `new`／`queued`／`filtered_out`／`scored`／`shortlisted` | 切換 revision、清除舊 filter hits，回到／維持 `new`；通過篩選後重新排入 score。 |
-| `letter_requested`／`letter_ready`／`letter_failed`、Letter、apply history | 保留狀態與歷史，不取消、不重送、不覆寫；由 API 導出 stale。 |
+**重跑範圍依變更的 revision 決定**：`filter_revision` 改變 ⇒ 全部重篩，通過者再重評；只有 `score_revision` 改變 ⇒ 只重評，不重篩（已 `filtered_out` 與 `discovered` 者不動，硬規則結論未變）。
 
-activation 本身只做本地篩選與重新入隊，不呼叫 LLM。重新評分沿用 `max_score_per_day`，預算用盡時停留 `queued` 跨台北日界續作。相同 revision 重送不得重設狀態或增加事件／Agent 呼叫。Profile 在 activation 或 worker 執行途中再次改變時，舊 snapshot 結果仍由 CAS 拒絕成為現行判定；Agent call 稽核保留實際 revision。
+| 現行資料 | `filter_revision` 改變 | 只有 `score_revision` 改變 |
+|---|---|---|
+| `discovered`／partial `filtered_out` | 切換 revision、清除舊判定，重做 partial 條件；可在 `discovered` 與 `filtered_out` 間改判 | 不變 |
+| 有全文的 `new`／`filtered_out` | 切換 revision、清除舊判定，回到／維持 `new` 重新走兩段篩選 | 不變 |
+| 無全文的職缺（僅有清單摘要） | 一律回到 `discovered` 等補全文，不進 filter 階段 | 不變 |
+| `queued`／`scored`／`shortlisted` | 同上，回到 `new` | 切換 `score_revision`、回到／維持 `queued` 重新評分；篩選結果保留 |
+| `letter_requested`／`letter_ready`／`letter_failed`、Letter、apply history | 保留狀態與歷史，不取消、不重送、不覆寫；由 API 導出 stale | 同左 |
+
+activation 本身只做狀態切換與重新入隊，不呼叫 LLM；重篩的 Filter Agent 呼叫由 worker 逐筆消化。重新評分沿用 `max_score_per_day`，預算用盡時停留 `queued` 跨台北日界續作。相同 revision 重送不得重設狀態或增加事件／Agent 呼叫。Profile 在 activation 或 worker 執行途中再次改變時，舊 snapshot 結果仍由 CAS 拒絕成為現行判定；Agent call 稽核保留實際 revision。
 
 ## 5. Rate limit 與每日預算
 
 | 參數（設定檔） | 預設 | 說明 |
 |---|---|---|
 | `llm.min_interval` | 20s | 相鄰 LLM 呼叫最小間隔（序列化執行） |
+| `llm.max_filter_per_day` | 60 | 每日語意篩選上限，超出留待隔日；職缺停留 `new` |
 | `llm.max_score_per_day` | 30 | 每日評分上限，超出留待隔日 |
 | `llm.max_letter_per_day` | 10 | 每日求職信上限；未處理的 `letter_requested` 留待隔日，使用者的要求不會遺失 |
 | `llm.timeout` | 300s | 單次 Agent 呼叫逾時 |
 
 每日預算以**台北時間日界**重置，計數依 `agent_calls` 當日該 role 的成功呼叫數導出，不另存計數器（重啟後預算不歸零）。worker 常駐後沒有「輪」可作為上限單位，而 extension capture 由使用者隨時觸發，時間窗預算是成本封頂的唯一著力點。
 
-預算用盡時 worker 停止取件，職缺停留 `queued`／`letter_requested` 至隔日；此為刻意的成本封頂，不記為錯誤。API 據此讓 Side Panel 呈現「已達今日上限」而非「處理中」。
+預算用盡時 worker 停止該階段取件，職缺停留 `new`／`queued`／`letter_requested` 至隔日；此為刻意的成本封頂，不記為錯誤。API 據此讓 Side Panel 呈現「已達今日上限」而非「處理中」。
 
 ## 6. 錯誤處理
 
@@ -155,13 +211,14 @@ worker 與各階段以 `log/slog` 輸出結構化記錄至 stderr，由 systemd 
 
 | 事件 | 級別 | 欄位 |
 |---|---|---|
-| 取得一批待評分職缺 | Info | `stage`、`jobs`、`budget_remaining`、`budget_limited` |
-| 單筆評分開始／完成 | Info | `stage`、`job_id`、`source`、`profile_revision`；完成另附 `total`、`state`、`runner`、`duration_ms` |
+| 取得一批待處理職缺 | Info | `stage`、`jobs`、`budget_remaining`、`budget_limited` |
+| 單筆語意篩選開始／完成 | Info | `stage`、`job_id`、`filter_revision`；完成另附 `verdict`（`fail`／`unknown`／`pass`）、`state`、`runner`、`duration_ms` |
+| 單筆評分開始／完成 | Info | `stage`、`job_id`、`source`、`score_revision`；完成另附 `total`、`state`、`runner`、`duration_ms` |
 | 單筆評分失敗 | Error | `stage`、`job_id`、`duration_ms`、`error` |
-| 評分結果因 revision 過期被丟棄 | Info | `stage`、`job_id`、`profile_revision` |
-| 單筆重評入隊 | Info | `stage`、`job_id`、`profile_revision` |
+| 判定結果因 revision 過期被丟棄 | Info | `stage`、`job_id`、`revision` |
+| 單筆重新處理入隊 | Info | `stage`、`job_id`、`filter_revision` |
 | 單筆求職信開始／完成／失敗 | Info／Error | `stage`、`job_id`、`state`、`rounds`、`duration_ms`、`error` |
-| filter 階段完成一批 | Info | `stage`、`processed`、`filtered_out` |
+| filter 階段完成一批 | Info | `stage`、`processed`、`filtered_out`、`queued` |
 | worker 單次消化 | Info | `filtered`、`scored`、`lettered` |
 | 每日預算用盡而略過取件 | Debug | `stage`、`reason`、`max_per_day` |
 
@@ -174,7 +231,7 @@ log 不得含 JD、Profile、薪資、求職信內容或 Agent 原始輸入輸�
 | `db.path` | SQLite 檔路徑 |
 | `profile.path` / `profile.denylist` | Profile 與 PII denylist 路徑 |
 | `sources.<name>` | enabled、max_pages、request_delay_min/max、retry_max、retry_backoff、check_robots；query 預設由 Profile directions 依順序展開，每個方向一組、每來源最多三組；`sources.yourator.base_url` 為選填端點覆寫，預設正式 Yourator 網域，僅供隔離驗收以本機 fixture 驗證 adapter |
-| `scoring` | 五維權重、閾值（預設 75） |
+| `scoring` | 四維權重（`content_fit` 0.50、`benefit_fit` 0.20、`bonus_fit` 0.15、`industry_fit` 0.15）、閾值（預設 75）與基準分（預設同閾值） |
 | `calibration.min_interviews` | 反向校準門檻（預設 5） |
 | `dedupe.enabled` | 是否啟用跨來源分群（預設 true） |
 | `dedupe.title_similarity_threshold` | 灰帶候選的職稱相似度下限（預設 0.6） |
@@ -184,7 +241,7 @@ log 不得含 JD、Profile、薪資、求職信內容或 Agent 原始輸入輸�
 | `api.addr` | B4 API 監聽位址，預設 `127.0.0.1:8686` |
 | `api.token` / `api.extension_origin` | API 驗證 token 與允許的 extension origin |
 
-repo 內提供 `configs/config.example.yaml`；實際 `config.yaml` 含本機 token 等執行設定，gitignore。薪資、地點與條件篩選只存在 `profile.yaml`，不在 config 重複保存。
+repo 內提供 `configs/config.example.yaml`；實際 `config.yaml` 含本機 token 等執行設定，gitignore。薪資、地點與硬規則條件只存在 `profile.yaml`，不在 config 重複保存。
 
 ## 8. 測試
 
@@ -193,7 +250,10 @@ repo 內提供 `configs/config.example.yaml`；實際 `config.yaml` 含本機 to
 - worker：待處理件出現後於掃描間隔內被取件；三個入口（fetch、CLI、capture）寫入的職缺走同一消化路徑。
 - 冪等：於 score 階段中斷後重啟 worker，斷言不重複呼叫已完成項。
 - 每日預算：超出 `max_score_per_day` 後停止取件、職缺停留 `queued` 且不記 errors；跨台北日界後恢復；計數由 `agent_calls` 導出，重啟不歸零。
-- 條件篩選：表驅動測試逐項求職條件的正反例，並驗證由 Profile 導出而非讀取 config。
+- 結構化硬規則：表驅動測試逐項條件的 `pass`／`fail`／`unknown` 正反例，並驗證由 Profile 導出而非讀取 config；遠端四值 × JD 三態的完整矩陣。
+- 語意篩選：結構化條件已 `fail` 者不呼叫 Filter Agent；彙總分流（`filtered_out`／`queued`／退回 `discovered`）與逐條判定保存；年資下限不因超出而 `fail`；選言條件滿足任一即 `pass`；加分條件不影響篩選結論。
+- `derived` 加總：`exclude_from_totals`、管理年資與各產業年資的比較由程式執行，Agent 只回語意對應。
+- 雙 revision 重跑範圍：只改 `intents` 時 `filtered_out`／`discovered` 不動、`scored`／`shortlisted` 回 `queued`；改硬規則欄位時全部回 `new` 重篩。
 - 按需生成：`shortlisted` 職缺在無使用者要求時不被 letter 階段取件、不產生 Agent 呼叫；`RequestLetter` 後才進入生成。
 - ingest：列表與內頁 ingest 全程無 LLM 呼叫；內頁 ingest 對通過篩選者留 `queued` 並回 NULL score，對淘汰者同步回 `filtered_out` 與 `filter_hits`；快取命中回現行 score。
 - 兩次篩選：partial 入庫只套用「partial 適用」條件；補全文後套用全部條件，且第一次已 `filtered_out` 者不再被取件。
@@ -202,7 +262,7 @@ repo 內提供 `configs/config.example.yaml`；實際 `config.yaml` 含本機 to
 
 ## 9. 交付物
 
-- `internal/pipeline/`：fetch run 編排、常駐 worker、ingest 入口、`RequestLetter`、filter 規則、rate limiter、每日預算、lock、設定載入（或獨立 `internal/config`）＋測試。
+- `internal/pipeline/`：fetch run 編排、常駐 worker、ingest 入口、`RequestLetter`、`RequestReprocess`、兩段式硬規則篩選、rate limiter、每日預算、lock、設定載入（或獨立 `internal/config`）＋測試。
 - `cmd/jobfinder/cli/run.go`、`cmd/jobfinder/cli/letter.go`。
 
 ## 10. 待決

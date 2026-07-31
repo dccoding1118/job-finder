@@ -204,12 +204,25 @@ globalThis.jobfinder.cake.list = (() => {
       // document, so harvesting continues for as long as the user stays.
       const observer = new MutationObserver(() => harvest());
       observer.observe(document.body, { childList: true, subtree: true });
+      // Opening a job changes its verdict, and that happens in another tab: the
+      // cached decisions of this list are stale the moment the user comes back.
+      // They are dropped on return so the marks are asked for again — a job that
+      // is already known is only read, never re-screened, so this costs no Agent
+      // call.
+      const refresh = () => {
+        if (stopped || document.visibilityState !== "visible") return;
+        decisions.clear();
+        attempts.clear();
+        harvest();
+      };
+      document.addEventListener("visibilitychange", refresh);
       harvest();
 
       return {
         stop() {
           stopped = true;
           observer.disconnect();
+          document.removeEventListener("visibilitychange", refresh);
           clearTimeout(timer);
         },
       };

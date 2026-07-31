@@ -5,12 +5,13 @@ import (
 	"testing"
 
 	"github.com/dccoding1118/job-finder/internal/crawler"
+	"github.com/dccoding1118/job-finder/internal/profile"
 	"github.com/dccoding1118/job-finder/internal/store"
 )
 
 func dedupePipeline(t *testing.T, enabled bool) (Pipeline, *store.Store) {
 	t.Helper()
-	p, db := openPipeline(t, Filter{Locations: []string{"Taipei", "台北"}})
+	p, db := openPipeline(t, filterFor(profile.Requirements{Locations: []string{"taipei"}, Remote: "acceptable"}))
 	p.DedupeEnabled = enabled
 	return p, db
 }
@@ -40,14 +41,14 @@ func TestIngestReportsCanonicalOfMergedGroup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if full.ProcessState != "queued" {
+	if full.ProcessState != "new" {
 		t.Fatalf("104 capture = %+v", full)
 	}
 	results, err := p.IngestList(ctx, []crawler.RawJob{cakeRow("c1", "資深後端工程師", "Example 股份有限公司", "台北市", "")})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if results[0].JobID != full.JobID || results[0].ProcessState != "queued" {
+	if results[0].JobID != full.JobID || results[0].ProcessState != "new" {
 		t.Fatalf("cake list capture = %+v, want the canonical job %d", results[0], full.JobID)
 	}
 	// Capturing the alias's own detail page still answers with the canonical copy.

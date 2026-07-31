@@ -9,12 +9,12 @@ import (
 	"testing"
 )
 
-func TestStrictCodecAndRevision(t *testing.T) {
+func TestStrictCodecAndRevisions(t *testing.T) {
 	value, err := DecodeYAML([]byte(validProfileYAML()))
 	if err != nil {
 		t.Fatal(err)
 	}
-	revision, err := Revision(value)
+	filterRevision, scoreRevision, err := RevisionPair(value)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -22,16 +22,58 @@ func TestStrictCodecAndRevision(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	revisionWithComment, _ := Revision(withComment)
-	if revision != revisionWithComment || !strings.HasPrefix(revision, "sha256:") {
-		t.Fatalf("revision changed for formatting: %q != %q", revision, revisionWithComment)
+	filterAgain, scoreAgain, _ := RevisionPair(withComment)
+	if filterRevision != filterAgain || scoreRevision != scoreAgain || !strings.HasPrefix(filterRevision, "sha256:") {
+		t.Fatalf("revisions changed for formatting: %q/%q vs %q/%q", filterRevision, scoreRevision, filterAgain, scoreAgain)
+	}
+	if filterRevision == scoreRevision {
+		t.Fatal("the two gates produced the same revision")
 	}
 	if _, err := DecodeYAML([]byte(validProfileYAML() + "unknown: true\n")); err == nil {
 		t.Fatal("unknown YAML field was accepted")
 	}
-	jsonBody := strings.Replace(`{"summary":"ok"}`, `}`, `,"unknown":true}`, 1)
+	jsonBody := strings.Replace(`{"honesty_bounds":["ok"]}`, `}`, `,"unknown":true}`, 1)
 	if _, err := DecodeJSON(bytes.NewBufferString(jsonBody)); err == nil {
 		t.Fatal("unknown JSON field was accepted")
+	}
+}
+
+// Each revision covers only the fields its own gate reads, which is what keeps
+// a soft-rule edit from sending every job back through screening.
+func TestRevisionCoverage(t *testing.T) {
+	base, err := DecodeYAML([]byte(validProfileYAML()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseFilter, baseScore, _ := RevisionPair(base)
+	for name, testCase := range map[string]struct {
+		edit                    func(*Profile)
+		filterMoves, scoreMoves bool
+	}{
+		"intents_only":      {func(p *Profile) { p.Intents.ContentLikes = append(p.Intents.ContentLikes, "new") }, false, true},
+		"hard_rule_only":    {func(p *Profile) { p.Requirements.SalaryMin = 900000 }, true, false},
+		"employment_types":  {func(p *Profile) { p.Requirements.EmploymentTypes = []string{"全職"} }, true, false},
+		"shared_remote":     {func(p *Profile) { p.Requirements.Remote = remoteRequired }, true, true},
+		"shared_skills":     {func(p *Profile) { p.Qualifications.Skills[0].Level = "expert" }, true, true},
+		"search_only":       {func(p *Profile) { p.Search.Directions[0].Keywords = append(p.Search.Directions[0].Keywords, "new") }, false, false},
+		"achievements_only": {func(p *Profile) { p.Experiences[0].Achievements = []string{"rewritten"} }, false, false},
+		"honesty_bounds":    {func(p *Profile) { p.HonestyBounds = []string{"other"} }, false, false},
+		"experience_years":  {func(p *Profile) { p.Experiences[0].Years = 9 }, true, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			value := cloneProfile(base)
+			testCase.edit(&value)
+			filter, score, err := RevisionPair(value)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if (filter != baseFilter) != testCase.filterMoves {
+				t.Fatalf("filter revision moved=%v, want %v", filter != baseFilter, testCase.filterMoves)
+			}
+			if (score != baseScore) != testCase.scoreMoves {
+				t.Fatalf("score revision moved=%v, want %v", score != baseScore, testCase.scoreMoves)
+			}
+		})
 	}
 }
 
@@ -57,42 +99,55 @@ func TestProviderMissingSaveConflictPIIAndImmutableSnapshot(t *testing.T) {
 	if err != nil || info.Mode().Perm() != 0o600 {
 		t.Fatalf("mode=%v err=%v", info.Mode().Perm(), err)
 	}
-	if !result.SemanticChanged {
+	if !result.FilterChanged || !result.ScoreChanged {
 		t.Fatalf("save result = %+v", result)
 	}
+	if result.Snapshot.Profile.Derived.TotalYears != 4.5 {
+		t.Fatalf("saved snapshot did not materialize derived: %+v", result.Snapshot.Profile.Derived)
+	}
 	mutable := provider.Current()
-	mutable.Profile.Skills.Expert[0] = "mutated"
-	if provider.Current().Profile.Skills.Expert[0] == "mutated" {
+	mutable.Profile.Qualifications.Skills[0].Name = "mutated"
+	if provider.Current().Profile.Qualifications.Skills[0].Name == "mutated" {
 		t.Fatal("provider exposed mutable Profile slices")
 	}
 	if _, err := provider.Save(`"missing"`, value); !errors.Is(err, ErrConflict) {
 		t.Fatalf("stale ETag error = %v", err)
 	}
-	value.Summary = "private-name"
+	value.HonestyBounds = []string{"private-name"}
 	if _, err := provider.Save(result.Snapshot.ETag, value); err == nil {
 		t.Fatal("PII Profile was saved")
 	} else {
 		var validation ValidationError
-		if !errors.As(err, &validation) || len(validation.Issues) == 0 || validation.Issues[0].Path != "summary" {
+		if !errors.As(err, &validation) || len(validation.Issues) == 0 || !strings.HasPrefix(validation.Issues[0].Path, "honesty_bounds") {
 			t.Fatalf("PII error = %#v", err)
 		}
 	}
 }
 
-func TestProviderSavePublishesNewSnapshotWithoutChangingExistingJobs(t *testing.T) {
+func TestProviderSaveReportsWhichGateChanged(t *testing.T) {
 	path := writeProfile(t, validProfileYAML())
 	provider, err := NewProvider(path, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	value := *provider.Current().Profile
-	value.Summary = "changed anonymous profile"
+	value.Intents.ContentDislikes = append(value.Intents.ContentDislikes, "on-call rotations")
 	result, err := provider.Save(provider.Current().ETag, value)
 	if err != nil {
 		t.Fatal(err)
 	}
+	if result.FilterChanged || !result.ScoreChanged {
+		t.Fatalf("a soft-rule edit reported %+v", result)
+	}
 	after, _ := os.ReadFile(path) // #nosec G304 -- path is created by this test.
-	if !bytes.Contains(after, []byte("changed anonymous profile")) || provider.Current().Revision != result.Snapshot.Revision {
+	if !bytes.Contains(after, []byte("on-call rotations")) || provider.Current().ScoreRevision != result.Snapshot.ScoreRevision {
 		t.Fatal("saved Profile was not published to disk and the runtime snapshot")
+	}
+	unchanged, err := provider.Save(provider.Current().ETag, value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unchanged.FilterChanged || unchanged.ScoreChanged {
+		t.Fatalf("resaving identical content reported a change: %+v", unchanged)
 	}
 }

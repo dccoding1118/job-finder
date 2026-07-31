@@ -8,6 +8,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/dccoding1118/job-finder/internal/store"
 )
 
 // The Cake parser has no fetching side either. Cake's content is open but its
@@ -250,7 +252,7 @@ func parseCakeListDOM(items []CakeListItem) ([]RawJob, error) {
 		}
 		location := text(item.Location)
 		if location == "" {
-			location = "unknown"
+			location = store.LocationUnknown
 		}
 		job := RawJob{
 			Source: "cake", ExternalID: id, URL: link,
@@ -318,7 +320,7 @@ func ParseCakeJob(capture CakeCapture) (RawJob, error) {
 		return RawJob{}, fmt.Errorf("cake job %s: title and company are required", id)
 	}
 	if out.Location == "" {
-		out.Location = "unknown"
+		out.Location = store.LocationUnknown
 	}
 	if out.CompanyInfo == "" {
 		out.CompanyInfo = "public listing"
@@ -355,7 +357,7 @@ func parseCakeJobDOM(pageURL string, dom CakeJobDOM) (RawJob, error) {
 	out := RawJob{
 		Source: "cake", ExternalID: id, URL: link,
 		Title: text(dom.Title), CompanyName: text(dom.CompanyName), CompanyInfo: "public listing",
-		Description: description, Location: "unknown", RemoteType: "unknown",
+		Description: description, Location: store.LocationUnknown, RemoteType: "unknown",
 	}
 	if out.Title == "" || out.CompanyName == "" {
 		return RawJob{}, fmt.Errorf("cake job %s: title and company are required", id)
@@ -365,7 +367,7 @@ func parseCakeJobDOM(pageURL string, dom CakeJobDOM) (RawJob, error) {
 		if value == "" {
 			continue
 		}
-		if out.Location == "unknown" && cakeJobLocationPattern.MatchString(value) {
+		if out.Location == store.LocationUnknown && cakeJobLocationPattern.MatchString(value) {
 			out.Location = value
 		}
 		if out.SalaryMin == nil && out.SalaryMax == nil {
@@ -481,14 +483,14 @@ func cakeListLocation(entity cakeSearchEntity) string {
 			return value
 		}
 	}
-	return "unknown"
+	return store.LocationUnknown
 }
 
 // cakeJobLocation reads the listing's own locations, falling back to the
 // company's registered city. A Cake listing often carries no location of its own
-// — a remote or hybrid one in particular — and an unknown location is screened
-// out by the Profile's location rule, so the company's city is what keeps such a
-// listing assessable rather than silently rejected.
+// — a remote or hybrid one in particular — and the company's city is a stated
+// fact where the listing has none, which is worth more to the location rule than
+// leaving the condition undecided.
 func cakeJobLocation(job *cakeJob, company *cakeCompany) string {
 	names := []string{}
 	for _, location := range job.Locations {

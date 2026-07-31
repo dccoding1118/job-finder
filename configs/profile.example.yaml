@@ -1,38 +1,8 @@
-summary: "Experienced backend and cloud engineering professional."
-years_of_experience: 8
-education:
-  degree: master
-  field: computer science
-experiences:
-  - role: backend engineer
-    org_type: technology services provider
-    years: 4
-    summary: "Designed and delivered backend services."
-    achievements:
-      - "Improved deployment reliability."
-    skills:
-      - Go
-      - SQL
-skills:
-  expert:
-    - Java
-  proficient:
-    - Go
-  familiar:
-    - Kubernetes
-certifications:
-  - name: cloud certification
-    status: active
-preferences:
-  salary_min: 0
-  salary_target: 0
-  # Match each source's wording: 104 reports Chinese localities while other
-  # sources can report the same location in English; matching is by substring.
-  locations:
-    - 台北
-    - 新北
-    - Taipei
-  remote: preferred
+# Profile schema v5. Sections are ordered by which gate reads them: `search`
+# states the directions a job is looked for under, `requirements` decides
+# fitness, `intents` decides recommendation. `derived` is materialized on save
+# and must not be written here.
+search:
   directions:
     - key: P1
       title: cloud architecture
@@ -49,13 +19,61 @@ preferences:
       keywords:
         - Kubernetes
         - reliability
+requirements:
+  salary_min: 0
+  # Canonical location keys. `nationwide` is Taiwan without a locality
+  # restriction and `overseas` is everything outside it; a locality's
+  # simplified, traditional and English wordings are all matched from the key.
+  locations:
+    - taipei
+    - new_taipei
+  remote: preferred
+  employment_types: []
   industry_avoid:
     - gambling
-  screening:
-    exclude_title_keywords:
-      - intern
-    exclude_description_keywords: []
-    require_any_keywords: []
-    exclude_companies: []
+  exclude_title_keywords:
+    - intern
+  exclude_description_keywords: []
+  exclude_companies: []
+intents:
+  salary_target: 0
+  content_likes:
+    - designing services that stay operable under load
+  content_dislikes:
+    - long-running manual release procedures
+  industry_interests:
+    - developer tooling
+experiences:
+  - industry: technology services
+    years: 4
+    is_management: false
+    exclude_from_totals: false
+    skills:
+      - Go
+      - SQL
+    org_type: technology services provider
+    role: backend engineer
+    achievements:
+      - "Cut deployment failures by 40% across 12 services."
+qualifications:
+  education:
+    - level: master
+      field: computer science
+      status: graduated
+  skills:
+    - name: Java
+      level: expert
+    - name: Go
+      level: proficient
+    - name: SQL
+      level: proficient
+    - name: Kubernetes
+      level: familiar
+  certifications:
+    - name: cloud certification
+      status: active
+  languages:
+    - name: English
+      level: fluent
 honesty_bounds:
   - "Kubernetes experience is configuration focused."

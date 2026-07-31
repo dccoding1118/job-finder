@@ -37,7 +37,8 @@ type Processor interface {
 	IngestList(context.Context, []crawler.RawJob) ([]pipeline.IngestResult, error)
 	IngestJob(context.Context, crawler.RawJob) (pipeline.IngestResult, error)
 	RequestLetter(context.Context, int64) error
-	RequestRescore(context.Context, int64) error
+	RequestReprocess(context.Context, int64) error
+	FilterBudgetRemaining(context.Context) (int, bool, error)
 	ScoreBudgetRemaining(context.Context) (int, bool, error)
 }
 

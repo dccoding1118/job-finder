@@ -41,14 +41,17 @@ type fileConfig struct {
 		SourcePriority           []string `yaml:"source_priority"`
 	} `yaml:"dedupe"`
 	Scoring struct {
-		HardSkillWeight float64 `yaml:"hard_skill_weight"`
-		DomainWeight    float64 `yaml:"domain_weight"`
-		SeniorityWeight float64 `yaml:"seniority_weight"`
-		ConditionWeight float64 `yaml:"condition_weight"`
-		DirectionWeight float64 `yaml:"direction_weight"`
-		Threshold       *float64
+		ContentWeight  float64 `yaml:"content_fit_weight"`
+		BenefitWeight  float64 `yaml:"benefit_fit_weight"`
+		BonusWeight    float64 `yaml:"bonus_fit_weight"`
+		IndustryWeight float64 `yaml:"industry_fit_weight"`
+		Threshold      *float64
+		// Baseline is the neutral score a dimension takes when the JD carries
+		// nothing to judge it on; it defaults to the threshold.
+		Baseline *int `yaml:"baseline"`
 	} `yaml:"scoring"`
 	LLM struct {
+		MaxFilterPerDay int        `yaml:"max_filter_per_day"`
 		MaxScorePerDay  int        `yaml:"max_score_per_day"`
 		MaxLetterPerDay int        `yaml:"max_letter_per_day"`
 		MaxLetterLength int        `yaml:"max_letter_length"`
@@ -58,6 +61,11 @@ type fileConfig struct {
 	} `yaml:"llm"`
 	Worker struct {
 		ScanInterval string `yaml:"scan_interval"`
+		// Paused stops the resident worker from consuming any stage. Collection
+		// keeps running, so jobs pile up untouched at `new` until the stages are
+		// driven by hand — the state to be in while the Profile is still being
+		// settled and a verdict would only have to be thrown away.
+		Paused bool `yaml:"paused"`
 	} `yaml:"worker"`
 	API struct {
 		Addr            string `yaml:"addr"`
@@ -76,14 +84,17 @@ type (
 		Fallback roleEndpoint `yaml:"fallback"`
 	}
 	roleRoutes struct {
+		Filter   roleRoute `yaml:"filter"`
 		Scorer   roleRoute `yaml:"scorer"`
 		Drafter  roleRoute `yaml:"drafter"`
 		Reviewer roleRoute `yaml:"reviewer"`
 	}
 )
 
-func defaultScoringWeights() [5]float64 {
-	return [5]float64{.30, .15, .15, .20, .20}
+// defaultScoringWeights orders the four soft dimensions: content, benefit,
+// bonus, industry.
+func defaultScoringWeights() [4]float64 {
+	return [4]float64{.50, .20, .15, .15}
 }
 
 // newRunCmd fetches. Filter, score, and letter belong to the resident worker in
@@ -150,7 +161,9 @@ func runStage(cmd *cobra.Command, rt *runtime, stage string, limit int) error {
 	switch stage {
 	case "filter":
 		stats, err := rt.pipeline.FilterJobsWithStats(cmd.Context(), limit)
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "filtered: %d\n", stats.FilteredOut)
+		// Rejected and passed are separate facts, so a single count would hide
+		// which of the two a run actually produced.
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "filtered_out: %d\nqueued: %d\n", stats.FilteredOut, stats.Queued)
 		return err
 	case "score":
 		stats, err := rt.pipeline.ScoreWithStats(cmd.Context(), limit)
@@ -163,7 +176,7 @@ func runStage(cmd *cobra.Command, rt *runtime, stage string, limit int) error {
 	}
 }
 
-func routedAgents(routes roleRoutes, timeout time.Duration) (agents.Scorer, agents.Drafter, agents.Reviewer, error) {
+func routedAgents(routes roleRoutes, timeout time.Duration) (agents.Filter, agents.Scorer, agents.Drafter, agents.Reviewer, error) {
 	runner := func(endpoint roleEndpoint) (agents.Runner, error) {
 		if strings.TrimSpace(endpoint.Model) == "" {
 			return nil, fmt.Errorf("config: llm.roles endpoint model is required")
@@ -188,19 +201,28 @@ func routedAgents(routes roleRoutes, timeout time.Duration) (agents.Scorer, agen
 		}
 		return primary, fallback, nil
 	}
+	empty := func(err error) (agents.Filter, agents.Scorer, agents.Drafter, agents.Reviewer, error) {
+		return agents.Filter{}, agents.Scorer{}, agents.Drafter{}, agents.Reviewer{}, err
+	}
+	// Screening is condition-by-condition fact checking, so it routes on its own
+	// and may sit on a cheaper model than scoring or writing.
+	fp, ff, err := resolve(routes.Filter)
+	if err != nil {
+		return empty(err)
+	}
 	sp, sf, err := resolve(routes.Scorer)
 	if err != nil {
-		return agents.Scorer{}, agents.Drafter{}, agents.Reviewer{}, err
+		return empty(err)
 	}
 	dp, df, err := resolve(routes.Drafter)
 	if err != nil {
-		return agents.Scorer{}, agents.Drafter{}, agents.Reviewer{}, err
+		return empty(err)
 	}
 	rp, rf, err := resolve(routes.Reviewer)
 	if err != nil {
-		return agents.Scorer{}, agents.Drafter{}, agents.Reviewer{}, err
+		return empty(err)
 	}
-	return agents.Scorer{Primary: sp, Fallback: sf}, agents.Drafter{Primary: dp, Fallback: df}, agents.Reviewer{Primary: rp, Fallback: rf}, nil
+	return agents.Filter{Primary: fp, Fallback: ff}, agents.Scorer{Primary: sp, Fallback: sf}, agents.Drafter{Primary: dp, Fallback: df}, agents.Reviewer{Primary: rp, Fallback: rf}, nil
 }
 
 // lockWorker keeps stage consumption to one process. The resident worker holds
@@ -229,12 +251,12 @@ func errorSummary(err error) string {
 }
 
 func directionQueries(p profile.Profile) []crawler.SearchQuery {
-	limit := len(p.Preferences.Directions)
+	limit := len(p.Search.Directions)
 	if limit > 3 {
 		limit = 3
 	}
 	out := make([]crawler.SearchQuery, 0, limit)
-	for _, direction := range p.Preferences.Directions[:limit] {
+	for _, direction := range p.Search.Directions[:limit] {
 		out = append(out, crawler.SearchQuery{Direction: direction.Key, Keywords: append([]string(nil), direction.Keywords...)})
 	}
 	return out

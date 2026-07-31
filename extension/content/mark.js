@@ -8,6 +8,7 @@ globalThis.jobfinder.VERDICTS = {
   recommended: { label: "推薦", background: "#d7f2e0", color: "#0f5132", border: "#8fd3a9", icon: "★" },
   not_recommended: { label: "不推薦", background: "#f1e3f6", color: "#5b2a6d", border: "#d5b3e0", icon: "·" },
   pending_detail: { label: "待看", background: "#e2ecfd", color: "#174ea6", border: "#a9c6f3", icon: "→" },
+  pending_screen: { label: "篩選中", background: "#fdf0c8", color: "#7a5300", border: "#e8c765", icon: "…" },
   pending_score: { label: "評分中", background: "#fdf0c8", color: "#7a5300", border: "#e8c765", icon: "…" },
 };
 

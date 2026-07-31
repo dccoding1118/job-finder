@@ -1,12 +1,12 @@
-# 模組設計 — agents（智能層：Runner 與四 Agent）
+# 模組設計 — agents（智能層：Runner 與五 Agent）
 
-對應需求：R4、R5、R8.2。所有 LLM 互動的唯一入口。
+對應需求：R3.2、R4、R5、R8.2。所有 LLM 互動的唯一入口。
 
 ## 1. 職責邊界
 
 - **Runner 抽象**：以 subprocess 呼叫 headless CLI（claude 為主、codex 為輔），統一「prompt 進、結構化 JSON 出」。
-- **四個 Agent 角色**：Scorer（評分）、Drafter（起草）、Reviewer（審查）、Calibrator（反向校準建議，S1 範圍尚未實作），各自的 prompt 模板與輸出契約。Calibrator 只在使用者主動觸發校準時呼叫，不參與任何常駐階段。
-- 輸出驗證、重試、runner fallback、防幻覺程式防線、`agent_calls` 稽核寫入；Profile 相關呼叫記錄工作開始時 snapshot 的 `profile_revision`。
+- **五個 Agent 角色**：Filter（JD 條件拆解與語意硬條件比對）、Scorer（四維評分）、Drafter（起草）、Reviewer（審查）、Calibrator（反向校準建議，S1 範圍尚未實作），各自的 prompt 模板與輸出契約。Calibrator 只在使用者主動觸發校準時呼叫，不參與任何常駐階段。
+- 輸出驗證、重試、runner fallback、防幻覺程式防線、`agent_calls` 稽核寫入；Profile 相關呼叫記錄工作開始時 snapshot 的對應 revision（filter 記 `filter_revision`、score 記 `score_revision`、letter 記兩者）。
 - 不負責：取件與狀態推進（pipeline）、權重計算後的分流（pipeline 依 store 轉換）。
 
 ## 2. Runner 抽象
@@ -32,6 +32,7 @@
 
 | 角色 | primary | fallback | 說明 |
 |---|---|---|---|
+| filter | `{agent: claude, model: claude-sonnet-5}` | `{agent: codex, model: gpt-5.6-terra}` | 同下；篩選是逐條事實比對，可獨立選擇較便宜的 model |
 | scorer | `{agent: claude, model: claude-sonnet-5}` | `{agent: codex, model: gpt-5.6-terra}` | primary 失敗（Invoke 失敗或 JSON 驗證失敗）重試 1 次，再失敗換 fallback 一次 |
 | drafter | `{agent: claude, model: claude-sonnet-5}` | `{agent: codex, model: gpt-5.6-terra}` | 同上；可獨立選擇適合寫作的 model |
 | reviewer | `{agent: codex, model: gpt-5.6-terra}` | `{agent: claude, model: claude-sonnet-5}` | 預設跨 agent 審查；可獨立選擇審查強度，不受其他角色設定限制 |
@@ -48,26 +49,44 @@
 
 所有 prompt 皆要求「只輸出 JSON，不加說明文字」；解析時先截取首個 `{…}` 區塊再 unmarshal，缺欄位/型別錯誤＝驗證失敗。
 
-### 3.1 ScoreResult（Scorer）
+### 3.1 FilterResult（Filter）
 
 | 欄位 | 型別 | 約束 |
 |---|---|---|
-| `hard_skill` / `domain` / `seniority` / `condition` / `direction` | int | 0–100 |
+| `conditions[]` | object[] | JD 拆解出的條件，逐條含判定；可為空陣列（JD 未載明任何條件） |
+| `conditions[].text` | string | 條件敘述，≤40 中文字 |
+| `conditions[].kind` | enum | `required`／`bonus` |
+| `conditions[].group` | int | 選言分組編號；同組任一 `pass` 即該組 `pass`，獨立條件各自一組 |
+| `conditions[].category` | enum | `education`／`skill`／`certification`／`language`／`experience_years`／`management_years`／`industry`／`other` |
+| `conditions[].verdict` | enum | `pass`／`fail`／`unknown` |
+| `conditions[].years_required` | number NULL | 年資類條件的要求下限 |
+| `conditions[].years_max` | number NULL | JD 明確設定的年資上限，無則 NULL |
+| `conditions[].industry_keys[]` | string[] | `industry` 類別：JD 要求對應到 profile 的哪些 `industry` key |
+
+**年資與產業年資的 `verdict` 一律由程式覆寫**：Agent 只負責讀出 `years_required`／`years_max`／`industry_keys`，比較由 Go 以 `derived` 加總執行（見 [design-pipeline](design-pipeline.md) §3.2）。Agent 對這幾類回的 verdict 不採用，避免 LLM 算術錯誤成為判定依據。
+
+`kind` 為 `bonus` 的條件不進篩選彙總，只保存供評分關的 `bonus_fit` 重用。輸出缺欄位、列舉非法、`group` 非正整數或 `years_required` 為負，皆為驗證失敗。
+
+### 3.2 ScoreResult（Scorer）
+
+| 欄位 | 型別 | 約束 |
+|---|---|---|
+| `content_fit` / `benefit_fit` / `bonus_fit` / `industry_fit` | int | 0–100；各維以門檻分為基準加減後 clamp，無資訊可判時回基準分 |
 | `reason` | string | 說明推薦或不推薦；prompt 要求 40~60 中文字，驗證容忍上限 100 字 |
 
 **要求字數與容忍上限刻意分離**：兩者相等時，LLM 只要略微超出就整筆作廢並重跑一次，而重跑是實打實的 token 成本。因此 prompt 要求的是實際想要的長度（40~60 字），驗證的上限放寬到 100 字，只擋「完全無視要求」的回應。放寬容忍上限**不得**回頭調高 prompt 要求的字數。
 
-每次嘗試的稽核結果只有兩種：runner 有回應且回應通過上述契約（成功），或未通過（失敗）。分數高低不影響此判定。失敗者由 `ClassifyFailure(role, output)` 分為 `runner_error`（CLI 自報錯誤，優先於內容驗證）、`empty_output`、`no_json`、`invalid_json`、`reason_too_long`、`score_out_of_range`、`invalid_content`，供 API 的處理進度呈現失敗原因而不外洩原始輸出。
+每次嘗試的稽核結果只有兩種：runner 有回應且回應通過上述契約（成功），或未通過（失敗）。分數高低不影響此判定。失敗者由 `ClassifyFailure(role, output)` 分為 `runner_error`（CLI 自報錯誤，優先於內容驗證）、`empty_output`、`no_json`、`invalid_json`、`reason_too_long`、`score_out_of_range`、`invalid_condition`（Filter 的條件列舉、分組或年資欄位不合法）、`invalid_content`，供 API 的處理進度呈現失敗原因而不外洩原始輸出。此分類對五個角色共用。
 
 加權總分由 Go 依設定檔權重計算（PRD R4.2），Agent 不回總分。
 
-### 3.2 DraftResult（Drafter）
+### 3.3 DraftResult（Drafter）
 
 | 欄位 | 型別 | 約束 |
 |---|---|---|
 | `letter` | string | 求職信全文；結尾必含 `[你的姓名]` 與 `[你的聯絡方式]` 佔位符 |
 
-### 3.3 ReviewResult（Reviewer）
+### 3.4 ReviewResult（Reviewer）
 
 | 欄位 | 型別 | 約束 |
 |---|---|---|
@@ -75,13 +94,13 @@
 | `issues[]` | string[] | `revise` 時必填：具體問題（幻覺技能、空泛詞、誇大） |
 | `edited_letter` | string NULL | Reviewer 直接刪改後可過審的版本；有值且 `verdict=approve` 時以此為最終稿 |
 
-### 3.4 CalibrationResult（Calibrator）
+### 3.5 CalibrationResult（Calibrator）
 
 | 欄位 | 型別 | 約束 |
 |---|---|---|
 | `summary` | string | ≤200 中文字，說明成功樣本的共同特徵 |
 | `suggestions[]` | object[] | 可為空陣列（代表無足夠證據建議調整） |
-| `suggestions[].field` | string | `preferences.*` 的欄位路徑（如 `preferences.directions[0].keywords`）；白名單外一律拒絕整份建議 |
+| `suggestions[].field` | string | `search.*`／`requirements.*`／`intents.*` 的欄位路徑（如 `search.directions[0].keywords`）；白名單外一律拒絕整份建議 |
 | `suggestions[].action` | enum | `add` / `remove` / `replace` |
 | `suggestions[].value` | string ∣ number ∣ string[] | 與目標欄位型別相容 |
 | `suggestions[].evidence` | string | ≤100 字，指出此建議來自哪些樣本的共同特徵 |
@@ -91,14 +110,17 @@
 
 ## 4. Agent prompt 要點（模板放 `internal/agents/prompts/*.tmpl`）
 
-Profile 輸入一律來自 provider snapshot 的 canonical YAML。Scorer、Drafter 與 Reviewer 單次工作途中不得重新載入 Profile；每次 `agent_calls` 與其 Score／Letter 產出保存相同的實際 revision。
+Profile 輸入一律來自 provider snapshot，且**各角色只取自己該看的子集**（見 [design-profile](design-profile.md) §1）。單次工作途中不得重新載入 Profile；每次 `agent_calls` 與其產出保存相同的實際 revision。
 
 | 角色 | 輸入 | 規則要點 |
 |---|---|---|
-| Scorer | Profile YAML 全文＋Job（title/company/JD/薪資/地點/remote） | 逐維給分；條件契合須對照 preferences；方向契合對照 directions 關鍵字；理由 40~60 字 |
-| Drafter | Profile＋Job＋（重寫輪）Reviewer issues | 只可使用 Profile 存在的技能與成就；引用量化數據；遵守 `honesty_bounds`；精煉（300–450 字）；佔位符落款；繁體中文（JD 為英文則英文） |
-| Reviewer | Profile＋Job＋草稿 | 毒舌審查：任何 Profile 無根據的技能/經歷/數字＝幻覺必挑；空泛形容詞（「熱情」「抗壓」等無實據修飾）要求刪除；可直接給 `edited_letter`；檢查佔位符落款 |
-| Calibrator | Profile 的 `preferences` 區段＋成功樣本（JD、職稱、產業、地區、薪資、五維分數）＋對照樣本 | 只比較兩組樣本的共同與差異特徵，依 [design-profile](design-profile.md) §7.2 的五個維度作答；只得建議 `preferences.*` 欄位；證據不足時回空 `suggestions`，不得臆測；不得輸出任何履歷事實的修改建議 |
+| Filter | `qualifications`（學歷、技能、證照、語言）＋`experiences[]` 的 `industry` key 清單＋Job（title/company/JD/薪資/地點/remote） | 先把 JD 拆成逐條條件並標記必備／加分與選言分組；再逐條比對 Profile 給 `pass`／`fail`／`unknown`；**判不出來一律 `unknown`，不得猜測為 `fail`**；學歷須同一筆同時滿足級別與科系；年資與產業年資只回要求數值與對應的 `industry` key，不自行比較；不給分數 |
+| Scorer | `intents`＋`qualifications` 的 `skills`／`certifications`／`languages`＋`requirements.remote`／`locations`＋篩選關保存的加分條件＋Job（title/company/JD/薪資/地點/remote/福利與工時敘述） | 四維以門檻分為基準加減；`content_fit` 對照 `content_likes`／`content_dislikes`；`benefit_fit` 對照 `salary_target` 與優於勞基法的休假、彈性工時、額外獎金，遠端形式的加分級距見 [design-pipeline](design-pipeline.md) §3.3；`bonus_fit` **只加不減**；`industry_fit` 對照 `industry_interests`；無資訊可判時回基準分；理由 40~60 字。**輸入不含 `experiences` 的 `role`／`org_type`／`achievements` 與 `honesty_bounds`** |
+| Drafter | `experiences`＋`qualifications`＋`honesty_bounds`＋Job＋（重寫輪）Reviewer issues | 只可使用 Profile 存在的技能與成就；引用量化數據；遵守 `honesty_bounds`；精煉（300–450 字）；佔位符落款；繁體中文（JD 為英文則英文） |
+| Reviewer | 同 Drafter 的子集＋Job＋草稿 | 毒舌審查：任何 Profile 無根據的技能/經歷/數字＝幻覺必挑；空泛形容詞（「熱情」「抗壓」等無實據修飾）要求刪除；可直接給 `edited_letter`；檢查佔位符落款 |
+| Calibrator | Profile 的 `search`／`requirements`／`intents`＋成功樣本（JD、職稱、產業、地區、薪資、四維分數）＋對照樣本 | 只比較兩組樣本的共同與差異特徵，依 [design-profile](design-profile.md) §7.2 的維度作答；只得建議 `search`／`requirements`／`intents` 欄位；證據不足時回空 `suggestions`，不得臆測；不得輸出任何履歷事實的修改建議 |
+
+Scorer 的輸入排除履歷敘事：成就敘事會被讀成「擅長 ⇒ 適配高」，使「做過但不想再做」的內容只加不減，適配判斷因此失真。
 
 ## 5. 生成迴圈與防幻覺防線（R5）
 
@@ -124,19 +146,20 @@ return failed(review_log)   # → letter_failed
 | 檢查 | 規則 |
 |---|---|
 | 佔位符 | 必含 `[你的姓名]`、`[你的聯絡方式]`；不得出現其他 `[…]` 未解析佔位 |
-| 技術詞白名單 | 從 letter 抽出技術詞，與白名單比對；出現白名單外的技術詞 ⇒ 失敗。白名單＝Profile 技能全集（`skills` 的 expert／proficient／familiar 加上各 `experiences[].skills`）＋JD 內文 |
+| 技術詞白名單 | 從 letter 抽出技術詞，與白名單比對；出現白名單外的技術詞 ⇒ 失敗。白名單＝`qualifications.skills[].name` ∪ 各 `experiences[].skills` ∪ JD 內文 |
 | PII | 重用 profile 模組的 denylist＋pattern 檢核 |
 | 長度 | 超出上限（設定，預設 600 字）⇒ 失敗 |
 
 ## 6. 測試
 
 - Runner：以假可執行檔模擬正常、非零、逾時與 argv/cwd；精確驗證 model flag、空暫存目錄與 cleanup。真 CLI 呼叫只由 opt-in 的 `e2e-live` 驗收，不進 CI。
-- 四 Agent：fake Runner 回罐頭 JSON，驗證解析、驗證失敗路徑、fallback 切換、迴圈輪次上限；Calibrator 另驗欄位白名單拒絕與空建議路徑。
+- 五 Agent：fake Runner 回罐頭 JSON，驗證解析、驗證失敗路徑、fallback 切換、迴圈輪次上限；Filter 另驗條件拆解欄位驗證、年資類 verdict 由程式覆寫、加分條件不進篩選彙總；Calibrator 另驗欄位白名單拒絕與空建議路徑。
+- prompt 子集：Scorer prompt 不含 `achievements`／`role`／`org_type`／`honesty_bounds`；Filter prompt 不含 `intents`。
 - guard：表驅動正反例（幻覺技能、缺佔位符、含 PII、超長）。
 
 ## 7. 交付物
 
-- `internal/agents/`：runner（claude/codex/fake）、角色路由驗證、prompts、scorer/drafter/reviewer/calibrator、guard、測試。
+- `internal/agents/`：runner（claude/codex/fake）、角色路由驗證、prompts、filter/scorer/drafter/reviewer/calibrator、guard、測試。
 
 ## 8. 待決
 
