@@ -110,8 +110,16 @@ test("Profile editor picks locations from the vocabulary and loads skills from e
   await expect(firstLocation).toHaveValue("taipei");
   await page.locator('[data-add-list="requirements.locations"]').click();
   const secondLocation = page.locator('[data-path="requirements.locations.1"]');
-  await secondLocation.selectOption("nationwide");
+  await secondLocation.selectOption("taiwan");
   await expect(secondLocation.locator('option[value="taipei"]')).toHaveCount(0);
+
+  // 全台 is a shortcut, not a value: it fills in every locality in Taiwan and
+  // leaves 海外 off the list.
+  await page.getByRole("button", { name: "＋ 全台" }).click();
+  await expect(page.locator("#requirement-locations .compact-row")).toHaveCount(23);
+  const chosen = await page.locator("#requirement-locations select").evaluateAll((nodes) => nodes.map((node) => node.value));
+  expect(chosen).not.toContain("overseas");
+  expect(chosen).toContain("taiwan");
 
   // The experience skill is carried into the totals list only when asked, at
   // 專家, and the skill already listed keeps its own proficiency.

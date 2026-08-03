@@ -21,7 +21,7 @@ var (
 	idPattern       = regexp.MustCompile(`(?i)\b[A-Z][12]\d{8}\b`)
 )
 
-// Profile is the schema v5 shape: sections are split by which gate reads them —
+// Profile is the schema v6 shape: sections are split by which gate reads them —
 // `requirements` decides fitness, `intents` decides recommendation, and `search`
 // states the directions a job is looked for under. Locality lives in
 // `requirements.locations` alone: it both restricts what counts as fit and is the
@@ -156,10 +156,14 @@ func Load(path string) (Profile, string, error) {
 }
 
 // DecodeYAML rejects fields outside the published Profile schema. A document
-// still written in a pre-v5 shape is migrated before validation, so an existing
+// still written in a pre-v6 shape is migrated before validation, so an existing
 // local file keeps working without being re-entered by hand.
 func DecodeYAML(contents []byte) (Profile, error) {
 	contents, err := migrateSearchLocations(contents)
+	if err != nil {
+		return Profile{}, err
+	}
+	contents, err = migrateNationwideLocations(contents)
 	if err != nil {
 		return Profile{}, err
 	}

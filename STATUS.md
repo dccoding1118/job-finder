@@ -4,17 +4,13 @@
 
 ## §1 未歸檔結論
 
-- 實機 Chrome 人工 gate 的結果不回寫 `docs/verify.md`（不附截圖或證據檔）：每次改動皆由使用者實際部署後在 Windows Chrome 操作驗證，驗收結論當場即知，回寫只是重複記錄。verify 的 ⏳ 僅代表自動化 harness 步驟尚未實作。
+（無）
 
 ## §2 未完成任務
 
-- [ ] 補上 token 用量追蹤的 canonical 文件：schema v7（`agent_calls` 的 `model` 與六個用量欄位、`agent_calls_runner_model_created_idx`）尚未寫進 `docs/designs/design-schema.md`，`GET /api/v1/status` 的 `agent_usage_daily`／`filter_budget` 未寫進 `docs/designs/design-api.md`，系統頁每日用量呈現未寫進 `docs/designs/design-extension.md`，對應測試規格（`docs/tests/`）與驗收案例（`docs/verify.md`）亦缺。
 - [ ] `agent_calls` 的 PII 守衛會讓已付費的呼叫整筆作廢：`SaveAgentCall` 在 prompt 或回應命中 email／09 開頭手機號時回 `store: invalid agent call`，該錯誤向上冒泡成整筆篩選失敗（實機 job_id=21 已發生），LLM 已經呼叫過、結果卻被丟棄，且該筆留在 `new` 每輪重試、每輪重付。決定作法：稽核寫入前遮蔽 PII 再存（保留用量與判定），而非讓守衛否決整筆工作。
-- [ ] 清掉 `pipeline.Filter.Match`：清單標記改由 `Evaluate` ＋ `failedTexts` 決定後，`Match` 只剩 `pipeline_test.go` 呼叫，註解描述的用途也已不成立。
-- [ ] 決定「只陳述國別的地點」怎麼判：Cake 有些職缺地點只寫「台灣」，而「Taiwan／台灣」只是 `nationwide` 的別名，使用者若選的是縣市鍵就會判 `fail` → 不適合。目前維持原判準未動；要改的話應視為未決（`unknown`）而非不符。
-- [ ] 實機部署測試：清空既有 JD 資料後重新建立，先以 `worker.paused: true` 只收集不判定，確認 Profile 欄位與內容、104／Cake 擷取正常後，改回 `paused: false` 並以 `run --stage filter/score` 批次消化（步驟見 `docs/deploy.md` §6）。
 - [ ] 補上 V6 的驗收 harness 步驟 S40–S45 與 S41b（Cake capture 測資見 `docs/verify.md` §3.3.1）。
-- [ ] 補上 V7 的驗收 harness 步驟 S39（自動處理開關與單筆插隊處理，標準答案見 `docs/verify.md` §4）。
+- [ ] 補上 V7 的驗收 harness 步驟 S39、S39B 與 S39C（自動處理開關、Profile 變更後的等待中職缺與消化順序，標準答案見 `docs/verify.md` §4）。
 
 **Roadmap（暫不實作，規劃見 `docs/roadmap.md`）**
 

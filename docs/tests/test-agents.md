@@ -32,6 +32,7 @@
 | AT-04 | 回覆沒有 JSON、JSON 不完整，或含多個無法判定的物件 | 視為輸出驗證失敗，不產生結果 |
 | AT-18 | prompt 經 stdin 傳入，stdout 為 JSON envelope | 取 envelope 的 `result` 欄位為回覆；`is_error` 為真或 `subtype` 非 `success` 時視為 Invoke 失敗 |
 | AT-19 | CLI 將最終訊息寫入 `-o` 指定的暫存檔，stdout 另含 transcript | 以該檔內容為回覆，不受 stdout transcript 影響；暫存檔隨 invocation 暫存目錄清除 |
+| AT-24 | envelope 帶 `usage` 與 `total_cost_usd`，或 JSONL 事件行帶 token 數而無費用 | 用量原樣讀出並隨該次呼叫寫入 `agent_calls`；未提供的欄位為 0，不以價目表換算；envelope 缺 `usage` 時全部用量為 0 但回覆仍照常解析 |
 | AT-07 | CLI 在 transcript 中回音 prompt，並將同一答案輸出兩次 | 解析取最後一個完整物件，不把兩份答案之間的雜訊併入 |
 | AT-05 | Scorer 回傳四維 0–100 整數與上限內理由 | 解析為合法 `ScoreResult`，四維與理由完整保留 |
 | AT-06 | Scorer 缺少任一維度、分數超出範圍、分數非整數或理由過長 | 拒絕輸出，回傳契約錯誤 |

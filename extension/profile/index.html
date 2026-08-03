@@ -38,7 +38,7 @@
             <label class="field">月薪下限<input name="requirements.salary_min" data-path="requirements.salary_min" type="number" min="0" step="1" required /></label>
             <label class="field">遠端意願<select name="requirements.remote" data-path="requirements.remote" required><option value="">請選擇</option><option value="required">必須遠端</option><option value="preferred">偏好遠端</option><option value="acceptable">都可以</option><option value="rejected">不要遠端</option></select></label>
           </div>
-          <div class="subsection"><div class="subheading"><h3>可通勤地區</h3><button class="text-button" type="button" data-add-list="requirements.locations">＋ 新增地區</button></div><div id="requirement-locations" class="compact-list"></div><p class="hint">地區是唯一的一份設定，同時決定要找哪裡的職缺與哪些算不適合。「全台」代表不限台灣的縣市但不含海外；不新增任何地區代表完全不限地區。</p></div>
+          <div class="subsection"><div class="subheading"><h3>可通勤地區</h3><button class="text-button" type="button" data-fill-taiwan="requirements.locations">＋ 全台</button><button class="text-button" type="button" data-add-list="requirements.locations">＋ 新增地區</button></div><div id="requirement-locations" class="compact-list"></div><p class="hint">選你願意上班的地區，一個地區一列。每個選項只對應職缺上寫的那個地點：選「台北市」只會收台北的職缺，職缺只寫「台灣」不算；想收這類只寫國名的職缺，要另外選「台灣」。「＋ 全台」會一次把台灣所有縣市和「台灣」都加進來（不含海外）。不選任何地區代表不限地區。</p></div>
           <div class="list-grid">
             <div><h3>工作型態</h3><fieldset id="employment-types" class="option-group"></fieldset><p class="hint">不勾選代表不限型態。</p></div>
             <div><h3>排除產業</h3><div id="industry-avoid" class="compact-list"></div><button class="text-button" type="button" data-add-list="requirements.industry_avoid">＋ 新增</button></div>

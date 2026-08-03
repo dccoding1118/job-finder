@@ -41,7 +41,7 @@
 
 每次 invocation 使用新建的空暫存目錄，並受 `llm.timeout` 限制。`agent_calls` 保存實際 runner；固定 model 由該次物化 config 與 Runner argv 驗證，不把 model 誤寫成 runner 名稱。
 
-每次呼叫（含失敗）寫入 `agent_calls`（role、runner、input、output、ok、duration）。
+每次呼叫（含失敗）寫入 `agent_calls`（role、runner、model、input、output、ok、duration 與該次用量）。用量取自 runner 自己回報的欄位，不由本模組估算：`claude` 的 JSON result envelope 提供 `usage`（`input_tokens`、`output_tokens`、`cache_read_input_tokens`、`cache_creation_input_tokens`）與 `total_cost_usd`；`codex exec --json` 的事件行提供 token 數但不報費用，其 `cost_usd` 因此為 0。runner 未提供的欄位保持 0，不以價目表換算——換算會讓稽核值隨本地價目表漂移，失去「當時實際花費」的意義。
 
 `primary.agent` 與 `fallback.agent` 可相同，model 可不同。每次 `jobfinder run` 在啟動時讀取設定；修改 agent 或 model 後的下一輪執行立即生效，不需重新建置。稽核保存實際 runner，不保存 CLI 憑證。
 

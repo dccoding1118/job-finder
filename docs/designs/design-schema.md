@@ -102,11 +102,18 @@
 | `job_id` | INTEGER NULL FK | 校準等非職缺呼叫為 NULL |
 | `role` | TEXT | `filter` / `scorer` / `drafter` / `reviewer` / `calibrator` |
 | `runner` | TEXT | `claude` / `codex` |
+| `model` | TEXT NULL | 該次呼叫實際指定的 model；未指定 model 的 runner 為 NULL |
 | `input` / `output` | TEXT | 完整 prompt 與原始輸出（不得含 PII） |
 | `ok` | INTEGER | 0/1 |
 | `duration_ms` | INTEGER | |
+| `input_tokens` / `output_tokens` | INTEGER，預設 0 | runner 自報的輸入／輸出 token 數 |
+| `cache_read_tokens` / `cache_write_tokens` | INTEGER，預設 0 | runner 自報的 prompt cache 命中／寫入 token 數 |
+| `reasoning_tokens` | INTEGER，預設 0 | runner 自報的推理 token 數；不區分推理的 runner 恆為 0 |
+| `cost_usd` | REAL，預設 0 | runner 自報的該次費用；不自報費用的 runner 恆為 0，本表不自行換算價格 |
 | `filter_revision` / `score_revision` | TEXT NULL | 呼叫開始時的對應 Profile revision：filter 呼叫填前者、scorer 填後者、draft／review 兩者皆填；與 Profile 無關的呼叫為 NULL |
 | `created_at` | TEXT | RFC3339 |
+
+索引：`(role, created_at)` 供每日預算計數，`(runner, model, created_at)` 供每日用量彙總。六個用量欄位與 `cost_usd` 一律**照 runner 自報值原樣保存**，成功與失敗的呼叫皆記——驗證未過的回應同樣燒掉了 token。預設 0 使不自報用量的 runner 與既有資料列不需特例。
 
 ### 2.7 `job_groups`（跨來源同一職缺）
 
@@ -266,6 +273,7 @@ capture 或 fetch 命中 alias 時，回傳的一律是 **canonical 的 job id �
 | `ActivateProfile(from, to)` | `from`／`to` 各為一組 `{filter_revision, score_revision}`；依 §3.2 判斷哪一組變更、在單一交易內切換可重新處理的 Job；回傳 partial screened、refiltered、requeued、protected、unchanged 統計 |
 | revision-aware CAS | filter／score／transition 寫入皆驗證 expected state 與該面的 expected revision；舊 snapshot 結果不得成為現行判定 |
 | `CountAgentCallsSince(role, since)` | 每日預算計數（見 [design-pipeline](design-pipeline.md) §5） |
+| `AgentUsageByDay(days)` | 近 `days` 天的用量彙總：依「台北日界 × runner × model」分組，回筆數與六個用量欄位、`cost_usd` 的加總。日界於 SQL 內以 `date(created_at, '+8 hours')` 計算，與每日預算重置用的是同一個日界 |
 | `SummarizeRunJobs(runID)` | 依 `discovered_by_run_id` 即時導出該輪職缺的現行判定分布 |
 | `SaveScore / SaveLetter / SaveAgentCall / StartRun / FinishRun` | 寫入各實體 |
 
@@ -273,12 +281,14 @@ migration 新增 revision 欄位時全部允許 legacy NULL，不猜測歷史資
 
 **schema v6（硬／軟分離）migration**：新增 `filter_results` 表、`jobs` 與 `agent_calls`／`letters` 的雙 revision 欄位與 `scores` 的四維欄位。既有 `scores` 的五維資料與舊維度欄位一併移除——維度定義已改，舊分數無從換算。**全部既有職缺重置回篩選前狀態**（`filtered_out`／`queued`／`scored`／`shortlisted` 中有 JD 全文者回到 `new`、無全文者回到 `discovered`；原本就是 `discovered` 者維持），兩個 revision 欄位清為 NULL，之後由 worker 重篩、通過者重評。求職信階段的職缺（`letter_requested`／`letter_ready`／`letter_failed`）、既有 Letter 與投遞歷史不得因此改寫或刪除。
 
+**schema v7（Agent 用量追蹤）migration**：`agent_calls` 新增 `model` 與六個用量欄位，並建立 `(runner, model, created_at)` 索引。既有資料列的 `model` 為 NULL、用量欄位取預設 0——歷史呼叫的實際用量無從回填，猜測會讓每日彙總失真。
+
 **schema v8 migration**：新增 `settings` 表。既有資料不受影響；未曾寫入的鍵由讀取端各自帶預設值，migration 不預先塞入任何列。
 
 ## 6. 交付物
 
 - `internal/store/`：schema.sql（embedded）、migration、上述介面實作與單元測試（暫存目錄真 SQLite）。
-- 測試涵蓋：唯一鍵去重、雜湊變更重置、非法狀態轉換被拒、事件寫入與交易一致性、跨來源正規化與合併／取消合併的交易一致性、篩選結果保存與彙總後的狀態轉換、雙 revision CAS 與 v6 重置 migration。
+- 測試涵蓋：唯一鍵去重、雜湊變更重置、非法狀態轉換被拒、事件寫入與交易一致性、跨來源正規化與合併／取消合併的交易一致性、篩選結果保存與彙總後的狀態轉換、雙 revision CAS、v6 重置 migration、v7 用量欄位的保存與每日彙總。
 
 ## 7. 待決
 

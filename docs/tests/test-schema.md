@@ -130,6 +130,8 @@
 | ST-82 | 已 `scored` 的職缺以新 revision 重新 ingest 且內容雜湊變更 | 內容欄位更新、狀態維持 `scored`、兩個 revision 保留該判定所屬值；`ListJobs` 與 `CurrentScore` 仍讀得到該評分 |
 | ST-78 | `UnmergeJob` | alias 還原為合併事件記錄的合併前狀態與獨立群組；既有 score／letter 不被刪除 |
 | ST-79 | `dedupe.enabled` 為 false | 完全不建立群組關聯與候選；既有已合併資料不受影響 |
+| ST-83 | 對 v6 資料庫執行 migration 後寫入帶 model 與用量的 Agent 呼叫 | `agent_calls` 具備 `model` 與六個用量欄位，既有資料列 `model` 為 NULL、用量為 0；新資料列原樣保存 runner 自報值 |
+| ST-84 | 跨兩個台北日、兩個 runner／model 且含失敗呼叫的 `AgentUsageByDay` | 依「台北日界 × runner × model」分組加總筆數與六個用量欄位；失敗呼叫同樣計入；不自報費用者 `cost_usd` 為 0；早於視窗的呼叫不出現 |
 
 ## 4. 模組驗收
 

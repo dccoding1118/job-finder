@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func scoredJob(t *testing.T, store *Store, revision, to string) int64 {
@@ -260,5 +261,127 @@ func TestPickForStageSkipsOtherRevisionsSoQueueDoesNotStarve(t *testing.T) {
 	}
 	if len(picked) != 1 || picked[0].ID != fresh {
 		t.Fatalf("picked %+v, want only the job on the active revision", picked)
+	}
+}
+
+// A v6 database predates token accounting. Upgrading it must add the columns
+// without inventing usage for calls that were already paid for: their real
+// numbers are gone, and a guess would make every daily total wrong.
+func TestAgentUsageColumnsArriveEmptyOnAnUpgradedDatabase(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "usage-upgrade.db")
+	created := openTestStore(t, path)
+	jobID := scoredJob(t, created, "rev-1", "scored")
+	if err := created.SaveAgentCall(ctx, AgentCallInput{
+		JobID: &jobID, Role: "scorer", Runner: "claude", Model: "claude-sonnet-5", Input: "prompt", Output: "ok", OK: true, DurationMS: 10,
+		Usage: AgentCallUsage{InputTokens: 900, OutputTokens: 90, CostUSD: 0.01},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	closeTestStore(t, created)
+
+	raw, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, statement := range []string{
+		"DROP INDEX agent_calls_runner_model_created_idx",
+		"ALTER TABLE agent_calls DROP COLUMN model",
+		"ALTER TABLE agent_calls DROP COLUMN input_tokens",
+		"ALTER TABLE agent_calls DROP COLUMN output_tokens",
+		"ALTER TABLE agent_calls DROP COLUMN cache_read_tokens",
+		"ALTER TABLE agent_calls DROP COLUMN cache_write_tokens",
+		"ALTER TABLE agent_calls DROP COLUMN reasoning_tokens",
+		"ALTER TABLE agent_calls DROP COLUMN cost_usd",
+		"PRAGMA user_version = 6",
+	} {
+		if _, execErr := raw.Exec(statement); execErr != nil {
+			_ = raw.Close()
+			t.Fatalf("prepare v6 database: %v", execErr)
+		}
+	}
+	if closeErr := raw.Close(); closeErr != nil {
+		t.Fatal(closeErr)
+	}
+
+	migrated := openTestStore(t, path)
+	defer closeTestStore(t, migrated)
+	columns := tableColumns(t, migrated, "agent_calls")
+	for _, column := range []string{"model", "input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens", "reasoning_tokens", "cost_usd"} {
+		if !columns[column] {
+			t.Fatalf("agent_calls is missing %q after the upgrade", column)
+		}
+	}
+	calls, err := migrated.RecentAgentCalls(ctx, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(calls) != 1 {
+		t.Fatalf("agent calls = %d, want the one legacy row", len(calls))
+	}
+	if calls[0].Model != "" || calls[0].Usage != (AgentCallUsage{}) {
+		t.Fatalf("legacy call must carry no invented usage: %+v", calls[0])
+	}
+	if saveErr := migrated.SaveAgentCall(ctx, AgentCallInput{
+		JobID: &jobID, Role: "scorer", Runner: "claude", Model: "claude-sonnet-5", Input: "prompt", Output: "ok", OK: true, DurationMS: 10,
+		Usage: AgentCallUsage{InputTokens: 1000, OutputTokens: 100, CostUSD: 0.02},
+	}); saveErr != nil {
+		t.Fatal(saveErr)
+	}
+	usage, err := migrated.AgentUsageByDay(ctx, 14)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The legacy call has no model, so it groups on its own — and contributes
+	// nothing, which is the honest total for a call whose usage was never recorded.
+	byModel := map[string]DailyAgentUsage{}
+	for _, row := range usage {
+		byModel[row.Model] = row
+	}
+	if legacy := byModel[""]; legacy.Calls != 1 || legacy.InputTokens != 0 || legacy.CostUSD != 0 {
+		t.Fatalf("legacy row = %+v, want one call counted at zero usage", legacy)
+	}
+	if current := byModel["claude-sonnet-5"]; current.Calls != 1 || current.InputTokens != 1000 {
+		t.Fatalf("post-upgrade row = %+v", current)
+	}
+}
+
+// The daily view groups on the Taipei calendar day, which is the boundary the
+// budget resets on: two calls three hours apart can belong to different days,
+// and anything older than the window is not the recent past at all.
+func TestAgentUsageByDayGroupsOnTheTaipeiBoundaryAndDropsOldCalls(t *testing.T) {
+	ctx := context.Background()
+	data := openTestStore(t, filepath.Join(t.TempDir(), "usage-days.db"))
+	defer closeTestStore(t, data)
+	jobID := scoredJob(t, data, "rev-1", "scored")
+
+	now := data.now()
+	for _, at := range []time.Time{now, now.Add(-24 * time.Hour), now.AddDate(0, 0, -30)} {
+		if err := data.SaveAgentCall(ctx, AgentCallInput{
+			JobID: &jobID, Role: "scorer", Runner: "claude", Model: "claude-sonnet-5", Input: "prompt", Output: "ok", OK: true, DurationMS: 10,
+			Usage: AgentCallUsage{InputTokens: 100, OutputTokens: 10, CostUSD: 0.001},
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := data.db.ExecContext(ctx, "UPDATE agent_calls SET created_at = ? WHERE id = (SELECT MAX(id) FROM agent_calls)",
+			at.In(time.Local).Format(time.RFC3339)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	usage, err := data.AgentUsageByDay(ctx, 14)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(usage) != 2 {
+		t.Fatalf("daily usage rows = %d, want the two inside the window: %+v", len(usage), usage)
+	}
+	if usage[0].Date <= usage[1].Date {
+		t.Fatalf("rows must run newest first: %+v", usage)
+	}
+	for _, row := range usage {
+		if row.Calls != 1 || row.InputTokens != 100 {
+			t.Fatalf("each day holds its own call only: %+v", row)
+		}
 	}
 }

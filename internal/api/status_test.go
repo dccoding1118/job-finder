@@ -272,3 +272,49 @@ func TestSettingsReportAndStoreTheAutoProcessingSwitch(t *testing.T) {
 		t.Fatalf("status settings = %v", settings)
 	}
 }
+
+// The progress view is also the cost view: every audited call carries what it
+// spent, and the daily rollup is what tells the user whether today was
+// expensive. A missing rollup would leave the extension rendering nothing.
+func TestStatusReportsPerCallAndDailyUsage(t *testing.T) {
+	processor := &fakeProcessor{}
+	server, data := newTestServer(t, processor)
+	processor.store = data
+	jobID := seedScoredJob(t, data, "usage-job", "scored")
+	for _, call := range []store.AgentCallInput{
+		{
+			JobID: &jobID, Role: "filter", Runner: "claude", Model: "claude-sonnet-5", Input: "prompt", Output: "ok", OK: true, DurationMS: 900, FilterRevision: testRevision,
+			Usage: store.AgentCallUsage{InputTokens: 1200, OutputTokens: 150, CacheReadTokens: 800, CacheWriteTokens: 40, CostUSD: 0.0125},
+		},
+		{
+			JobID: &jobID, Role: "scorer", Runner: "claude", Model: "claude-sonnet-5", Input: "prompt", Output: "ok", OK: true, DurationMS: 1100, ScoreRevision: testRevision,
+			Usage: store.AgentCallUsage{InputTokens: 1200, OutputTokens: 150, CacheReadTokens: 800, CacheWriteTokens: 40, CostUSD: 0.0125},
+		},
+	} {
+		if err := data.SaveAgentCall(context.Background(), call); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, authedRequest(http.MethodGet, "/api/v1/status", nil))
+	body := decode(t, response)
+	call := body["agent_calls"].([]any)[0].(map[string]any)
+	if call["model"] != "claude-sonnet-5" || call["input_tokens"] != float64(1200) || call["cache_read_tokens"] != float64(800) || call["cost_usd"] != 0.0125 {
+		t.Fatalf("per-call usage = %v", call)
+	}
+	usage := body["agent_usage_daily"].([]any)
+	if len(usage) != 1 {
+		t.Fatalf("daily usage = %v, want one runner/model row", usage)
+	}
+	row := usage[0].(map[string]any)
+	if row["runner"] != "claude" || row["model"] != "claude-sonnet-5" || row["calls"] != float64(2) {
+		t.Fatalf("daily usage row = %v", row)
+	}
+	if row["input_tokens"] != float64(2400) || row["output_tokens"] != float64(300) || row["cost_usd"] != 0.025 {
+		t.Fatalf("daily usage totals = %v", row)
+	}
+	if row["date"] == "" || row["date"] == nil {
+		t.Fatalf("daily usage row must name its Taipei day: %v", row)
+	}
+}

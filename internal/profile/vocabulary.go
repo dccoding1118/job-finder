@@ -36,18 +36,22 @@ var EmploymentTypes = Vocabulary{
 }
 
 const (
-	// LocationNationwide is Taiwan without a locality restriction; LocationOverseas
-	// is everything outside it, kept whole because a single-person job search does
-	// not act on which country.
-	LocationNationwide = "nationwide"
-	LocationOverseas   = "overseas"
+	// LocationTaiwan is the country stated without a locality — the wording a JD
+	// uses when it says only 台灣. It is a locality of its own, not a shorthand for
+	// every county: a user who commutes to 台北 has not said such a job suits them.
+	// LocationOverseas is everything outside Taiwan, kept whole because a
+	// single-person job search does not act on which country.
+	LocationTaiwan   = "taiwan"
+	LocationOverseas = "overseas"
 )
 
 // Locations is the one地區 vocabulary: the user picks from it, and its aliases are
-// matched against the locality a JD states. Simplified/traditional 台臺 and the
-// English romanization are aliases of the same key, so a source's own wording
-// never has to be guessed at. `新竹`／`嘉義` without 市／縣 stays an alias of both
-// the city and the county: an ambiguous wording must not reject a job.
+// matched against the locality a JD states. Every key matches exactly the
+// locality it names — picking 台北市 accepts only a JD stating 台北, and a JD
+// stating only 台灣 is matched by `taiwan` alone. Simplified/traditional 台臺 and
+// the English romanization are aliases of the same key, so a source's own
+// wording never has to be guessed at. `新竹`／`嘉義` without 市／縣 stays an alias
+// of both the city and the county: an ambiguous wording must not reject a job.
 var Locations = Vocabulary{
 	{"taipei", "台北市", []string{"台北", "臺北", "Taipei"}},
 	{"new_taipei", "新北市", []string{"新北", "New Taipei", "NewTaipei"}},
@@ -71,8 +75,34 @@ var Locations = Vocabulary{
 	{"penghu", "澎湖縣", []string{"澎湖", "Penghu"}},
 	{"kinmen", "金門縣", []string{"金門", "Kinmen"}},
 	{"lienchiang", "連江縣", []string{"連江", "馬祖", "Lienchiang", "Matsu"}},
-	{LocationNationwide, "全台", []string{"全台", "全臺", "全國", "不限", "Taiwan"}},
+	{LocationTaiwan, "台灣", []string{"台灣", "臺灣", "全台", "全臺", "全國", "不限", "Taiwan"}},
 	{LocationOverseas, "海外", []string{"海外", "國外", "Overseas", "Abroad"}},
+}
+
+// TaiwanLocationKeys is every key inside Taiwan, in vocabulary order: the
+// counties plus the country-only wording. It is what "全部台灣地區" expands to,
+// and it deliberately excludes `overseas`.
+func TaiwanLocationKeys() []string {
+	keys := make([]string, 0, len(Locations))
+	for _, term := range Locations {
+		if term.Key != LocationOverseas {
+			keys = append(keys, term.Key)
+		}
+	}
+	return keys
+}
+
+// CountyTerms is every wording of a Taiwanese county, across all of them. It is
+// how a JD that named a county is told apart from one that stated only the
+// country, which is the whole of what `taiwan` means.
+func CountyTerms() []string {
+	terms := make([]string, 0, len(Locations)*3)
+	for _, term := range Locations {
+		if term.Key != LocationTaiwan && term.Key != LocationOverseas {
+			terms = append(terms, term.Aliases...)
+		}
+	}
+	return terms
 }
 
 // EducationStatuses distinguishes a completed degree from an incomplete one,
@@ -100,21 +130,13 @@ var LanguageLevels = Vocabulary{
 }
 
 // LocationTerms expands the user's chosen location keys into every wording a JD
-// may state those localities with. `nationwide` stands for any locality in
-// Taiwan, so it expands to all of them — but never to `overseas`, which is the
-// one key it deliberately excludes.
+// may state those localities with. No key stands for another: the list a JD is
+// matched against holds exactly the localities the user picked, so covering all
+// of Taiwan means picking all of them (see TaiwanLocationKeys).
 func LocationTerms(keys []string) []string {
 	terms := make([]string, 0, len(keys)*3)
 	for _, key := range keys {
-		if key != LocationNationwide {
-			terms = append(terms, Locations.Aliases(key)...)
-			continue
-		}
-		for _, term := range Locations {
-			if term.Key != LocationOverseas {
-				terms = append(terms, term.Aliases...)
-			}
-		}
+		terms = append(terms, Locations.Aliases(key)...)
 	}
 	return terms
 }

@@ -81,6 +81,76 @@ func migrateSearchLocations(contents []byte) ([]byte, error) {
 	return rewritten, nil
 }
 
+// legacyNationwideKey is the retired v5 key that stood for every locality in
+// Taiwan at once. Only the key itself is migrated, never its old display
+// wordings: 全台 and 不限 are aliases of the live `taiwan` key in v6, and a
+// stored Profile always holds keys, so matching the wordings too would expand a
+// current file that means the country alone.
+const legacyNationwideKey = "nationwide"
+
+// migrateNationwideLocations replaces the retired `nationwide` entry with the
+// localities it stood for, so a v5 file keeps accepting exactly the jobs it
+// accepted before. The key it is replaced by is a list rather than a single
+// value because v6 made every key match only the locality it names: the country
+// wording `taiwan` is now one locality among the counties, not a superset of
+// them.
+func migrateNationwideLocations(contents []byte) ([]byte, error) {
+	var document map[string]any
+	if err := yaml.Unmarshal(contents, &document); err != nil {
+		return contents, nil
+	}
+	requirements, ok := document["requirements"].(map[string]any)
+	if !ok {
+		return contents, nil
+	}
+	values, ok := requirements["locations"].([]any)
+	if !ok {
+		return contents, nil
+	}
+	stated := make([]string, 0, len(values))
+	for _, value := range values {
+		stated = append(stated, fmt.Sprint(value))
+	}
+	replaced, found := expandNationwideKeys(stated)
+	if !found {
+		return contents, nil
+	}
+	expanded := make([]any, 0, len(replaced))
+	for _, key := range replaced {
+		expanded = append(expanded, key)
+	}
+	requirements["locations"] = unionLists(expanded, nil)
+	rewritten, err := yaml.Marshal(document)
+	if err != nil {
+		return nil, err
+	}
+	return rewritten, nil
+}
+
+// expandNationwideKeys rewrites the retired key in place, reporting whether it
+// was there at all so an untouched document is left byte-identical.
+func expandNationwideKeys(keys []string) ([]string, bool) {
+	found := false
+	expanded := make([]string, 0, len(keys))
+	for _, key := range keys {
+		if strings.ToLower(strings.TrimSpace(key)) != legacyNationwideKey {
+			expanded = append(expanded, key)
+			continue
+		}
+		found = true
+		expanded = append(expanded, TaiwanLocationKeys()...)
+	}
+	return expanded, found
+}
+
+// expandNationwide is the pre-v4 path's form of the same rewrite: that document
+// carries its地區 under `preferences`, which the document-level migration does
+// not reach.
+func expandNationwide(keys []string) []string {
+	expanded, _ := expandNationwideKeys(keys)
+	return expanded
+}
+
 // unionLists appends the entries of extra that kept are missing, comparing on the
 // rendered value so the two documents' own scalar types do not matter.
 func unionLists(kept, extra any) []any {
@@ -129,7 +199,7 @@ func migrateLegacy(contents []byte) (Profile, error) {
 	value := Profile{
 		Search: Search{Directions: legacy.Preferences.Directions},
 		Requirements: Requirements{
-			SalaryMin: legacy.Preferences.SalaryMin, Locations: legacy.Preferences.Locations,
+			SalaryMin: legacy.Preferences.SalaryMin, Locations: expandNationwide(legacy.Preferences.Locations),
 			Remote: migrateRemote(legacy.Preferences.Remote), IndustryAvoid: legacy.Preferences.IndustryAvoid,
 			ExcludeTitleKeywords:       legacy.Preferences.Screening.ExcludeTitleKeywords,
 			ExcludeDescriptionKeywords: legacy.Preferences.Screening.ExcludeDescriptionKeywords,

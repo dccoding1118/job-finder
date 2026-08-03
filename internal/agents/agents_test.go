@@ -187,3 +187,38 @@ func writeTestExecutable(t *testing.T, contents string) string {
 	}
 	return path
 }
+
+// The JSONL runner reports tokens but never a price. Reading it must keep the
+// cost at zero rather than deriving one — an audited cost has to be what the
+// runner actually charged, not what a local price table guessed.
+func TestJSONLUsageTakesTheCompletedTurnAndPricesNothing(t *testing.T) {
+	raw := strings.Join([]string{
+		`{"type":"turn.started"}`,
+		"not a JSON line at all",
+		`{"type":"turn.completed","usage":{"input_tokens":700,"cached_input_tokens":500,"cache_write_input_tokens":20,"output_tokens":80,"reasoning_output_tokens":40}}`,
+	}, "\n")
+	usage := jsonlUsage(raw)
+	if usage.InputTokens != 700 || usage.CacheReadTokens != 500 || usage.CacheWriteTokens != 20 || usage.OutputTokens != 80 || usage.ReasoningTokens != 40 {
+		t.Fatalf("jsonl usage = %+v", usage)
+	}
+	if usage.CostUSD != 0 {
+		t.Fatalf("a runner that does not price its calls must report no cost: %v", usage.CostUSD)
+	}
+	if empty := jsonlUsage(`{"type":"turn.started"}`); empty != (Usage{}) {
+		t.Fatalf("a stream without a completed turn reports no usage: %+v", empty)
+	}
+}
+
+// An envelope without usage is still a valid answer; only the accounting is
+// missing, and it must read as zero rather than failing the call.
+func TestResultEnvelopeWithoutUsageStillParses(t *testing.T) {
+	command := writeTestExecutable(t, "#!/bin/sh\ncat >/dev/null\nprintf '{\"subtype\":\"success\",\"is_error\":false,\"result\":\"answer\"}\\n'\n")
+	runner := CommandRunner{RunnerName: "test", Command: command, PromptViaStdin: true, ResultEnvelope: true, Timeout: time.Second}
+	reply, err := runner.Invoke(context.Background(), "prompt")
+	if err != nil || reply.Text != "answer" {
+		t.Fatalf("reply = %q, %v", reply.Text, err)
+	}
+	if reply.Usage != (Usage{}) {
+		t.Fatalf("missing usage must read as zero: %+v", reply.Usage)
+	}
+}
