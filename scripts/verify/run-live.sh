@@ -77,8 +77,15 @@ actual_checksum="$(sha256sum "${binary}" | awk '{print $1}')"
 [[ -n "${expected_checksum}" && "${expected_checksum}" == "${actual_checksum}" ]] || fail 'artifact checksum mismatch'
 grep -Fqx "  path: ${LIVE_DB}" "${config}" || fail 'live config does not target live SQLite'
 grep -Fqx '    base_url: https://www.yourator.co' "${config}" || fail 'live config does not target official Yourator'
-[[ "$(grep -Ec '^[[:space:]]+agent: (claude|codex)$' "${config}")" == '6' ]] || fail 'live config must define six role agent endpoints'
-[[ "$(grep -Ec '^[[:space:]]+model: [^[:space:]]+$' "${config}")" == '6' ]] || fail 'live config must define a model for every role endpoint'
+# Every role carries a primary and a fallback, and both have to name the agent
+# and the model outright: a live run must never reach an external CLI through an
+# implicit default. The expected endpoint count is derived from the roles the
+# config declares, so adding a role extends this check instead of ageing it out.
+role_count="$(grep -Ec '^    (filter|scorer|drafter|reviewer):$' "${config}")"
+[[ "${role_count}" == '4' ]] || fail 'live config must define the filter, scorer, drafter and reviewer roles'
+endpoint_count=$(( role_count * 2 ))
+[[ "$(grep -Ec '^[[:space:]]+agent: (claude|codex)$' "${config}")" == "${endpoint_count}" ]] || fail "live config must name an agent for all ${endpoint_count} role endpoints"
+[[ "$(grep -Ec '^[[:space:]]+model: [^[:space:]]+$' "${config}")" == "${endpoint_count}" ]] || fail "live config must name a model for all ${endpoint_count} role endpoints"
 if grep -Fq "${HARNESS_ROOT}" "${config}" "${RUNTIME_ROOT}/systemd-live/"*; then
 	fail 'live config or rendered units reference the mock harness'
 fi
@@ -87,7 +94,7 @@ if ! "${binary}" run --config "${config}" --stage filter --limit 1 >"${output_fi
 fi
 grep -Fqx 'filtered_out: 0' "${output_file}" || fail 'cost-free config preflight produced unexpected work'
 record "- artifact：binary_sha256=${actual_checksum}；Git dirty 狀態不影響執行。"
-record '- 六個 role endpoints 均明確指定 agent 與 model，並在外部呼叫前通過 strict config 與 Runner 建構。'
+record "- filter／scorer／drafter／reviewer 四個 role 的 primary 與 fallback 共 ${endpoint_count} 個 endpoints 均明確指定 agent 與 model，並在外部呼叫前通過 strict config 與 Runner 建構。"
 pass_step
 
 begin_step '02' '匿名 Profile、權限與 schema'
