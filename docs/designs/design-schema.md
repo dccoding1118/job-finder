@@ -48,7 +48,7 @@
 | `job_id` | INTEGER FK→jobs | 一 Job 可有多筆（重新評分時新增，不覆蓋） |
 | `dim_content` / `dim_benefit` / `dim_bonus` / `dim_industry` | INTEGER | 四維各 0–100 |
 | `total` | REAL | Go 依權重計算的加權總分 |
-| `reason` | TEXT | ≤100 字推薦/不推薦理由 |
+| `reason` | TEXT | 推薦/不推薦理由；長度契約由 Agent 契約把關（[design-agents](design-agents.md) §3.2），此處僅有 ≤500 字元的儲存防線 |
 | `runner` | TEXT | 產出此評分的 runner（`claude` / `codex`） |
 | `score_revision` | TEXT NULL | 產生此 Score 的 Profile `score_revision`；新資料必填，legacy 可為 NULL |
 | `created_at` | TEXT | RFC3339 |
@@ -145,6 +145,20 @@
 | `state` | TEXT | `pending` / `merged` / `ignored` |
 | `created_at` | TEXT | RFC3339 |
 
+### 2.10 `settings`（使用者可在 Side Panel 改動的執行期設定）
+
+| 欄位 | 型別 | 說明 |
+|---|---|---|
+| `key` | TEXT PK | 設定鍵 |
+| `value` | TEXT | 設定值（字串編碼；布林為 `on`／`off`） |
+| `updated_at` | TEXT | RFC3339 |
+
+| 鍵 | 值 | 未設定時 | 意義 |
+|---|---|---|---|
+| `auto_processing` | `on` / `off` | 視為 `on` | 常駐 worker 是否自動消化 filter 與 score（見 [design-pipeline](design-pipeline.md) §2.2） |
+
+執行期設定存於資料庫而非 `config.yaml`：服務執行期間由 API service 擁有，重啟不得默默還原使用者關掉的開關。`config.yaml` 只保留部署期決定、使用者不會在 UI 改動的項目。
+
 ## 3. 狀態機（權威定義）
 
 ### 3.1 `process_state`（系統擁有）
@@ -240,7 +254,9 @@ capture 或 fetch 命中 alias 時，回傳的一律是 **canonical 的 job id �
 | `UpsertJob(raw, runID)` | 去重、變更偵測、狀態初始/重置（partial→`discovered`、全文→`new`、既有 partial 補全文→`new`），新建時寫入 `discovered_by_run_id`（capture 入庫傳 NULL），回傳是否新增/變更 |
 | `TransitionProcess(jobID, to, meta)` / `TransitionApply(jobID, to, note)` | 驗證合法轉換 → 更新欄位 → 寫 `status_events`（同一交易） |
 | `ListJobs(filter, sort)` | UI/CLI 查詢：依狀態、來源、分數排序；預設只回各群組的 canonical，`merged` 不出現 |
-| `PickForStage(stage, revision, limit)` | 常駐 worker 各階段取件（`new`→filter、`queued`→score、`letter_requested`→letter）；`shortlisted`、`discovered` 不是任何階段的取件狀態，`merged` 一律排除。`revision` 非空時只取對應 revision 欄位相符者——filter 傳入 active `filter_revision`、score 傳入 active `score_revision`、letter 傳空值（不要求相符） |
+| `PickForStage(stage, revisions, limit)` | 常駐 worker 各階段取件（`new`→filter、`queued`→score、`letter_requested`→letter）；`shortlisted`、`discovered` 不是任何階段的取件狀態，`merged` 一律排除。filter 與 letter 不限 revision（該狀態尚無判定，直接沿用 active）；score 只取 `filter_revision` 與傳入 active 值相符者，篩選判定過時者留給使用者重新處理 |
+| `AdoptStageRevision(stage, jobID, revisions)` | 讓尚無判定的職缺換上該階段的 active revision：`filter` 限 `new`（同時清空 `score_revision`），`score` 限 `queued` 且 `filter_revision` 為 active。回報是否採用；已離開該狀態或篩選判定過時者回 false，呼叫端不得執行該階段。不動 `updated_at`——這是尚未發生的工作的簿記，不是職缺本身的變更 |
+| `CountAwaitingReprocess(revisions)` | 計算因篩選判定過時而無法被任何階段取件的職缺筆數（`queued` 且 `filter_revision` 非 active），供 worker 在消化停滯時記錄原因 |
 | `SaveFilterResult(jobID, result, revision)` | 在單一交易內附加一筆 `filter_results` 並依 `outcome` 與該筆是否只有摘要轉換狀態（`fail`→`filtered_out` 並寫 `filter_hits`、摘要且 `unknown`→`discovered`、`pass`→`queued`；全文而 `unknown` 為契約違反，回錯）；以 expected state ＋ expected `filter_revision` CAS |
 | `LinkOrSuggestDuplicate(jobID)` | upsert 後依 §4.2 計算 `dedupe_key`：高信心則於單一交易合併（選定 canonical、alias 轉 `merged`、收斂 `group_id`），灰帶則 upsert 一筆 `pending` 候選；回傳實際動作 |
 | `MergeGroups(a, b)` / `UnmergeJob(jobID)` | 使用者裁決：前者依 canonical 選擇順序合併並將候選標記 `merged`；後者依合併事件還原 alias 狀態與獨立群組，不刪除既有 score／letter |
@@ -256,6 +272,8 @@ capture 或 fetch 命中 alias 時，回傳的一律是 **canonical 的 job id �
 migration 新增 revision 欄位時全部允許 legacy NULL，不猜測歷史資料使用的 Profile。升級與服務啟動不自動 activation；legacy Job 維持 stale，直到使用者明確要求更新過時評分。migration 本身不呼叫 Agent。
 
 **schema v6（硬／軟分離）migration**：新增 `filter_results` 表、`jobs` 與 `agent_calls`／`letters` 的雙 revision 欄位與 `scores` 的四維欄位。既有 `scores` 的五維資料與舊維度欄位一併移除——維度定義已改，舊分數無從換算。**全部既有職缺重置回篩選前狀態**（`filtered_out`／`queued`／`scored`／`shortlisted` 中有 JD 全文者回到 `new`、無全文者回到 `discovered`；原本就是 `discovered` 者維持），兩個 revision 欄位清為 NULL，之後由 worker 重篩、通過者重評。求職信階段的職缺（`letter_requested`／`letter_ready`／`letter_failed`）、既有 Letter 與投遞歷史不得因此改寫或刪除。
+
+**schema v8 migration**：新增 `settings` 表。既有資料不受影響；未曾寫入的鍵由讀取端各自帶預設值，migration 不預先塞入任何列。
 
 ## 6. 交付物
 

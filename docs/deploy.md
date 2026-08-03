@@ -67,6 +67,8 @@ API 不公開網路埠。Windows 工作站以背景常駐的 SSH local forward�
 
 `llm.max_*_per_day` 不是暫停開關：值為 0 或負數代表**不設上限**，不是不執行。
 
+日常要暫停 token 消耗用的是 Side Panel 系統頁的**自動篩選與評分**開關（存於資料庫，重啟仍生效）：worker 保持常駐並持有鎖，只是不自動取件，使用者仍可對單筆按「馬上處理」。`worker.paused` 則是部署期把三個階段整個交給 CLI 批次的模式，此模式下該開關與「馬上處理」皆無作用。
+
 結構化硬規則仍會在清單擷取時就地判定（不花 token），故暫停期間仍可能出現 `filtered_out`；改動 `requirements` 會改變 `filter_revision`，之後的重新處理會把這些結論一併重跑。
 
 清空既有職缺重新開始時，停止 `jobfinder-api.service` 與 `jobfinder-run.timer` 後刪除 SQLite（連同 `-wal`、`-shm`），下次啟動即以最新 schema 重建空庫。Profile、denylist 與設定不受影響。

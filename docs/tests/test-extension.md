@@ -52,6 +52,10 @@
 | ET-36 | Profile | Job stale 標示與主題切換 | 分數只顯示整數；篩選與評分 revision 各以綠色最新／黃色待重評辨識，Letter stale 另提示；不改 verdict/apply，切換主題不清除 editor 狀態 |
 | ET-37 | 系統 | 群組、Options、排程與手動 reprocess | 依連線、Profile、批次、進度、歷程排序；可開 Options；顯示每日 08:30；只有按下更新才 POST reprocess |
 | ET-38 | 目前職缺 | `scored` 職缺按下「重新處理」 | 送出一次 `POST /api/v1/jobs/{id}/reprocess`；該筆立即顯示為篩選中且按鈕消失；判不適合的職缺同樣顯示此按鈕，處理中與信件階段職缺不顯示 |
+| ET-53 | 目前職缺 | `pending_screen`／`pending_score` 職缺按下「馬上處理」 | 送出一次 `POST /api/v1/jobs/{id}/process`；該筆立即顯示為正在篩選／正在評分並開始輪詢；連點不重複送出；此狀態不顯示「重新處理」 |
+| ET-54 | 目前職缺 | 自動處理已關閉或當日額度已用盡的等待中職缺 | 說明文字說出等待原因；「馬上處理」仍可用；未按下時不輪詢，按下後照常輪詢至終態或逾時 |
+| ET-55 | 目前職缺 | `resident_worker` 為偽 | 「馬上處理」停用並說明該筆等待手動批次；不送出請求 |
+| ET-56 | 系統 | 自動篩選與評分開關 | 依 `GET /api/v1/status` 的 `settings` 顯示開啟／關閉與說明；按下送出一次 `PUT /api/v1/settings`；成功後就地反映新狀態；`resident_worker` 為偽時停用 |
 | ET-39 | 系統 | 處理進度與 Agent 呼叫紀錄 | 顯示各待處理狀態筆數（含待篩選與待看）與當日篩選、評分額度餘額；未完成呼叫顯示角色、耗時與失敗類別說明；低分的成功呼叫顯示為呼叫成功且不顯示失敗字樣；不輪詢 |
 
 測資不得含真實 JD、Profile、token 或任何來源平台的真實頁面內容。

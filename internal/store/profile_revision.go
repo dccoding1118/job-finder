@@ -264,6 +264,62 @@ func (s *Store) ActivateProfile(ctx context.Context, revisions Revisions, screen
 	return stats, nil
 }
 
+// AdoptStageRevision stamps one job with the active revision of the stage that
+// is about to run it. It applies only to the states that hold no assessment of
+// their own — `new` before screening, `queued` before scoring — where a Profile
+// change invalidates nothing and costs nothing: the call the job is already
+// waiting for simply runs under the current Profile. Everything that already
+// carries a verdict keeps waiting for the user's reprocess, which is where the
+// re-spend is decided.
+//
+// It reports false when the job left that state in the meantime, in which case
+// the caller must not run the stage: the stage's own CAS would discard it.
+func (s *Store) AdoptStageRevision(ctx context.Context, stage string, jobID int64, revisions Revisions) (bool, error) {
+	var query string
+	var args []any
+	switch stage {
+	case "filter":
+		// Screening decides the score gate's revision when it queues the job, so an
+		// adopted screening revision leaves the score one to be set by the result.
+		query = "UPDATE jobs SET filter_revision=?, score_revision=NULL WHERE id=? AND process_state='new'"
+		args = []any{revisions.Filter, jobID}
+	case "score":
+		// A superseded screening is not the score stage's to adopt: the job needs a
+		// new screening first, which is a call only the user asks for.
+		query = "UPDATE jobs SET score_revision=? WHERE id=? AND process_state='queued' AND filter_revision=?"
+		args = []any{revisions.Score, jobID, revisions.Filter}
+	default:
+		return false, fmt.Errorf("store: stage %q adopts no revision", stage)
+	}
+	// `updated_at` is deliberately left alone: adopting a revision is bookkeeping
+	// for work that has not happened yet, not a change to the job.
+	result, err := s.db.ExecContext(ctx, query, args...)
+	if err != nil {
+		return false, fmt.Errorf("adopt %s revision for job %d: %w", stage, jobID, err)
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return count == 1, nil
+}
+
+// CountAwaitingReprocess counts the jobs a stage can no longer pick up because
+// their screening verdict is superseded. They are exactly the jobs the user's
+// Profile reprocess releases, so a queue that stops moving has a number to
+// report rather than going quiet.
+func (s *Store) CountAwaitingReprocess(ctx context.Context, revisions Revisions) (int, error) {
+	if revisions.Filter == "" {
+		return 0, nil
+	}
+	var count int
+	err := s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM jobs WHERE process_state='queued' AND (filter_revision IS NULL OR filter_revision <> ?)", revisions.Filter).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("count jobs awaiting reprocess: %w", err)
+	}
+	return count, nil
+}
+
 // SaveFilterResult appends one screening result and moves the job to the state
 // its outcome calls for, in a single transaction guarded by the expected state
 // and screening revision. A passing job also takes the active score revision:

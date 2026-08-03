@@ -67,6 +67,9 @@ worker:
   scan_interval: 5s
   # true stops the resident worker consuming any stage: collection continues and
   # every job rests at `new` until `run --stage filter|score` is driven by hand.
+  # This is the deployment-time hand-off to CLI batches, not the Side Panel's
+  # automatic-processing switch — that one lives in the database, keeps the
+  # worker resident, and leaves single-job processing available.
   paused: false
 api:
   addr: 127.0.0.1:8686

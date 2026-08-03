@@ -3,6 +3,7 @@ package agents
 import (
 	"encoding/json"
 	"strings"
+	"unicode"
 )
 
 // Failure kinds classify why one runner attempt was rejected. They exist so the
@@ -54,11 +55,44 @@ func ClassifyFailure(role, output string) string {
 	return FailureInvalidContent
 }
 
-// maxScoreReason is the reason length the Scorer contract tolerates. It sits
-// well above the 40~60 characters the prompt asks for: a rejected response costs
-// a whole second call, so the wording carries the target and this bound only
-// catches an answer that ignored it outright.
+// maxScoreReason is the reason length the Scorer contract tolerates, counted in
+// the units ReasonLength measures. It sits well above the 40~60 the prompt asks
+// for: a rejected response costs a whole second call, so the wording carries the
+// target and this bound only catches an answer that ignored it outright.
 const maxScoreReason = 100
+
+// ReasonLength measures a reason the way the Scorer prompt asks it to be
+// counted: one CJK character is one unit, and one run of Latin letters or digits
+// is one unit however many letters the term has. Counting a term by its letters
+// is what a bound on a bilingual reason must not do — a handful of English
+// technical terms would overrun it while the reason itself stays short, and the
+// price of that is a second call whose answer is worse than the first.
+func ReasonLength(reason string) int {
+	length, inTerm := 0, false
+	for _, r := range reason {
+		if termRune(r) {
+			if !inTerm {
+				length++
+				inTerm = true
+			}
+			continue
+		}
+		inTerm = false
+		if !unicode.IsSpace(r) {
+			length++
+		}
+	}
+	return length
+}
+
+// termRune reports whether r continues a Latin term. The joining marks keep
+// forms like "Node.js", "C++" and "Go/Rust" as the single terms they read as.
+func termRune(r rune) bool {
+	if r > unicode.MaxASCII {
+		return false
+	}
+	return unicode.IsLetter(r) || unicode.IsDigit(r) || strings.ContainsRune("+#-_./", r)
+}
 
 func classifyScore(match string) string {
 	var parsed ScoreResult
@@ -70,7 +104,7 @@ func classifyScore(match string) string {
 			return FailureScoreOutOfRange
 		}
 	}
-	if len([]rune(parsed.Reason)) > maxScoreReason {
+	if ReasonLength(parsed.Reason) > maxScoreReason {
 		return FailureReasonTooLong
 	}
 	return FailureInvalidContent

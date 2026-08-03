@@ -72,9 +72,11 @@
 | 欄位 | 型別 | 約束 |
 |---|---|---|
 | `content_fit` / `benefit_fit` / `bonus_fit` / `industry_fit` | int | 0–100；各維以門檻分為基準加減後 clamp，無資訊可判時回基準分 |
-| `reason` | string | 說明推薦或不推薦；prompt 要求 40~60 中文字，驗證容忍上限 100 字 |
+| `reason` | string | 說明推薦或不推薦；prompt 要求 40~60 字，驗證容忍上限 100 字，兩者皆以下述字數規則計算 |
 
-**要求字數與容忍上限刻意分離**：兩者相等時，LLM 只要略微超出就整筆作廢並重跑一次，而重跑是實打實的 token 成本。因此 prompt 要求的是實際想要的長度（40~60 字），驗證的上限放寬到 100 字，只擋「完全無視要求」的回應。放寬容忍上限**不得**回頭調高 prompt 要求的字數。
+**字數規則**：中文（與其他非拉丁字元）一字算一字，連續的英文詞或數字整段只算一字——`Kubernetes` 與 `Node.js` 各算一字。理由是雙語敘述的長度取決於它讀起來多長，不是英文詞拼出幾個字母；以字母計數會讓一段簡短、切題的理由僅因引用數個英文技術詞就超限。此規則同時寫進 prompt（讓 LLM 得以自我檢查）與驗證。
+
+**要求字數與容忍上限刻意分離**：兩者相等時，LLM 只要略微超出就整筆作廢並重跑一次，而重跑是實打實的 token 成本，且重跑的回應因脈絡疊加常不如首次準確。因此 prompt 要求的是實際想要的長度（40~60 字），驗證的上限放寬到 100 字，只擋「完全無視要求」的回應。放寬容忍上限**不得**回頭調高 prompt 要求的字數。
 
 每次嘗試的稽核結果只有兩種：runner 有回應且回應通過上述契約（成功），或未通過（失敗）。分數高低不影響此判定。失敗者由 `ClassifyFailure(role, output)` 分為 `runner_error`（CLI 自報錯誤，優先於內容驗證）、`empty_output`、`no_json`、`invalid_json`、`reason_too_long`、`score_out_of_range`、`invalid_condition`（Filter 的條件列舉、分組或年資欄位不合法）、`invalid_content`，供 API 的處理進度呈現失敗原因而不外洩原始輸出。此分類對五個角色共用。
 
@@ -115,7 +117,7 @@ Profile 輸入一律來自 provider snapshot，且**各角色只取自己該看�
 | 角色 | 輸入 | 規則要點 |
 |---|---|---|
 | Filter | `qualifications`（學歷、技能、證照、語言）＋`experiences[]` 的 `industry` key 清單＋Job（title/company/JD/薪資/地點/remote） | 先把 JD 拆成逐條條件並標記必備／加分與選言分組；再逐條比對 Profile 給 `pass`／`fail`／`unknown`；**判不出來一律 `unknown`，不得猜測為 `fail`**；學歷須同一筆同時滿足級別與科系；年資與產業年資只回要求數值與對應的 `industry` key，不自行比較；不給分數 |
-| Scorer | `intents`＋`qualifications` 的 `skills`／`certifications`／`languages`＋`requirements.remote`／`locations`＋篩選關保存的加分條件＋Job（title/company/JD/薪資/地點/remote/福利與工時敘述） | 四維以門檻分為基準加減；`content_fit` 對照 `content_likes`／`content_dislikes`；`benefit_fit` 對照 `salary_target` 與優於勞基法的休假、彈性工時、額外獎金，遠端形式的加分級距見 [design-pipeline](design-pipeline.md) §3.3；`bonus_fit` **只加不減**；`industry_fit` 對照 `industry_interests`；無資訊可判時回基準分；理由 40~60 字。**輸入不含 `experiences` 的 `role`／`org_type`／`achievements` 與 `honesty_bounds`** |
+| Scorer | `intents`＋`qualifications` 的 `skills`／`certifications`／`languages`＋`requirements.remote`／`locations`＋篩選關保存的加分條件＋Job（title/company/JD/薪資/地點/remote/福利與工時敘述） | 四維以門檻分為基準加減；`content_fit` 對照 `content_likes`／`content_dislikes`；`benefit_fit` 對照 `salary_target` 與優於勞基法的休假、彈性工時、額外獎金，遠端形式的加分級距見 [design-pipeline](design-pipeline.md) §3.3；`bonus_fit` **只加不減**；`industry_fit` 對照 `industry_interests`；無資訊可判時回基準分；理由 40~60 字（字數規則見 §3.2）。**輸入不含 `experiences` 的 `role`／`org_type`／`achievements` 與 `honesty_bounds`** |
 | Drafter | `experiences`＋`qualifications`＋`honesty_bounds`＋Job＋（重寫輪）Reviewer issues | 只可使用 Profile 存在的技能與成就；引用量化數據；遵守 `honesty_bounds`；精煉（300–450 字）；佔位符落款；繁體中文（JD 為英文則英文） |
 | Reviewer | 同 Drafter 的子集＋Job＋草稿 | 毒舌審查：任何 Profile 無根據的技能/經歷/數字＝幻覺必挑；空泛形容詞（「熱情」「抗壓」等無實據修飾）要求刪除；可直接給 `edited_letter`；檢查佔位符落款 |
 | Calibrator | Profile 的 `search`／`requirements`／`intents`＋成功樣本（JD、職稱、產業、地區、薪資、四維分數）＋對照樣本 | 只比較兩組樣本的共同與差異特徵，依 [design-profile](design-profile.md) §7.2 的維度作答；只得建議 `search`／`requirements`／`intents` 欄位；證據不足時回空 `suggestions`，不得臆測；不得輸出任何履歷事實的修改建議 |

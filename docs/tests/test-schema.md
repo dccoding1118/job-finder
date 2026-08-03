@@ -30,6 +30,7 @@
 | ST-02 | 對已在最新版本的資料庫再次執行 migration | 成功完成；schema、資料與版本不變 |
 | ST-03 | 建立重複 `(source, external_id)` 的 Job | 寫入被唯一鍵拒絕；store 的 upsert 不產生第二筆 Job |
 | ST-04 | 寫入依附不存在 Job 的 score、letter、status event 或 agent call | 外鍵約束拒絕寫入 |
+| ST-06 | 讀寫 `settings` 的 `auto_processing` | 未曾寫入時視為開啟；寫入 off 後重開資料庫仍為 off；再寫回 on 生效 |
 | ST-05 | 查詢索引與欄位定義 | `jobs` 具有 process/apply state 查詢索引與 `(source, external_id)` 唯一索引；所有設計定義欄位存在 |
 
 ### 3.2 Job upsert、去重與內容變更
@@ -71,7 +72,7 @@
 | 編號 | 測試情境 | 預期結果 |
 |---|---|---|
 | ST-40 | 為同一 Job 連續儲存不同 revision 的 score | 兩筆皆保留；取得現行評分時只回與 `jobs.score_revision` 相同的最新一筆 |
-| ST-41 | 儲存 score 的任一維度超出 0–100、reason 超過 100 字、runner 非法 | 被拒絕且不寫入資料 |
+| ST-41 | 儲存 score 的任一維度超出 0–100、reason 超過 500 字元的儲存防線、runner 非法 | 被拒絕且不寫入資料 |
 | ST-46 | `SaveFilterResult` 的 `outcome` 分別為 `fail`／摘要 `unknown`／`pass`／全文 `unknown` | 同一交易內附加一筆 `filter_results` 並轉為 `filtered_out`（含 `filter_hits`）／`discovered`／`queued`；全文而 `unknown` 回錯且不落地；逐條 `conditions` 完整保留 |
 | ST-47 | 為同一 Job 連續儲存不同 `filter_revision` 的篩選結果 | 兩筆皆保留；現行判定只取與 `jobs.filter_revision` 相同的最新一筆 |
 | ST-48 | `SaveFilterResult` 的 `outcome`、`conditions` 列舉或 `stage` 非法 | 被拒絕且不寫入資料，狀態不變 |
@@ -79,7 +80,9 @@
 | ST-43 | 儲存 letter 時 status、rounds、runner 或內容不合法 | 被拒絕且不寫入資料 |
 | ST-44 | `ListJobs` 以 process state、apply state、source 篩選與評分排序 | 僅回傳符合篩選的 Job，排序與指定條件一致 |
 | ST-45 | `PickForStage` 分別取得 filter、score、letter 階段工作 | 僅選取 `new`、`queued`、`letter_requested` Job，並遵守 limit；`shortlisted` 與 `discovered` Job 不被任何階段取件 |
-| ST-80 | `PickForStage` 帶 revision，佇列中同時有舊 revision（`updated_at` 較早）與 active revision 的 Job | 只取得 active revision 者（filter 比對 `filter_revision`、score 比對 `score_revision`）；舊 revision 的 Job 不佔用取件上限 |
+| ST-80 | `PickForStage` 帶 revision，score 佇列中同時有篩選判定過時（`updated_at` 較早）與 active 的 Job | 只取得 `filter_revision` 為 active 者；篩選判定過時的 Job 不佔用取件上限。filter 階段不限 revision，`new` 一律取得 |
+| ST-80A | `AdoptStageRevision` 分別對 `new`、`filter_revision` 為 active 的 `queued`、篩選判定過時的 `queued`、已離開該狀態的 Job | 前兩者換上 active revision 並回報成功（`new` 另清空 `score_revision`），後兩者回報未採用且不改任何欄位；`updated_at` 一律不變 |
+| ST-80B | `CountAwaitingReprocess` 帶 active revision | 只計 `queued` 且 `filter_revision` 非 active（含 NULL）的筆數 |
 
 ### 3.6 Run 與 Agent 稽核紀錄
 
