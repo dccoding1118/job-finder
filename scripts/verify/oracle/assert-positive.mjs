@@ -3,7 +3,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 
 const [mode, file, phase = "base"] = process.argv.slice(2);
-if (!mode || !file) throw new Error("usage: assert-positive.mjs <schema|source|snapshot|live-snapshot|api|api-filter|api-detail|capture-list|capture-job> <file> [phase]");
+if (!mode || !file) throw new Error("usage: assert-positive.mjs <schema|source|snapshot|live-snapshot|api|api-filter|api-detail|capture-list|capture-job|list-marks|cake-detail|group|duplicates|no-alias|worker> <file> [phase]");
 
 const sha256 = (value) => crypto.createHash("sha256").update(value).digest("hex");
 const readJSON = () => JSON.parse(fs.readFileSync(file, "utf8"));
@@ -432,6 +432,229 @@ if (mode === "capture-job") {
   assert.equal(data.verdict, "pending_screen");
   assert.equal(data.process_state, "new");
   assert.equal(data.score ?? null, null);
+  process.exit(0);
+}
+
+// The Cake fixtures. Every one of them is keyed by the company and job path
+// segments Cake builds an identity out of, which is what the list capture and
+// the detail capture of the same listing have to agree on.
+const LIST_MARKS = {
+  next: {
+    "example-services/backend-intern-engineer": { verdict: "unfit", process_state: "filtered_out", filter_hits: ["exclude_title_keywords"] },
+    // The senior listing is the 104 job under another name, so the mark it comes
+    // back with is the canonical copy's, not a second opinion of its own.
+    "beta-co/senior-backend-engineer": { verdict: "pending_detail", process_state: "discovered", filter_hits: null },
+    "cake-only-labs/platform-reliability-engineer": { verdict: "pending_detail", process_state: "discovered", filter_hits: null },
+  },
+  // The same page captured again once the pipeline has run: the marks are the
+  // verdicts already reached, and nothing is created a second time.
+  "next-again": {
+    "example-services/backend-intern-engineer": { verdict: "unfit", process_state: "filtered_out", filter_hits: ["exclude_title_keywords"] },
+    "beta-co/senior-backend-engineer": { verdict: "recommended", process_state: "shortlisted", filter_hits: null },
+    "cake-only-labs/platform-reliability-engineer": { verdict: "recommended", process_state: "shortlisted", filter_hits: null },
+  },
+  dom: {
+    "delta-works/backend-engineer": { verdict: "pending_detail", process_state: "discovered", filter_hits: null },
+    "delta-works/backend-engineer-platform": { verdict: "pending_detail", process_state: "discovered", filter_hits: null },
+  },
+  "grey-base": {
+    v6greybase: { verdict: "pending_detail", process_state: "discovered", filter_hits: null },
+    v6ignorebase: { verdict: "pending_detail", process_state: "discovered", filter_hits: null },
+  },
+  grey: {
+    "grey-labs/data-platform-engineer-core": { verdict: "pending_detail", process_state: "discovered", filter_hits: null },
+    "ignore-works/mobile-platform-engineer-core": { verdict: "pending_detail", process_state: "discovered", filter_hits: null },
+  },
+};
+
+if (mode === "list-marks") {
+  const expected = LIST_MARKS[phase];
+  if (!expected) throw new Error(`unknown list mark phase: ${phase}`);
+  const data = readJSON();
+  const items = Object.fromEntries(data.items.map((item) => [item.external_id, item]));
+  assert.deepEqual(Object.keys(items).sort(), Object.keys(expected).sort());
+  for (const [id, want] of Object.entries(expected)) {
+    const item = items[id];
+    assert.deepEqual([item.verdict, item.process_state], [want.verdict, want.process_state], `cake list item ${id}`);
+    assert.deepEqual(item.filter_hits ?? null, want.filter_hits, `cake list hits of ${id}`);
+    assert.equal(item.created, !phase.endsWith("-again"));
+    if (want.process_state === "discovered" || want.process_state === "filtered_out") assert.equal(item.score_total ?? null, null);
+  }
+  process.exit(0);
+}
+
+// The two Cake detail fixtures. One carries a metadata area the parser can read
+// a place, a monthly salary, and a remote arrangement out of; the other carries
+// none of the three, and the point of it is that they come back undecided
+// rather than guessed.
+const CAKE_DETAIL = {
+  meta: {
+    url: "https://www.cake.me/companies/beta-co/jobs/senior-backend-engineer",
+    description: "職缺描述\nBuild Go backend and cloud platform services\n\n職務需求\nFamiliar with Go, Kubernetes and cloud platforms",
+    location: "台北市",
+    salary: [120000, 150000],
+    remote_type: "hybrid",
+    process_state: "merged",
+  },
+  nometa: {
+    url: "https://www.cake.me/companies/cake-only-labs/jobs/platform-reliability-engineer",
+    description: "職缺描述\nOperate cloud platform reliability services\n\n職務需求\nExperience with Go and Kubernetes",
+    location: "unknown",
+    salary: [null, null],
+    remote_type: "unknown",
+  },
+};
+
+if (mode === "cake-detail") {
+  const expected = CAKE_DETAIL[phase];
+  if (!expected) throw new Error(`unknown cake detail phase: ${phase}`);
+  const data = readJSON();
+  assert.equal(data.source, "cake");
+  assert.equal(data.url, expected.url);
+  // Both JD blocks are stored under their own heading: the scorer has to be able
+  // to read requirements as requirements.
+  assert.equal(data.description, expected.description);
+  assert.equal(data.location, expected.location);
+  assert.deepEqual([data.salary_min, data.salary_max], expected.salary);
+  assert.equal(data.remote_type, expected.remote_type);
+  if (expected.process_state) assert.equal(data.process_state, expected.process_state);
+  process.exit(0);
+}
+
+// group reads one Job detail and asserts the cross-source group it belongs to.
+if (mode === "group") {
+  const data = readJSON();
+  const group = data.group;
+  assert.ok(group, "job detail carries no group");
+  if (phase === "merged") {
+    // The 104 copy carries the processing; the Cake copy is the same listing on
+    // another platform and holds no verdict of its own.
+    assert.equal(data.source, "104");
+    assert.equal(group.canonical_job_id, data.id);
+    const members = Object.fromEntries(group.members.map((member) => [member.source, member]));
+    assert.deepEqual(Object.keys(members).sort(), ["104", "cake"]);
+    assert.equal(members["104"].merged, false);
+    assert.equal(members["104"].job_id, data.id);
+    assert.equal(members.cake.merged, true);
+    assert.equal(members.cake.external_id, "beta-co/senior-backend-engineer");
+    assert.equal(members.cake.url, "https://www.cake.me/companies/beta-co/jobs/senior-backend-engineer");
+    process.stdout.write(String(members.cake.job_id));
+  }
+  if (phase === "alias-merged") {
+    // The alias records what it was before the merge and which job now carries
+    // it, which is the whole of what an unmerge restores it from.
+    assert.equal(data.source, "cake");
+    assert.equal(data.process_state, "merged");
+    assert.equal(data.verdict ?? "", "");
+    const merge = data.status_events.filter(({ to_state }) => to_state === "merged").pop();
+    assert.ok(merge, "the alias records no merge event");
+    assert.equal(merge.from_state, "discovered");
+    const note = /^merged into job (\d+) from discovered$/.exec(merge.note ?? "");
+    assert.ok(note, `merge note is not readable: ${merge.note}`);
+    assert.equal(Number(note[1]), group.canonical_job_id);
+  }
+  if (phase === "alias-restored") {
+    // An unmerge puts the alias back in the state and the standalone group it
+    // had before, and it is a job of its own again.
+    assert.equal(data.source, "cake");
+    assert.equal(data.process_state, "discovered");
+    assert.equal(group.canonical_job_id, data.id);
+    assert.deepEqual(group.members.map(({ source, merged }) => [source, merged]), [["cake", false]]);
+  }
+  if (phase === "canonical-restored") {
+    // The copy that carried the work keeps all of it: an unmerge costs a click,
+    // not a score or a letter.
+    assert.equal(data.source, "104");
+    assert.ok(data.score, "the canonical job lost its score");
+    assert.deepEqual(group.members.map(({ source }) => source), ["104"]);
+  }
+  if (phase === "candidate-merged") {
+    assert.equal(data.source, "104");
+    assert.equal(group.canonical_job_id, data.id);
+    const members = Object.fromEntries(group.members.map((member) => [member.source, member]));
+    assert.deepEqual(Object.keys(members).sort(), ["104", "cake"]);
+    assert.equal(members.cake.merged, true);
+    process.stdout.write(String(members.cake.job_id));
+  }
+  if (phase === "standalone") {
+    // A pair the user ruled apart stays two jobs, and is never suggested again.
+    assert.equal(group.canonical_job_id, data.id);
+    assert.equal(group.members.length, 1);
+    assert.equal(group.duplicate_candidate_count, 0);
+  }
+  if (phase === "same-source") {
+    // Two listings on one platform are two openings: they are never grouped.
+    assert.equal(group.canonical_job_id, data.id);
+    assert.deepEqual(group.members.map(({ source }) => source), ["cake"]);
+    assert.equal(group.duplicate_candidate_count, 0);
+  }
+  process.exit(0);
+}
+
+// duplicates asserts the grey-zone pairs left for the user. Titles that are
+// similar but not equal never merge on their own, whichever way they are then
+// decided.
+if (mode === "duplicates") {
+  const data = readJSON();
+  const pairs = data.items.map((candidate) => {
+    assert.equal(candidate.reason, "title_similar");
+    assert.ok(candidate.similarity >= 0.6 && candidate.similarity < 1, `candidate ${candidate.id} similarity ${candidate.similarity}`);
+    const sources = [candidate.a.source, candidate.b.source].sort();
+    assert.deepEqual(sources, ["104", "cake"]);
+    return [candidate.id, [candidate.a.company_name, candidate.b.company_name].some((name) => name.startsWith("Grey Labs")) ? "grey" : "ignore"];
+  });
+  const byKind = Object.fromEntries(pairs.map(([id, kind]) => [kind, id]));
+  if (phase === "pending") {
+    assert.deepEqual(Object.keys(byKind).sort(), ["grey", "ignore"]);
+    process.stdout.write(`${byKind.grey} ${byKind.ignore}`);
+  }
+  if (phase === "after-merge") {
+    assert.deepEqual(Object.keys(byKind), ["ignore"]);
+    process.stdout.write(String(byKind.ignore));
+  }
+  if (phase === "after-ignore" || phase === "empty") assert.deepEqual(data.items, []);
+  process.exit(0);
+}
+
+// no-alias proves a collection the user reads never carries an alias: a merged
+// job is listed nowhere, which is what keeps one listing from appearing twice.
+if (mode === "no-alias") {
+  const data = readJSON();
+  for (const item of data.items) {
+    assert.notEqual(item.process_state, "merged");
+    assert.notEqual(String(item.id), String(phase));
+  }
+  process.exit(0);
+}
+
+if (mode === "queued-count") {
+  const data = readJSON();
+  process.stdout.write(String(data.jobs.filter(({ process_state }) => process_state === "queued").length));
+  process.exit(0);
+}
+
+// worker-order reads the service log and asserts the order the worker consumed
+// the two stages in: everything already screened is scored first, and a single
+// pass is bounded by the batch size, so a queue larger than it is drained over
+// several passes before anything new is screened.
+if (mode === "worker-order") {
+  const lines = fs.readFileSync(file, "utf8").split("\n");
+  const picks = [];
+  for (const line of lines) {
+    if (!line.includes("stage picked jobs")) continue;
+    const stage = /\bstage=(score|filter)\b/.exec(line);
+    const jobs = /\bjobs=(\d+)/.exec(line);
+    assert.ok(stage && jobs, `a stage pick reported no stage or job count: ${line}`);
+    picks.push([stage[1], Number(jobs[1])]);
+  }
+  const firstFilter = picks.findIndex(([stage]) => stage === "filter");
+  assert.ok(firstFilter > 0, "the worker screened before it scored anything");
+  const scored = picks.slice(0, firstFilter);
+  for (const [stage] of scored) assert.equal(stage, "score");
+  assert.equal(scored[0][1], 50, "the first scoring pass did not take a full batch");
+  assert.ok(scored.length >= 2, "a queue larger than one batch was not picked up again");
+  assert.equal(scored.reduce((total, [, jobs]) => total + jobs, 0), 55);
+  assert.equal(picks[firstFilter][1], 1);
   process.exit(0);
 }
 

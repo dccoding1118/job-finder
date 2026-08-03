@@ -9,8 +9,7 @@
 ## §2 未完成任務
 
 - [ ] `agent_calls` 的 PII 守衛會讓已付費的呼叫整筆作廢：`SaveAgentCall` 在 prompt 或回應命中 email／09 開頭手機號時回 `store: invalid agent call`，該錯誤向上冒泡成整筆篩選失敗（實機 job_id=21 已發生），LLM 已經呼叫過、結果卻被丟棄，且該筆留在 `new` 每輪重試、每輪重付。決定作法：稽核寫入前遮蔽 PII 再存（保留用量與判定），而非讓守衛否決整筆工作。
-- [ ] 補上 V6 的驗收 harness 步驟 S40–S45 與 S41b（Cake capture 測資見 `docs/verify.md` §3.3.1）。
-- [ ] 補上 V7 的驗收 harness 步驟 S39、S39B 與 S39C（自動處理開關、Profile 變更後的等待中職缺與消化順序，標準答案見 `docs/verify.md` §4）。
+- [ ] `docs/verify.md` §4 的 S11、S12、S18、S32 標為 ⏳，但三支 mock runbook 實際都會跑且通過；其標準答案的字面值也與 harness 現行斷言不符（如 S11 寫 Score=3／Agent calls=15，實際為 4／16）。需逐條校對後把標準答案改成實際契約、狀態改為 ✅。
 
 **Roadmap（暫不實作，規劃見 `docs/roadmap.md`）**
 

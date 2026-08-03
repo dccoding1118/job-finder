@@ -1,0 +1,13 @@
+{
+  "source": "cake",
+  "url": "https://www.cake.me/companies/cake-only-labs/jobs/platform-reliability-engineer",
+  "cake_dom": {
+    "title": "Platform reliability engineer",
+    "company_name": "Cake Only Labs",
+    "sections": [
+      { "title": "職缺描述", "body": "Operate cloud platform reliability services" },
+      { "title": "職務需求", "body": "Experience with Go and Kubernetes" }
+    ],
+    "meta": ["立即應徵", "全職"]
+  }
+}

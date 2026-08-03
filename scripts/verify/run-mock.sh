@@ -22,7 +22,7 @@ timer_unit=""
 current_step=""
 current_tag=""
 current_title=""
-total_steps=25
+total_steps=32
 pass_count=0
 # covered_r accumulates the requirement IDs actually exercised, so the answer
 # sheet's coverage tally is derived from the steps that really ran.
@@ -73,12 +73,41 @@ agent_call_total() {
   assert_node agent-total "${RUNTIME_ROOT}/tmp/agent-total.json"
 }
 
+# settle_agents blocks until the resident worker stops adding Agent calls, so a
+# step that reads a settled verdict is not sampling mid-pass.
+settle_agents() {
+  local previous='' current=''
+  for _ in $(seq 1 200); do
+    current="$(agent_call_total)"
+    [[ -n "${previous}" && "${previous}" == "${current}" ]] && return
+    previous="${current}"
+    sleep 0.3
+  done
+  fail 'the resident worker never settled'
+}
+
+# capture_id reads back the job id a capture response reported for one external
+# id; a merged copy reports the canonical job's id, which is the point.
+capture_id() {
+  mise exec -- node -e 'const fs=require("fs");const data=JSON.parse(fs.readFileSync(process.argv[1]));const item=data.items.find((entry)=>entry.external_id===process.argv[2]);if(!item)throw new Error("no captured item "+process.argv[2]);process.stdout.write(String(item.id));' "$1" "$2"
+}
+
+# member_id reads the id of one source's copy out of a Job detail's group.
+member_id() {
+  mise exec -- node -e 'const fs=require("fs");const group=JSON.parse(fs.readFileSync(process.argv[1])).group;const member=group.members.find((entry)=>entry.source===process.argv[2]);if(!member)throw new Error("group carries no "+process.argv[2]+" member");process.stdout.write(String(member.job_id));' "$1" "$2"
+}
+
+# lists_job asserts one job id is present in a collection response.
+lists_job() {
+  mise exec -- node -e 'const fs=require("fs");const data=JSON.parse(fs.readFileSync(process.argv[1]));if(!data.items.some((item)=>String(item.id)===process.argv[2]))throw new Error("job "+process.argv[2]+" is absent");' "$1" "$2"
+}
+
 {
   printf '# jobfinder mock E2E 驗證報告\n\n'
   printf '%s\n' "- 產生時間：$(TZ=Asia/Taipei date --iso-8601=seconds)"
   printf '%s\n' '- 模式：mock（本機 Yourator fixture + fake CLI Agent）'
-  printf '%s\n' '- 範圍：V1、V2、V4、V5；同一物化 artifact、SQLite 與 evidence'
-  printf '%s\n' '- 答案卷：逐案例（S01–S25）觀察值＋判定，案例 ID 對齊題目卷 docs/verify.md §4'
+  printf '%s\n' '- 範圍：V1、V2、V4、V5、V6；同一物化 artifact、SQLite 與 evidence'
+  printf '%s\n' '- 答案卷：逐案例（S01–S25、S40–S45）觀察值＋判定，案例 ID 對齊題目卷 docs/verify.md §4'
   printf '%s\n' '- 資料保護：不記錄 Profile、JD、信件、token 或 Agent 原始輸出'
 } >"${report}"
 
@@ -422,6 +451,62 @@ calls_after="$(agent_call_total)"
 record '- 新職缺就地標記：intern 命中 exclude_title_keywords → filtered_out/unfit；senior → discovered/pending_detail；列表路徑 Agent 呼叫數不變。'
 pass_step
 
+# The Cake half of V6 runs here, between the 104 list marks and the 104 detail
+# capture: an automatic merge only stands while neither copy carries a score, a
+# letter, or an application, so the two copies have to meet before the 104 one
+# is assessed (see design-schema §4.2).
+capture_fixtures="${PROJECT_ROOT}/scripts/verify/fixtures/capture"
+cake_list_body="${RUNTIME_ROOT}/tmp/cake-list-next.json"
+# Cake carries its list state in a script tag, so a capture sends the whole
+# document as one string field; it is assembled here to keep the fixture on disk
+# readable as JSON.
+mise exec -- node -e 'const fs=require("fs");const [from,to]=process.argv.slice(1);fs.writeFileSync(to,JSON.stringify({source:"cake",url:"https://www.cake.me/jobs?query=backend",next_data:fs.readFileSync(from,"utf8")}));' "${capture_fixtures}/cake-next-data.json" "${cake_list_body}"
+
+begin_step 'S40' 'V6·R2/R3/R9' '驗證 Cake 列表 capture 就地判定且列表路徑零 Agent 呼叫'
+calls_before="$(agent_call_total)"
+curl --fail --silent "${auth[@]}" -X POST "${api_url}/capture/list" --data-binary "@${cake_list_body}" >"${output_file}" || fail 'cake list capture failed'
+assert_node list-marks "${output_file}" next || fail 'cake list capture did not mark items by their synchronous verdict'
+canonical_id="$(capture_id "${output_file}" 'beta-co/senior-backend-engineer')"
+nometa_id="$(capture_id "${output_file}" 'cake-only-labs/platform-reliability-engineer')"
+calls_after="$(agent_call_total)"
+[[ "${calls_before}" == "${calls_after}" ]] || fail "cake list capture called an Agent (${calls_before} → ${calls_after})"
+record '- Cake 列表以 __NEXT_DATA__ 素材就地標記：intern 命中 exclude_title_keywords → filtered_out/unfit；其餘兩筆 → discovered/pending_detail；列表路徑 Agent 呼叫數不變。'
+pass_step
+
+begin_step 'S41' 'V6·R2/R9' '驗證 Cake 內頁 capture 以 cake_dom 補全文'
+curl --fail --silent "${auth[@]}" -X POST "${api_url}/capture/job" --data-binary "@${capture_fixtures}/cake-job-v6dup.json" >"${output_file}" || fail 'cake detail capture failed'
+curl --fail --silent "${auth[@]}" "${api_url}/jobs/${canonical_id}" >"${output_file}" || fail 'canonical job detail is unreadable'
+cake_alias_id="$(member_id "${output_file}" cake)"
+curl --fail --silent "${auth[@]}" "${api_url}/jobs/${cake_alias_id}" >"${output_file}" || fail 'the cake copy detail is unreadable'
+assert_node cake-detail "${output_file}" meta || fail 'the captured Cake JD, place, salary or remote arrangement is not what the page carried'
+curl --fail --silent "${auth[@]}" -X POST "${api_url}/capture/job" --data-binary "@${capture_fixtures}/cake-job-v6nometa.json" >"${output_file}" || fail 'cake detail capture without a metadata area failed'
+curl --fail --silent "${auth[@]}" "${api_url}/jobs/${nometa_id}" >"${output_file}" || fail 'the metadata-less cake job detail is unreadable'
+assert_node cake-detail "${output_file}" nometa || fail 'an unreadable metadata area did not leave place, salary and remote undecided'
+record '- cake_dom 的職缺描述與職務需求兩段各自保留區塊標題進入全文，external_id 與列表項目一致；有 metadata 行者讀出台北市／120000–150000／hybrid，辨識不到者維持 unknown 與 null。'
+pass_step
+
+begin_step 'S41b' 'V6·R2.8' '驗證同一來源的兩筆相似職缺不合併'
+curl --fail --silent "${auth[@]}" -X POST "${api_url}/capture/list" --data-binary "@${capture_fixtures}/cake-list-dom.json" >"${output_file}" || fail 'DOM-harvested cake list capture failed'
+assert_node list-marks "${output_file}" dom || fail 'the DOM-harvested cake list did not mark its items'
+same_first_id="$(capture_id "${output_file}" 'delta-works/backend-engineer')"
+same_second_id="$(capture_id "${output_file}" 'delta-works/backend-engineer-platform')"
+for jid in "${same_first_id}" "${same_second_id}"; do
+  curl --fail --silent "${auth[@]}" "${api_url}/jobs/${jid}" >"${output_file}" || fail 'same-source cake job detail is unreadable'
+  assert_node group "${output_file}" same-source || fail 'two listings on one platform were grouped'
+done
+curl --fail --silent "${auth[@]}" "${api_url}/duplicates" >"${output_file}" || fail 'duplicate candidates are unreadable'
+assert_node duplicates "${output_file}" empty || fail 'two listings on one platform were offered as a duplicate candidate'
+record '- 以 DOM 收割素材擷取的同一 Cake 來源兩筆（公司相同、正規化職稱相等）各自保有獨立群組與 discovered 判定，不自動合併也不進 GET /duplicates。'
+pass_step
+
+begin_step 'S42' 'V6·R2.8' '驗證 Cake 與既有 104 職缺跨來源分群'
+curl --fail --silent "${auth[@]}" "${api_url}/jobs/${canonical_id}" >"${output_file}" || fail 'canonical job detail is unreadable'
+assert_node group "${output_file}" merged >/dev/null || fail 'the cake and 104 copies are not one group with the 104 copy canonical'
+curl --fail --silent "${auth[@]}" "${api_url}/jobs/${cake_alias_id}" >"${output_file}" || fail 'the cake alias detail is unreadable'
+assert_node group "${output_file}" alias-merged || fail 'the alias does not record its pre-merge state and canonical id'
+record "- 公司寫法與職稱大小寫不同的兩筆歸入同一 group：canonical 依來源優先序為 104 的 job_id=${canonical_id}；Cake 的 job_id=${cake_alias_id} 轉入 merged，狀態事件記錄合併前狀態 discovered 與 canonical id。"
+pass_step
+
 begin_step 'S25' 'V5·R9' '驗證 104 既有職缺直接回判定與內頁 capture 非同步'
 curl --fail --silent "${auth[@]}" -X POST "${api_url}/capture/list" -d "${list_payload}" >"${output_file}" || fail '104 list re-capture failed'
 assert_node capture-list "${output_file}" repeat || fail '104 re-capture did not return the existing verdict without re-creating'
@@ -447,16 +532,75 @@ grep -Eq "^${captured_id}[[:space:]]" "${output_file}" || fail 'captured job nev
 record "- 既有職缺 re-capture 直接回現行判定且不重建；discovered 職缺進入 sidebar 待看清單；內頁補全文後同步過結構化條件並停留 new，語意篩選由常駐 worker 完成後 job_id=${captured_id} 才進入評分佇列。"
 pass_step
 
+begin_step 'S43' 'V6·R2.8/R9.7' '驗證合併後的判定與清單'
+# The canonical copy and the metadata-less cake job are both consumed by the
+# resident worker; the marks a re-capture returns are only settled once it goes
+# quiet.
+settle_agents
+calls_before="$(agent_call_total)"
+curl --fail --silent "${auth[@]}" -X POST "${api_url}/capture/list" --data-binary "@${cake_list_body}" >"${output_file}" || fail 'cake list re-capture failed'
+assert_node list-marks "${output_file}" next-again || fail 'the cake re-capture did not return the canonical verdicts'
+[[ "$(capture_id "${output_file}" 'beta-co/senior-backend-engineer')" == "${canonical_id}" ]] || fail 'the cake capture did not return the canonical job id'
+calls_after="$(agent_call_total)"
+[[ "${calls_before}" == "${calls_after}" ]] || fail "the cake re-capture called an Agent (${calls_before} → ${calls_after})"
+curl --fail --silent "${auth[@]}" "${api_url}/jobs?limit=100" >"${output_file}" || fail 'job list is unreadable'
+assert_node no-alias "${output_file}" "${cake_alias_id}" || fail 'GET /jobs listed a merged job'
+curl --fail --silent "${auth[@]}" "${api_url}/queue?limit=100" >"${output_file}" || fail 'the 待看 queue is unreadable'
+assert_node no-alias "${output_file}" "${cake_alias_id}" || fail 'the 待看 queue listed a merged job'
+curl --fail --silent "${auth[@]}" "${api_url}/jobs/${canonical_id}" >"${output_file}" || fail 'canonical job detail is unreadable'
+assert_node group "${output_file}" merged >/dev/null || fail 'the merged group does not carry both source links'
+record "- Cake 頁面再次擷取回 canonical 的 job_id=${canonical_id} 與其既有判定，未新增 Agent 呼叫；GET /jobs 與 GET /queue 皆不含 merged 的 job_id=${cake_alias_id}；Job 詳情 group.members 含 104 與 cake 兩個來源連結。"
+pass_step
+
+begin_step 'S44' 'V6·R2.8/R6.12' '驗證灰帶候選與人工裁決'
+curl --fail --silent "${auth[@]}" -X POST "${api_url}/capture/list" --data-binary "@${capture_fixtures}/104-list-grey.json" >"${output_file}" || fail 'grey-zone 104 list capture failed'
+assert_node list-marks "${output_file}" grey-base || fail 'the grey-zone 104 listings were not captured'
+grey_base_id="$(capture_id "${output_file}" v6greybase)"
+ignore_base_id="$(capture_id "${output_file}" v6ignorebase)"
+curl --fail --silent "${auth[@]}" -X POST "${api_url}/capture/list" --data-binary "@${capture_fixtures}/cake-list-grey.json" >"${output_file}" || fail 'grey-zone cake list capture failed'
+assert_node list-marks "${output_file}" grey || fail 'the grey-zone cake listings were not captured'
+grey_cake_id="$(capture_id "${output_file}" 'grey-labs/data-platform-engineer-core')"
+[[ "${grey_cake_id}" != "${grey_base_id}" ]] || fail 'a similar-but-unequal title was merged automatically'
+curl --fail --silent "${auth[@]}" "${api_url}/duplicates" >"${output_file}" || fail 'duplicate candidates are unreadable'
+candidates="$(assert_node duplicates "${output_file}" pending)" || fail 'the similar-but-unequal titles were not left for the user'
+read -r grey_candidate ignore_candidate <<<"${candidates}"
+curl --fail --silent "${auth[@]}" -X POST "${api_url}/duplicates/${grey_candidate}/merge" >"${output_file}" || fail 'merging the grey-zone candidate failed'
+grep -Fq '"status":"merged"' "${output_file}" || fail 'the merge decision was not confirmed'
+curl --fail --silent "${auth[@]}" "${api_url}/jobs/${grey_base_id}" >"${output_file}" || fail 'the merged grey-zone job is unreadable'
+assert_node group "${output_file}" candidate-merged >/dev/null || fail 'the user decision did not merge the pair'
+curl --fail --silent "${auth[@]}" "${api_url}/duplicates" >"${output_file}" || fail 'duplicate candidates are unreadable after the merge'
+assert_node duplicates "${output_file}" after-merge >/dev/null || fail 'the decided candidate is still pending'
+curl --fail --silent "${auth[@]}" -X POST "${api_url}/duplicates/${ignore_candidate}/ignore" >"${output_file}" || fail 'ignoring the remaining candidate failed'
+grep -Fq '"status":"ignored"' "${output_file}" || fail 'the ignore decision was not confirmed'
+curl --fail --silent "${auth[@]}" "${api_url}/duplicates" >"${output_file}" || fail 'duplicate candidates are unreadable after the ignore'
+assert_node duplicates "${output_file}" after-ignore || fail 'the ignored candidate was suggested again'
+curl --fail --silent "${auth[@]}" "${api_url}/jobs/${ignore_base_id}" >"${output_file}" || fail 'the ignored 104 job is unreadable'
+assert_node group "${output_file}" standalone || fail 'the ignored pair was grouped anyway'
+record "- 職稱相似但不相等的跨來源兩對皆未自動合併並列於 GET /duplicates；候選 ${grey_candidate} merge 後合併成立且轉為已裁決，候選 ${ignore_candidate} ignore 後不再出現且兩筆各自獨立。"
+pass_step
+
+begin_step 'S45' 'V6·R2.8' '驗證取消合併'
+curl --fail --silent "${auth[@]}" -X POST "${api_url}/jobs/${cake_alias_id}/unmerge" >"${output_file}" || fail 'the unmerge request failed'
+grep -Fq '"status":"unmerged"' "${output_file}" || fail 'the unmerge was not confirmed'
+curl --fail --silent "${auth[@]}" "${api_url}/jobs/${cake_alias_id}" >"${output_file}" || fail 'the unmerged job is unreadable'
+assert_node group "${output_file}" alias-restored || fail 'the alias was not restored to its pre-merge state and its own group'
+curl --fail --silent "${auth[@]}" "${api_url}/jobs/${canonical_id}" >"${output_file}" || fail 'the canonical job is unreadable after the unmerge'
+assert_node group "${output_file}" canonical-restored || fail 'the unmerge disturbed the work the canonical job carried'
+curl --fail --silent "${auth[@]}" "${api_url}/jobs?limit=100" >"${output_file}" || fail 'job list is unreadable after the unmerge'
+lists_job "${output_file}" "${cake_alias_id}" || fail 'the unmerged job did not reappear in the list'
+record "- job_id=${cake_alias_id} 取消合併後還原為合併前的 discovered 與獨立 group 並重新出現於清單；canonical job_id=${canonical_id} 的既有 Score 與 Letter 未被刪除。"
+pass_step
+
 covered_r_list="$(printf '%s\n' "${!covered_r[@]}" | sort -V | paste -sd' ' -)"
 record ''
 record '## 結果'
 record '- 結果：PASS'
 record "- 判定 tally：PASS ${pass_count}／FAIL 0／SKIP 0（共 ${total_steps} 步）"
 record "- 需求覆蓋：${covered_r_list}（本趟 mock 實際驗到的需求；完整地圖見 docs/verify.md §2）"
-record '- 案例覆蓋：V1 隔離成品與匿名 Profile、V2 合成來源 fetch/worker 階段與按需求職信、V4 transient systemd lifecycle 與隔離 Chromium extension 模擬、V5 104 清單就地判定與內頁非同步評估。'
+record '- 案例覆蓋：V1 隔離成品與匿名 Profile、V2 合成來源 fetch/worker 階段與按需求職信、V4 transient systemd lifecycle 與隔離 Chromium extension 模擬、V5 104 清單就地判定與內頁非同步評估、V6 Cake 半被動擷取與跨來源合併裁決。'
 record ''
 record '### 使用者故事重建（本趟驗過的劇本）'
-record '載入 5 筆 Yourator 職缺 → #1000「intern」命中排除關鍵字當場篩掉（unfit）→ #1004 的薪資與一條必要條件無從判定，但 JD 完整故照常評分得 70（not_recommended）→ #1003 得 60（not_recommended）、#1001 得 80、#1002 得 90（後兩者 shortlisted，未要求不生成信）→ 對 2 筆 shortlisted 要求生成 → #1002 首輪核准（round 1）、#1001 三輪退回（round 3）→ dashboard 複製 #1002 的信、標記 applied → 104 搜尋頁載入 2 筆：intern 篩掉、senior 進待看清單 → senior 內頁補全文、過結構化條件後停在 new，語意篩選與評分由 worker 接手。'
+record '載入 5 筆 Yourator 職缺 → #1000「intern」命中排除關鍵字當場篩掉（unfit）→ #1004 的薪資與一條必要條件無從判定，但 JD 完整故照常評分得 70（not_recommended）→ #1003 得 60（not_recommended）、#1001 得 80、#1002 得 90（後兩者 shortlisted，未要求不生成信）→ 對 2 筆 shortlisted 要求生成 → #1002 首輪核准（round 1）、#1001 三輪退回（round 3）→ dashboard 複製 #1002 的信、標記 applied → 104 搜尋頁載入 2 筆：intern 篩掉、senior 進待看清單 → Cake 搜尋頁載入 3 筆：intern 篩掉、senior 認出與 104 那筆是同一則職缺而合併、第三筆進待看清單 → senior 內頁補全文、過結構化條件後停在 new，語意篩選與評分由 worker 接手 → 再開一次 Cake 頁面直接看到 104 那筆的既有判定 → 職稱相似但不相等的兩對交由使用者裁決，一對合併、一對忽略 → 取消合併後 Cake 那筆回到待看清單，既有評分未失。'
 record ''
-record '> 對答案：逐案例（S01–S25）將上方觀察值對 docs/verify.md §4 的字面標準答案；測資與完整標準答案見 §3，機器斷言見 scripts/verify/oracle/assert-positive.mjs。'
+record '> 對答案：逐案例（S01–S25、S40–S45）將上方觀察值對 docs/verify.md §4 的字面標準答案；測資與完整標準答案見 §3，機器斷言見 scripts/verify/oracle/assert-positive.mjs。'
 printf 'mock verification passed: %s\n' "${report}"

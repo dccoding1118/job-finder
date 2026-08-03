@@ -1,0 +1,36 @@
+{
+  "props": {
+    "pageProps": {
+      "ssr": {
+        "search": { "query": "backend", "page": 1, "filters": {} }
+      },
+      "initialState": {
+        "jobSearch": {
+          "entityByPathId": {
+            "beta-co:senior-backend-engineer": {
+              "path": "senior-backend-engineer",
+              "title": "Senior backend engineer",
+              "locations": ["台北市"],
+              "salary": { "min": 120000, "max": 150000, "currency": "TWD", "type": "per_month" },
+              "page": { "path": "beta-co", "name": "Beta Co., Ltd.", "geo": "Taipei", "country": "Taiwan" }
+            },
+            "example-services:backend-intern-engineer": {
+              "path": "backend-intern-engineer",
+              "title": "backend intern engineer",
+              "locations": ["台北市"],
+              "salary": { "min": 120000, "max": 150000, "currency": "TWD", "type": "per_month" },
+              "page": { "path": "example-services", "name": "Example Services", "geo": "Taipei", "country": "Taiwan" }
+            },
+            "cake-only-labs:platform-reliability-engineer": {
+              "path": "platform-reliability-engineer",
+              "title": "Platform reliability engineer",
+              "locations": ["台北市"],
+              "salary": { "min": 130000, "max": 160000, "currency": "TWD", "type": "per_month" },
+              "page": { "path": "cake-only-labs", "name": "Cake Only Labs", "geo": "Taipei", "country": "Taiwan" }
+            }
+          }
+        }
+      }
+    }
+  }
+}
