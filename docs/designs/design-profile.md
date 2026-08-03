@@ -22,7 +22,7 @@
 
 `profile.path` 不存在是合法的 setup 狀態。新檔、同目錄暫存檔與替換後檔案皆使用 `0600`；模組不得擴大父目錄權限。
 
-## 3. `profile.yaml` 格式（schema v5）
+## 3. `profile.yaml` 格式（schema v6）
 
 區段依用途劃分，表單與 YAML 的順序為 `search` → `requirements` → `intents` → `experiences` → `qualifications` → `honesty_bounds`，另有程式物化的 `derived`。
 
@@ -51,12 +51,14 @@
 
 `locations[]` 是唯一的一份地區設定。曾另有一份「搜尋地區」試圖搜得更廣再篩掉，但半被動來源的列表頁只有前幾頁，多搜出來的職缺一律被本欄硬規則淘汰，只會把可通勤地區的職缺擠出視野；兩份設定的交集才是實際結果，所以只留這一份。
 
-地區與工作型態同為受控列舉：存的是地區鍵，每個鍵帶一組別名（簡體、繁體、英文），篩選以別名對 JD 所述地點做子字串比對，故選「台北市」也能命中寫「臺北市」或 `Taipei` 的 JD。鍵涵蓋台灣直轄市與各縣市，另有兩個非縣市的鍵：
+地區與工作型態同為受控列舉：存的是地區鍵，每個鍵帶一組別名（簡體、繁體、英文），篩選以別名對 JD 所述地點做子字串比對，故選「台北市」也能命中寫「臺北市」或 `Taipei` 的 JD。**每個鍵只命中它自己所指的地點，沒有任何鍵代表其他鍵**：選「台北市」不會命中只寫「台灣」的 JD。鍵涵蓋台灣直轄市與各縣市，另有兩個非縣市的鍵：
 
 | 鍵 | 顯示 | 含意 |
 |---|---|---|
-| `nationwide` | 全台 | 不限台灣的縣市，但不含海外；展開為全部縣市的別名 |
+| `taiwan` | 台灣 | 只陳述國別、未指出縣市的地點；JD 若已寫出任一縣市即不由本鍵命中 |
 | `overseas` | 海外 | 台灣以外，不分國家 |
+
+「不限台灣任何地點」因此是**一組鍵**而非一個鍵：`overseas` 以外的全部鍵。編輯器以「＋ 全台」快捷鈕一次填入這組鍵（見 [design-extension](design-extension.md) §3），設定檔則逐項列出。
 
 「新竹」「嘉義」未帶市／縣時同為市與縣兩鍵的別名：用詞本身無從判斷，而含糊的用詞不得構成淘汰。
 
@@ -221,7 +223,7 @@ Agent 回 JSON 建議清單（契約見 [design-agents](design-agents.md) §3.5�
 
 ## 9. 交付物
 
-- `internal/profile/`：型別、strict codec、驗證、PII 檢核、canonical serialization、ETag／雙 revision、`derived` 計算、schema migration（v4 的 `search.locations` 併入 `requirements.locations`；pre-v4 整份對映）、原子檔案寫入、provider、各關 Profile 子集導出、校準建議套用與 diff 產生，以及單元測試。
+- `internal/profile/`：型別、strict codec、驗證、PII 檢核、canonical serialization、ETag／雙 revision、`derived` 計算、schema migration（v5 的 `nationwide` 展開為 `overseas` 以外的全部地區鍵；v4 的 `search.locations` 併入 `requirements.locations`；pre-v4 整份對映）、原子檔案寫入、provider、各關 Profile 子集導出、校準建議套用與 diff 產生，以及單元測試。
 - `configs/profile.example.yaml`。
 
 ## 10. 待決

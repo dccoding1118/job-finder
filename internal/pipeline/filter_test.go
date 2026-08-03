@@ -241,8 +241,9 @@ func TestEmploymentTypeMatchesEveryWordingOfTheChosenType(t *testing.T) {
 }
 
 // The locality condition matches the JD's own wording from the picked key, so a
-// source reporting 臺北市, 台北市 or Taipei all satisfy the same choice. `nationwide`
-// admits any Taiwan locality; `overseas` admits only a JD stated as such.
+// source reporting 臺北市, 台北市 or Taipei all satisfy the same choice. Each key
+// admits only its own locality: `taiwan` admits a JD that stated the country and
+// no county, and `overseas` admits only a JD stated as such.
 func TestLocationConditionMatchesEveryWordingOfTheKey(t *testing.T) {
 	verdictFor := func(keys []string, location string) string {
 		filter := Filter{Requirements: profile.Requirements{Locations: keys, Remote: "acceptable"}}
@@ -262,8 +263,15 @@ func TestLocationConditionMatchesEveryWordingOfTheKey(t *testing.T) {
 		{[]string{"taipei"}, "台北市大安區", store.FilterPass},
 		{[]string{"taipei"}, "Taipei, Taiwan", store.FilterPass},
 		{[]string{"taipei"}, "高雄市", store.FilterFail},
-		{[]string{profile.LocationNationwide}, "臺東縣", store.FilterPass},
-		{[]string{profile.LocationNationwide}, "Tokyo, Japan", store.FilterFail},
+		{[]string{"taipei"}, "台灣", store.FilterFail},
+		{[]string{profile.LocationTaiwan}, "台灣", store.FilterPass},
+		{[]string{profile.LocationTaiwan}, "全台", store.FilterPass},
+		{[]string{profile.LocationTaiwan}, "臺東縣", store.FilterFail},
+		{[]string{profile.LocationTaiwan}, "Taipei, Taiwan", store.FilterFail},
+		{[]string{profile.LocationTaiwan}, "Tokyo, Japan", store.FilterFail},
+		{profile.TaiwanLocationKeys(), "臺東縣", store.FilterPass},
+		{profile.TaiwanLocationKeys(), "台灣", store.FilterPass},
+		{profile.TaiwanLocationKeys(), "Tokyo, Japan", store.FilterFail},
 		{[]string{profile.LocationOverseas}, "海外", store.FilterPass},
 		{[]string{profile.LocationOverseas}, "台北市", store.FilterFail},
 		{[]string{"taipei"}, "", store.FilterUnknown},

@@ -63,7 +63,7 @@ var structuralRules = []structuralRule{
 		if location := strings.TrimSpace(j.Location); location == "" || location == store.LocationUnknown {
 			return store.FilterUnknown
 		}
-		return failIf(!containsAny(j.Location, profile.LocationTerms(f.Requirements.Locations)))
+		return failIf(!matchesLocation(j.Location, f.Requirements.Locations))
 	}},
 	{"remote", true, func(f Filter, j store.Job) string { return judgeRemote(f.Requirements.Remote, j.RemoteType) }},
 	{"employment_types", true, func(f Filter, j store.Job) string {
@@ -137,9 +137,34 @@ func (f Filter) Evaluate(job store.Job, partial bool) []store.FilterCondition {
 	return conditions
 }
 
-// Match reports the structural conditions a job fails outright. It is what the
-// list-page mark and the partial re-screen are decided by: a failure is a
-// conclusion those paths can state without any further input.
+// matchesLocation decides whether a JD's stated locality is one the user picked.
+// Each picked key matches its own wordings, with one qualification: `taiwan` is
+// the country stated *without* a locality, so a JD that named a county is not
+// matched by it — otherwise picking 台灣 would quietly admit every county, which
+// is what picking all of them is for.
+func matchesLocation(location string, keys []string) bool {
+	counties := make([]string, 0, len(keys))
+	country := false
+	for _, key := range keys {
+		if key == profile.LocationTaiwan {
+			country = true
+			continue
+		}
+		counties = append(counties, key)
+	}
+	if containsAny(location, profile.LocationTerms(counties)) {
+		return true
+	}
+	return country &&
+		containsAny(location, profile.Locations.Aliases(profile.LocationTaiwan)) &&
+		!containsAny(location, profile.CountyTerms())
+}
+
+// Match reports the structural conditions a job fails outright. It is the
+// screen a Profile activation re-runs over every existing job (see
+// [Pipeline.ActivateProfile]): a structural failure is a conclusion that path
+// can reach without an Agent call, and it is the only thing an activation is
+// allowed to decide on its own.
 func (f Filter) Match(job store.Job) []string {
 	partial := job.Description == nil
 	hits := []string{}

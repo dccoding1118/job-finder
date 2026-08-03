@@ -21,9 +21,11 @@ search:
         - reliability
 requirements:
   salary_min: 0
-  # Canonical location keys. `nationwide` is Taiwan without a locality
-  # restriction and `overseas` is everything outside it; a locality's
-  # simplified, traditional and English wordings are all matched from the key.
+  # Canonical location keys. Each key matches only the locality it names:
+  # `taiwan` is the country stated without a county and `overseas` is everything
+  # outside it, so covering the whole country means listing every key but
+  # `overseas`. A locality's simplified, traditional and English wordings are all
+  # matched from the key.
   locations:
     - taipei
     - new_taipei

@@ -26,7 +26,7 @@ api_unit=''
 current_step=''
 current_title=''
 pass_count=0
-total_steps=8
+total_steps=9
 
 cleanup() {
   stop_transient_units
@@ -38,7 +38,7 @@ begin_step() {
   current_step="$1"
   current_title="$2"
   record ''
-  record "## [${current_step}] (V7) ${current_title}"
+  record "## [${current_step}] (${3:-V7}) ${current_title}"
 }
 
 assert_node() {
@@ -104,7 +104,7 @@ rm -f "${profile_path}" "${profile_db}.worker.lock" "${agent_signal}"
   printf '# jobfinder Profile mock E2E 驗證報告\n\n'
   printf '%s\n' "- 產生時間：$(TZ=Asia/Taipei date --iso-8601=seconds)"
   printf '%s\n' '- 模式：mock（合成 Profile；不保存 request／response body）'
-  printf '%s\n' '- 範圍：V7 S30–S36 與 V8 S52；S37 保留實際 Chrome 人工 gate'
+  printf '%s\n' '- 範圍：V7 S30–S36、V8 S52 與 S46；S37 與 S38 為實機 Chrome 人工 gate'
 } >"${report}"
 
 start_api "$(date +%s)-$$-setup"
@@ -221,7 +221,7 @@ assert_node profile-race "${snapshot}" || fail 'old revision Score became curren
 record '- scorer 執行中切換 Profile：舊 Agent call 保留舊 revision；舊結果 CAS 未成為現行 Score；新 revision Score 可被查得。'
 pass_step
 
-begin_step 'S52' '只改軟規則的重跑範圍'
+begin_step 'S52' '只改軟規則的重跑範圍' 'V8'
 curl --silent --dump-header "${headers}" --output "${output_file}" "${auth[@]}" "${api_url}/profile"
 etag="$(etag_from_headers)"
 mise exec -- node -e 'const fs=require("fs");const [from,to]=process.argv.slice(1);const value=JSON.parse(fs.readFileSync(from));value.intents.content_dislikes.push("on-call rotations without tooling");fs.writeFileSync(to,JSON.stringify(value));' "${race_json}" "${modified_json}"
@@ -240,9 +240,37 @@ filter_calls_after="$(assert_node agent-total "${snapshot}" filter)"
 record "- 只修改 intents：PUT 回 filter_changed=false／score_changed=true；reprocess 後 filtered_out 職缺的狀態與逐條判定不變，role=filter 呼叫數維持 ${filter_calls_after}。"
 pass_step
 
+begin_step 'S46' 'Agent 用量稽核與每日彙總' 'V1/V2'
+curl --silent --output "${output_file}" "${auth[@]}" "${api_url}/status" || fail 'status read failed'
+usage_line="$(mise exec -- node -e '
+const fs = require("fs");
+const status = JSON.parse(fs.readFileSync(process.argv[1]));
+const calls = status.agent_calls || [];
+if (!calls.length) throw new Error("no audited agent calls");
+const priced = calls.filter((call) => call.runner === "claude");
+if (!priced.length) throw new Error("no claude calls to account for");
+for (const call of priced) {
+  if (call.model !== "claude-sonnet-5") throw new Error(`call ${call.id} recorded model ${call.model}`);
+  if (!(call.input_tokens > 0 && call.output_tokens > 0 && call.cost_usd > 0)) throw new Error(`call ${call.id} recorded no usage`);
+}
+const usage = status.agent_usage_daily || [];
+const rows = usage.filter((row) => row.runner === "claude" && row.model === "claude-sonnet-5");
+if (!rows.length) throw new Error("no daily usage row for the runner that answered");
+const sum = (field) => rows.reduce((total, row) => total + row[field], 0);
+const [billed, input, output] = [sum("calls"), sum("input_tokens"), sum("output_tokens")];
+if (!(billed > 0 && input === billed * 1200 && output === billed * 150 && sum("cache_read_tokens") === billed * 800 && sum("cache_write_tokens") === billed * 40)) {
+  throw new Error(`daily totals do not match the per-call usage: ${JSON.stringify(rows)}`);
+}
+if (!(sum("cost_usd") > 0)) throw new Error("daily cost was not accumulated");
+process.stdout.write(`${rows.map((row) => row.date).join(",")} ${billed} ${input} ${output}`);
+' "${output_file}")" || fail 'agent usage accounting did not match the recorded calls'
+read -r usage_date usage_calls usage_input usage_output <<<"${usage_line}"
+record "- GET /status：每筆 Agent 呼叫附 model 與用量；agent_usage_daily 於 ${usage_date} 彙總 claude/claude-sonnet-5 共 ${usage_calls} 次呼叫、入 ${usage_input}／出 ${usage_output} token 且費用 > 0。"
+pass_step
+
 record ''
 record '## 結果'
 record '- 結果：PASS'
 record "- 判定 tally：PASS ${pass_count}／FAIL 0／SKIP 0（共 ${total_steps} 步）"
-record '- 案例覆蓋：V7 S30–S36 與 V8 S52；S37 仍須將同一 extension artifact 載入實際 Chrome 完成人工 gate。'
+record '- 案例覆蓋：V7 S30–S36、V8 S52 與 S46；S37 與 S38 為實機 Chrome 人工 gate，由驗收者操作，不在本趟。'
 printf 'profile mock verification passed: %s\n' "${report}"

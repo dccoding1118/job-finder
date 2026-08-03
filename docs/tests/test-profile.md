@@ -31,7 +31,9 @@
 | PT-02 | YAML 語法錯誤，或缺少必填區段與欄位（含 `experiences` 為空） | 拒絕載入；錯誤指出 YAML 或缺少的欄位 |
 | PT-03 | `qualifications.education[].level`、`qualifications.skills[].level` 或 `requirements.remote` 使用未定義 enum | 拒絕載入；錯誤指出非法欄位值（`remote` 四值以外一律拒絕） |
 | PT-19 | 受控列舉欄位（`requirements.employment_types[]`、`education[].status`、`certifications[].status`、`languages[].level`）填入鍵、別名（如「正職」「畢業」「中等」）與列舉外的值 | 鍵與別名皆正規化為鍵，`employment_types` 另去重；列舉外的值拒絕載入且錯誤列出合法鍵 |
-| PT-34 | `requirements.locations[]` 填入鍵、簡繁英別名（`臺北`／`Taipei`）、`nationwide`／`overseas` 與列舉外的地名 | 鍵與別名皆正規化為鍵並去重；列舉外的地名拒絕載入且錯誤列出合法鍵 |
+| PT-34 | `requirements.locations[]` 填入鍵、簡繁英別名（`臺北`／`Taipei`／`全台`）、`taiwan`／`overseas` 與列舉外的地名 | 鍵與別名皆正規化為鍵並去重（`全台` 正規化為 `taiwan`）；列舉外的地名拒絕載入且錯誤列出合法鍵 |
+| PT-36 | `requirements.locations[]` 仍帶 v5 的 `nationwide` 的舊檔 | 載入時展開為 `overseas` 以外的全部地區鍵（含 `taiwan`）並去重，原有其他項與 `overseas` 保留；不含 `nationwide` 的檔案不被改寫 |
+| PT-37 | `LocationTerms` 與 `TaiwanLocationKeys` 的涵蓋範圍 | 每個鍵只展開自己的別名，沒有任一鍵展開為其他鍵；`TaiwanLocationKeys` 為 `overseas` 以外的全部鍵且含 `taiwan` |
 | PT-35 | 仍帶 `search.locations` 的舊檔 | 併入 `requirements.locations[]`（原有項在前、去重）後照常載入；`search` 不再有地區欄位 |
 | PT-04 | 年資或薪資欄位不是數值，或年資為負值 | 拒絕載入；錯誤指出數值欄位 |
 | PT-05 | `search.directions` 缺少 `key`、`title` 或 `keywords` | 拒絕載入；錯誤指出不完整的方向項目 |

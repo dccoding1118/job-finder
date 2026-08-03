@@ -28,7 +28,7 @@ mise run e2e-mock   # 物化隔離 artifact → 依序跑 V1/V2/V4/V5/V7 → 產
   | SQLite snapshot | `<binary> verify snapshot --db .local-dev/verify/runtime/mock.db` | 5 筆 Job 的終態、篩選逐條判定、四維分數、letter 輪次、狀態事件 |
   | browser evidence | `evidence/extension-browser.json`、`evidence/extension-dashboard.png` | extension 模擬互動的安全摘要與截圖 |
 
-- **跑到哪停**：`mise run e2e-mock` 一趟涵蓋 V1／V2／V4／V5／V7 與 V8 的 S52（✅）。V6 的 Cake 步驟（S40–S45）尚未實作（⏳）。V3 live 需真 Yourator＋已授權 `claude`/`codex` CLI，另跑 `mise run e2e-live`（⏳，§6）。實際 Chrome 安裝與相容性一律人工 gate（§9）。
+- **跑到哪停**：`mise run e2e-mock` 一趟涵蓋 V1／V2／V4／V5、V7 的 S30–S36 與 V8 的 S46、S52（✅）。V6 的 Cake 步驟（S40–S45、S41b）與 V7 的 S39 系列尚未實作（⏳）。V3 live 需真 Yourator＋已授權 `claude`/`codex` CLI，另跑 `mise run e2e-live`（⏳，§6）。實際 Chrome 安裝與相容性一律人工 gate（👤，§9）。
 
 ## 2. 覆蓋度地圖（需求 ←→ 案例）
 
@@ -41,10 +41,11 @@ mise run e2e-mock   # 物化隔離 artifact → 依序跑 V1/V2/V4/V5/V7 → 產
 | R5 要求後才生成的 Drafter–Reviewer 與程式防線 | V2、V3 | S5、S10 | N-LTR | ◑ |
 | R6 extension 清單/判定/對照/生成/複製/投遞/手動/Run | V3、V4 | S17–S23 | — | ◑ |
 | R7 one-shot／timer／手動／冪等／執行上限／自動處理開關與插隊 | V2、V3、V4、V7 | S11、S14、S16、S39、S39B、S39C | — | ◑ |
-| R8 Run 摘要、Agent 稽核、安全 evidence | V1–V6 | S12 | — | ◑ |
+| R8 Run 摘要、Agent 稽核、安全 evidence | V1–V6 | S12、S46 | — | ◑ |
 | R9 半被動列表快速判定、內頁完整評估、待看清單 | V5、V6 | S24–S25、S40–S41 | — | ◑ |
 
-- **✅ 可執行**：已有驗收入口且本次 artifact 可驗證完整案例。**L1**：由模組單元測試涵蓋，e2e 不重跑——S53 的升級前資料庫只有單元測試造得出來。**◑ 部分可驗**：已有可執行子流程，未覆蓋需求完整結果。**⏳ 待實作**：規格已保留、產品或 verifier 尚未交付。
+- **✅ 可執行**：已有驗收入口且本次 artifact 可驗證完整案例。**L1**：由模組單元測試涵蓋，e2e 不重跑——S53 的升級前資料庫只有單元測試造得出來。**◑ 部分可驗**：已有可執行子流程，未覆蓋需求完整結果。**⏳ 待實作**：規格已保留、產品或 verifier 尚未交付。**👤 人工 gate**：只能在實機 Chrome 由驗收者操作，**沒有自動化終點**——每次相關改動後由驗收者當場驗，結論不回寫本檔、不附截圖或證據檔，因此此標記是終態，不會轉為 ✅ 或 ⏳。
+- 本檔的 ⏳ 一律指「harness 尚未實作」這件待辦；人工 gate 不用 ⏳，以免每次翻閱都被讀成新的待辦。
 - V1、V2、V4、V5 共用同一份 mock 答案卷（§4）；V3 走 live（§6）；V6 待 B6 交付；V8 的 S52 併入 Profile mock 一趟，S51 與 S53 由 L1 涵蓋。
 
 ## 3. 測資與標準答案（fixture answer key）
@@ -87,7 +88,7 @@ mock 一趟用固定合成測資；下表即「標準答案」，逐值由 `asse
 
 ### 3.4 Profile 與來源請求測資
 
-- Profile（匿名，schema v5）：`experiences` 兩筆（合計 `derived.total_years=8`，管理年資 0）、`qualifications.education=[master · computer science]`、`qualifications.skills=[Java:expert, Go:proficient]`、`requirements`（`salary_min=90000`、`locations=[taipei]`、`remote=acceptable`、`exclude_title_keywords=[intern]`）、`intents`（`salary_target=120000`、`content_likes`／`content_dislikes` 各一條、`industry_interests` 一項）、`search.directions=[P1:cloud architecture, P2:backend engineering, P3:platform reliability]`。
+- Profile（匿名，schema v6）：`experiences` 兩筆（合計 `derived.total_years=8`，管理年資 0）、`qualifications.education=[master · computer science]`、`qualifications.skills=[Java:expert, Go:proficient]`、`requirements`（`salary_min=90000`、`locations=[taipei]`、`remote=acceptable`、`exclude_title_keywords=[intern]`）、`intents`（`salary_target=120000`、`content_likes`／`content_dislikes` 各一條、`industry_interests` 一項）、`search.directions=[P1:cloud architecture, P2:backend engineering, P3:platform reliability]`。
 - V7 bootstrap 另以不存在的 Profile 啟動；首次儲存使用同一份合成內容。revision 由 canonical 結構計算，evidence 只記 revision 短碼與筆數，不保存 Profile request／response body。
 - 來源請求序：先 `GET /robots.txt` → 3 個方向各一次 `GET /api/v4/jobs`（`term[]`＝`{cloud,platform}`／`{backend,Go}`／`{Kubernetes,reliability}`，page=1）→ 5 個唯一 `GET /jobs/1000..1004`。跨 query 重複項不重抓。
 
@@ -115,6 +116,7 @@ mock 一趟用固定合成測資；下表即「標準答案」，逐值由 `asse
 | S16 | transient timer（fetch-only） | timer 以 `trigger=timer` 執行；service Result=success、ExecMainStatus=0；snapshot 出現 `Trigger:timer` | V4·R7 | ✅ |
 | S17 | localhost API 正向認證 | 精確 extension Origin＋token=200；無 Origin MV3＋token=200；preflight=204 | V4·R6 | ✅ |
 | S18 | API 清單、篩選、判定與對照 | 5 筆 verdict/letter_state＝§3.2；source/process/apply/verdict filter 精確；待看 queue 於清單擷取前為空；`#1002/#1001` 詳情四維、`filter_result` 逐條、letter、狀態事件精確 | V2/V4·R6 | ⏳ |
+| S46 | Agent 用量稽核與每日彙總 | 每筆 `agent_calls` 附實際 model 與該次 token／費用；`GET /status` 的 `agent_usage_daily` 依台北日界 × runner × model 彙總，且各欄加總＝該組呼叫數 × 單次用量；不自報費用的 runner 其 `cost_usd` 為 0 | V1/V2·R8 | ✅ |
 | S19 | 載入固定 ID extension 模擬環境 | 固定 unpacked ID `oddnhajj…`；安全摘要 Origin=absent、Authorization present=true、token 已清空 | V4·R6 | ✅ |
 | S20 | Side Panel 判定篩選、copy、apply | 四頁籤與 light／dark theme 正常；filters_verified、detail_verified、clipboard==核准合成信、`#1002` apply pending→applied 並寫回 SQLite | V4·R6 | ✅ |
 | S21 | Side Panel 求職信生成入口 | 對 `#1001`（letter_failed）再次產生→受理轉 `letter_requested`；狀態事件永久記錄第 2 次 `letter_requested`，worker 隨後取件 | V4·R6 | ✅ |
@@ -134,8 +136,8 @@ mock 一趟用固定合成測資；下表即「標準答案」，逐值由 `asse
 | S34 | 外部修改 YAML 後以舊 ETag 儲存 | 回 412；磁碟與 active snapshot 不被舊資料覆蓋；editor 保留草稿 | V7·R1/R6 | ✅ |
 | S35 | 送入 unknown field 與合成 PII | 回 422 safe issues；檔案與 snapshot 不變；log／evidence 不含 payload 或 denylist 值 | V7·R1/R8 | ✅ |
 | S36 | score worker 執行中更新 Profile 並手動 reprocess | 舊 call 保留實際 revision；activation 切換 Job revision 後，舊結果 CAS 失敗，不成為現行 Score | V7·R1/R7 | ✅ |
-| S37 | Chrome 人工 Profile gate | 系統頁各群組、Options 入口、批次時間、手動 reprocess、整數評分與 revision 燈號、全頁表單新增定位、衝突、離頁提醒及 light／dark 可用 | V7·R6 | ⏳ |
-| S38 | 單筆重新處理與處理進度 | 對已評分職缺按「重新處理」後只該筆回 `new`、worker 重篩並重評附加新 Score，其他職缺 Agent 呼叫數不變；對判不適合的職缺按同一入口後該筆重新進入篩選；系統頁處理進度與 Agent 呼叫紀錄反映該次執行 | V7·R6/R7 | ⏳ |
+| S37 | Chrome 人工 Profile gate | 系統頁各群組、Options 入口、批次時間、手動 reprocess、整數評分與 revision 燈號、全頁表單新增定位、衝突、離頁提醒及 light／dark 可用 | V7·R6 | 👤 |
+| S38 | 單筆重新處理與處理進度 | 對已評分職缺按「重新處理」後只該筆回 `new`、worker 重篩並重評附加新 Score，其他職缺 Agent 呼叫數不變；對判不適合的職缺按同一入口後該筆重新進入篩選；系統頁處理進度與 Agent 呼叫紀錄反映該次執行 | V7·R6/R7 | 👤 |
 
 | S39 | 自動處理開關與單筆插隊處理 | 關閉自動處理後，`new`／`queued` 職缺於 worker 掃描間隔內狀態不變且無新 Agent 呼叫；批次正在消化時關閉，最多再完成當下這一筆即停止並記一行 Info；對其中一筆送 `POST /jobs/{id}/process` 回 202，該筆完成篩選與評分且只增加該筆的 Agent 呼叫；每日評分額度已用盡時同一入口仍完成該筆；重新開啟後其餘職缺恢復消化 | V7·R6/R7 | ⏳ |
 
@@ -223,9 +225,8 @@ mise run e2e-live
 ## 9. 後續累加順序
 
 1. 在具備正式來源連線與已授權 CLI 的環境跑通 **V3**：真來源至少一筆、真 Agent score／letter 與安全格式 evidence 缺一不可。
-2. 完成實際 **Chrome compatibility gate**；自動隔離 Chromium 不得替代人工結論。人工操作步驟見 `docs/guides/runbook-extension.md`。
-3. 完成 **V5** 的真 104 頁人工 Chrome gate；真頁面只驗證使用者已載入的內容，確認清單就地標記與既有職缺判定一致。
-4. 完成 **V6** 的 Cake 半被動擷取與跨來源合併（含真實 Cake 頁的人工 Chrome gate），再將 V1–V6 彙整為完整日常求職迴圈。
-5. 依 §5 骨架累加負向案例 N，沿用相同需求對照與 evidence 格式。
-6. 將同一 extension artifact 載入實際 Chrome，完成 **V7 S37** Profile editor 與 **S38** 單筆重新處理／處理進度的人工 gate。
-7. 隨 B7 實作改寫 harness 與 `assert-positive.mjs`，跑通 **V8**（S51–S53）並更新受影響的 mock 步驟（S3、S5、S8、S9、S11、S12、S18、S25、S32）；Profile editor 六區段表單另走實機 Chrome gate。
+2. 完成 **V6** 的 Cake 半被動擷取與跨來源合併 harness（S40–S45、S41b），再將 V1–V6 彙整為完整日常求職迴圈。
+3. 完成 **V7** 的自動處理開關與插隊 harness（S39、S39B、S39C）。
+4. 依 §5 骨架累加負向案例 N，沿用相同需求對照與 evidence 格式。
+
+**人工 gate 是常態流程，不是待辦**：凡動到 extension、Side Panel、Profile editor 或任一 content script 的改動，交付前由驗收者把同一份 artifact 載入實機 Chrome 走一次（步驟見 `docs/guides/runbook-extension.md`），涵蓋 §4 標為 👤 的步驟與該次改動觸及的頁面。自動隔離 Chromium 不得替代人工結論；結論當場即知，不回寫本檔。

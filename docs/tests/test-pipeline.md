@@ -96,7 +96,7 @@
 | PT-81 | `requirements.remote` 四值 × JD `full`／`hybrid`／`onsite`／未提及 | 完全符合 §3.3 矩陣；未提及一律視同 `onsite`（`required` 判 `fail`、`rejected` 判 `pass`），此條不產生 `unknown` |
 | PT-82 | 任一結構化條件判 `fail` | 該筆同步 `filtered_out`，**不呼叫 Filter Agent**；agent call 數為零 |
 | PT-83 | 結構化條件全過 | 恰呼叫 Filter Agent 一次 |
-| PT-84 | 選定地區鍵 × JD 地點寫成簡體、繁體、英文或含行政區後綴；`nationwide` × 台灣地點與海外地點；`overseas` × 兩者 | 同一鍵的各種寫法皆判 `pass`；`nationwide` 對台灣任一縣市判 `pass`、對海外判 `fail`；`overseas` 反之；地點為空字串或哨兵值 `unknown` 皆判 `unknown`，不判 `fail` |
+| PT-84 | 選定地區鍵 × JD 地點寫成簡體、繁體、英文或含行政區後綴；縣市鍵 × 只寫「台灣」的地點；`taiwan` × 只寫國別、寫出縣市與海外三種地點；`overseas` × 台灣與海外地點；全部台灣地區鍵 × 三者 | 同一鍵的各種寫法皆判 `pass`；縣市鍵對只寫「台灣」判 `fail`；`taiwan` 只對未寫出縣市的台灣地點判 `pass`，對已寫出縣市者與海外判 `fail`；`overseas` 反之；選入全部台灣地區鍵時縣市與只寫「台灣」皆判 `pass`、海外判 `fail`；地點為空字串或哨兵值 `unknown` 皆判 `unknown`，不判 `fail` |
 
 ### 4.4.2 語意篩選與彙總
 

@@ -24,15 +24,19 @@
   const skillLevels = { expert: "專家", proficient: "熟練", familiar: "了解" };
   // locations mirrors the backend vocabulary: the stored value is the key, and a
   // locality's simplified, traditional and English wordings are matched from it.
-  // `nationwide` means any locality in Taiwan and excludes `overseas`.
+  // Each key matches only the locality it names; `taiwan` is the country stated
+  // without a county, and `overseas` is everything outside it.
   const locations = {
     taipei: "台北市", new_taipei: "新北市", keelung: "基隆市", taoyuan: "桃園市",
     hsinchu_city: "新竹市", hsinchu_county: "新竹縣", miaoli: "苗栗縣", taichung: "台中市",
     changhua: "彰化縣", nantou: "南投縣", yunlin: "雲林縣", chiayi_city: "嘉義市",
     chiayi_county: "嘉義縣", tainan: "台南市", kaohsiung: "高雄市", pingtung: "屏東縣",
     yilan: "宜蘭縣", hualien: "花蓮縣", taitung: "台東縣", penghu: "澎湖縣",
-    kinmen: "金門縣", lienchiang: "連江縣", nationwide: "全台", overseas: "海外",
+    kinmen: "金門縣", lienchiang: "連江縣", taiwan: "台灣", overseas: "海外",
   };
+  // Every locality inside Taiwan, which is what the 全台 shortcut fills in: the
+  // counties plus the country-only wording, never 海外.
+  const taiwanLocations = Object.keys(locations).filter((key) => key !== "overseas");
   // vocabularyLists are the string lists whose entries are picked from a fixed
   // vocabulary instead of typed.
   const vocabularyLists = { "requirements.locations": locations };
@@ -322,6 +326,19 @@
 
   function addHandlers() {
     document.querySelectorAll("[data-add-list]").forEach((button) => button.addEventListener("click", () => { const path = button.dataset.addList; const index = getPath(path).length; getPath(path).push(""); renderStringList(path); markDirty(); focusPath(`${path}.${index}`); }));
+    // 全台 is not a value: it is every locality in Taiwan at once, so the button
+    // fills the list rather than adding a row. Entries already chosen stay put,
+    // and 海外 is left alone — it is the one locality the shortcut never means.
+    document.querySelectorAll("[data-fill-taiwan]").forEach((button) => button.addEventListener("click", () => {
+      const path = button.dataset.fillTaiwan;
+      const chosen = getPath(path);
+      const added = taiwanLocations.filter((key) => !chosen.includes(key));
+      if (added.length === 0) return;
+      const kept = chosen.filter((value) => value !== "");
+      chosen.splice(0, chosen.length, ...kept, ...added);
+      renderStringList(path);
+      markDirty();
+    }));
     const adders = {
       experience: { array: () => state.draft.experiences, item: emptyExperience, render: renderExperiences, focus: (index) => `experiences.${index}.industry` },
       direction: { array: () => state.draft.search.directions, item: () => ({ key: "", title: "", keywords: [] }), render: renderDirections, focus: (index) => `search.directions.${index}.key` },

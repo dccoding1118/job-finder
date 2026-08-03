@@ -293,7 +293,7 @@ func TestLocationsAreNormalizedOntoTheVocabulary(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
-	want := []string{"taipei", LocationNationwide, LocationOverseas}
+	want := []string{"taipei", LocationTaiwan, LocationOverseas}
 	if got := value.Requirements.Locations; !reflect.DeepEqual(got, want) {
 		t.Fatalf("locations = %v, want %v", got, want)
 	}
@@ -303,19 +303,52 @@ func TestLocationsAreNormalizedOntoTheVocabulary(t *testing.T) {
 	}
 }
 
-// `nationwide` stands for every locality in Taiwan and deliberately not for
-// `overseas`, which is the one key it must not expand to.
-func TestNationwideExpandsToTaiwanOnly(t *testing.T) {
-	terms := LocationTerms([]string{LocationNationwide})
-	for _, want := range []string{"台北", "臺東", "Kaohsiung", "不限"} {
-		if !slices.Contains(terms, want) {
-			t.Fatalf("nationwide terms are missing %q", want)
+// Every key matches only the locality it names: `taiwan` is the country stated
+// without one, not a stand-in for the counties, and the counties are not a
+// stand-in for it either.
+func TestLocationKeysMatchOnlyTheirOwnLocality(t *testing.T) {
+	countryTerms := LocationTerms([]string{LocationTaiwan})
+	for _, want := range []string{"台灣", "臺灣", "全台", "Taiwan"} {
+		if !slices.Contains(countryTerms, want) {
+			t.Fatalf("taiwan terms are missing %q", want)
 		}
 	}
-	for _, unwanted := range Locations.Aliases(LocationOverseas) {
-		if slices.Contains(terms, unwanted) {
-			t.Fatalf("nationwide terms include the overseas wording %q", unwanted)
+	for _, unwanted := range []string{"台北", "Kaohsiung", "海外", "Overseas"} {
+		if slices.Contains(countryTerms, unwanted) {
+			t.Fatalf("taiwan terms include %q, which is a different locality", unwanted)
 		}
+	}
+	if terms := LocationTerms([]string{"taipei"}); slices.Contains(terms, "台灣") {
+		t.Fatalf("taipei terms include the country-only wording: %v", terms)
+	}
+}
+
+// "全部台灣地區" is a list of keys, not a key: it is every locality in Taiwan
+// including the country-only wording, and never `overseas`.
+func TestTaiwanLocationKeysCoverTheCountryWithoutOverseas(t *testing.T) {
+	keys := TaiwanLocationKeys()
+	if !slices.Contains(keys, LocationTaiwan) || !slices.Contains(keys, "taipei") {
+		t.Fatalf("taiwan keys = %v", keys)
+	}
+	if slices.Contains(keys, LocationOverseas) {
+		t.Fatal("taiwan keys include overseas")
+	}
+	if len(keys) != len(Locations)-1 {
+		t.Fatalf("taiwan keys cover %d of %d vocabulary terms", len(keys), len(Locations))
+	}
+}
+
+// A v5 file stated the whole country with one retired key. Loading it must keep
+// accepting exactly the jobs it accepted, so the key becomes the list it stood
+// for rather than the narrower country-only key.
+func TestNationwideMigratesToEveryTaiwanLocality(t *testing.T) {
+	value, err := DecodeYAML([]byte(strings.Replace(validProfileYAML(), "locations: [taipei]", "locations: [nationwide, overseas]", 1)))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	want := append(TaiwanLocationKeys(), LocationOverseas)
+	if got := value.Requirements.Locations; !reflect.DeepEqual(got, want) {
+		t.Fatalf("locations = %v, want %v", got, want)
 	}
 }
 

@@ -82,7 +82,9 @@ case "${agent}" in
   claude)
     escaped="${payload//\\/\\\\}"
     escaped="${escaped//\"/\\\"}"
-    printf '{"type":"result","subtype":"success","is_error":false,"result":"%s"}\n' "${escaped}"
+    # The real CLI reports its own token accounting and cost on the same
+    # envelope; fixed synthetic values keep the daily usage view assertable.
+    printf '{"type":"result","subtype":"success","is_error":false,"result":"%s","total_cost_usd":0.0125,"usage":{"input_tokens":1200,"output_tokens":150,"cache_read_input_tokens":800,"cache_creation_input_tokens":40}}\n' "${escaped}"
     ;;
   codex)
     printf '%s\n' "${payload}" >"${last_message}"
