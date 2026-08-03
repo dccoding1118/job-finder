@@ -72,7 +72,9 @@ func newMockSourceCmd() *cobra.Command {
 			mux.HandleFunc("/jobs/1001", mockJobPage("Verification failure remote platform engineer", "Build Go &amp; cloud platform services"))
 			mux.HandleFunc("/jobs/1002", mockJobPage("Verification ready hybrid backend engineer", "Build <strong>Go</strong> backend services"))
 			mux.HandleFunc("/jobs/1003", mockJobPage("Verification low score cloud engineer", "Maintain cloud operations services"))
-			mux.HandleFunc("/jobs/1004", mockJobPage("Verification unknown salary platform engineer", "Operate cloud platform services"))
+			// 1004 also carries a recruiter contact line, the shape of JD text that
+			// puts a mail address and a phone number into an Agent prompt.
+			mux.HandleFunc("/jobs/1004", mockJobPage("Verification unknown salary platform engineer", "Operate cloud platform services. Contact hr@verification.invalid or 0912345678"))
 			handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if logFile != nil && r.URL.Path != "/healthz" {
 					logMu.Lock()

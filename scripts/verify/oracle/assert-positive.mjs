@@ -154,7 +154,7 @@ const FIXTURES = {
   1001: { title: "Verification failure remote platform engineer", company: "Example Platform", description: "Build Go & cloud platform services", salary: [100000, 120000], remote: "remote" },
   1002: { title: "Verification ready hybrid backend engineer", company: "Example Services", description: "Build Go backend services", salary: [110000, 130000], remote: "hybrid" },
   1003: { title: "Verification low score cloud engineer", company: "Example Operations", description: "Maintain cloud operations services", salary: [90000, 100000], remote: "onsite" },
-  1004: { title: "Verification unknown salary platform engineer", company: "Example Ventures", description: "Operate cloud platform services", salary: [null, null], remote: "onsite" },
+  1004: { title: "Verification unknown salary platform engineer", company: "Example Ventures", description: "Operate cloud platform services. Contact [EMAIL] or [PHONE]", salary: [null, null], remote: "onsite" },
 };
 
 function assertAgentCalls(actual, expected) {

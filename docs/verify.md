@@ -4,7 +4,7 @@
 > **題目卷 ↔ 答案卷**：本檔是題目卷；`mise run e2e-mock` 每趟產生 `evidence/<timestamp>-mock.md` 答案卷（逐案例的實際觀察值與判定，案例 ID 與本檔 §4 對齊）。**人工驗收＝拿答案卷逐案例對本檔標準答案**（§7）。
 > **只驗真程式真的跑得出來的部分**。mock fixture（合成 Yourator／104 頁、fake CLI Agent、隔離 Chromium）**允許但明標「模擬，不等於真來源、真 CLI Agent 或實際 Chrome 已驗收」**；真依賴另走 V3 live（§6）與人工 Chrome gate（§9）。
 > **三態判定**：`PASS` ／ `ENVIRONMENT_BLOCKED`（exit 2，外部依賴不可用，未判定產品）／ `FAIL`（exit 1，產品行為不符），不得以「安全完成」當 PASS。
-> 標準答案的機器真相源是 `scripts/verify/oracle/assert-positive.mjs`；本檔為人重述並指向它，兩者不得分歧。對應 `docs/design.md` §8 測試策略。最後更新：2026-08-03。
+> 標準答案的機器真相源是 `scripts/verify/oracle/assert-positive.mjs`；本檔為人重述並指向它，兩者不得分歧。對應 `docs/design.md` §8 測試策略。最後更新：2026-08-04。
 
 負向案例（N）目前僅保留骨架（§5），待正向流程穩定後，以相同的需求對照與 evidence 格式累加；不阻礙目前 V 的交付。
 
@@ -41,7 +41,7 @@ mise run e2e-mock   # 物化隔離 artifact → 依序跑 V1/V2/V4/V5/V7 → 產
 | R5 要求後才生成的 Drafter–Reviewer 與程式防線 | V2、V3 | S5、S10 | N-LTR | ◑ |
 | R6 extension 清單/判定/對照/生成/複製/投遞/手動/Run | V3、V4 | S17–S23 | — | ◑ |
 | R7 one-shot／timer／手動／冪等／執行上限／自動處理開關與插隊 | V2、V3、V4、V7 | S11、S14、S16、S39、S39B、S39C | — | ◑ |
-| R8 Run 摘要、Agent 稽核、安全 evidence | V1–V6 | S12、S46 | — | ◑ |
+| R8 Run 摘要、Agent 稽核、安全 evidence | V1–V6 | S12、S46、S54 | — | ◑ |
 | R9 半被動列表快速判定、內頁完整評估、待看清單 | V5、V6 | S24–S25、S40–S41 | — | ◑ |
 
 - **✅ 可執行**：已有驗收入口且本次 artifact 可驗證完整案例。**L1**：由模組單元測試涵蓋，e2e 不重跑——S53 的升級前資料庫只有單元測試造得出來。**◑ 部分可驗**：已有可執行子流程，未覆蓋需求完整結果。**⏳ 待實作**：規格已保留、產品或 verifier 尚未交付。**👤 人工 gate**：只能在實機 Chrome 由驗收者操作，**沒有自動化終點**——每次相關改動後由驗收者當場驗，結論不回寫本檔、不附截圖或證據檔，因此此標記是終態，不會轉為 ✅ 或 ⏳。
@@ -69,6 +69,7 @@ mock 一趟用固定合成測資；下表即「標準答案」，逐值由 `asse
 - 共同欄位：`source=yourator`、`url=http://127.0.0.1:18787/jobs/<id>`、`location=Taipei`、`company_info=public listing`、`content_hash=sha256(標題\n描述\n薪資min\n薪資max\nTaipei\nremote)`。
 - **Agent 呼叫累計**：篩選階段 `filter=4`（`#1000` 結構化即淘汰，不呼叫）；評分階段 `scorer=4`；要求生成後 `drafter=4`、`reviewer=4`（信件 runner：draft=`claude`、review=`codex`；scorer runner=`claude`）。冪等重跑與列表路徑**零新增**。
 - **letter placeholder**：核准信含 `[你的姓名]`、`[你的聯絡方式]` 兩個 placeholder（程式防線，不外洩 PII）。
+- **JD 內的招募聯絡方式**：`1004` 的原始頁面附 `Contact hr@verification.invalid or 0912345678`，用以驅動 S54；入庫時即遮罩，`jobs.description` 與其 `content_hash` 皆以 `Contact [EMAIL] or [PHONE]` 為準，下游 prompt 與 `agent_calls` 稽核副本一併帶著佔位符。
 
 ### 3.3 104 兩筆測資（V5）
 
@@ -116,15 +117,16 @@ Cake 列表以 `__NEXT_DATA__` 與 DOM 收割兩種素材各擷取一次；內�
 | S7 | 驗證來源欄位正規化 | 5 筆逐欄＝§3.2 共同欄位＋各自 title/company/salary/remote/content_hash | V2·R2 | ✅ |
 | S8 | 驗證硬規則彙總分流與逐條判定 | `#1000` filter_hits=`[exclude_title_keywords, salary_floor]`→`filtered_out`（結構化即淘汰、該筆零 Agent 呼叫）；`#1004` 的 `salary_floor` 與一條必要條件皆判 `unknown`，但 JD 完整故彙總為 `pass`→`queued`，`filter_hits` 為空；其餘 3 筆全 `pass` 進評分；通過結構化條件的 4 筆各恰一次 `role=filter` 呼叫，`filter_results` 逐條含必備／加分標記且未滿足的加分條件不影響彙總 | V2·R3 | ✅ |
 | S9 | 驗證評分四維與分流，且 letter 零 Agent | `#1002`=90×4、`#1001`=80、`#1004`=70×4、`#1003`=60×4，reason 各＝§3.2；`#1002/#1001` shortlisted、`#1003/#1004` scored；letter=null、drafter/reviewer 呼叫=0；filter=4、scorer=4 | V2·R4 | ✅ |
-| S10 | 要求生成後驗證信件與 Agent 稽核 | 對 2 筆 shortlisted `letter request`→`requested:<id>`；`--stage letter`＝`lettered:2`；`#1002` approved/rounds=1/apply=pending、`#1001` failed/rounds=3；轉換含 `shortlisted→letter_requested`；calls scorer=3/drafter=4/reviewer=4；runner=checked-in fake | V2·R5 | ✅ |
-| S11 | 重跑抓取與階段冪等 | 重跑 `fetched:5/new:0`；filter=0、score=0；Job=5、Score=3、Letter=2、Agent calls=15 均未增 | V2·R7 | ⏳ |
-| S12 | 安全 SQLite snapshot 與 Run stats | snapshot 只含契約欄位與 hash；`runs.Stats`＝`{fetched:5,new:5,queries:3,errors:0}`，無 filter/score/letter 統計 | V1/V2·R8 | ⏳ |
+| S10 | 要求生成後驗證信件與 Agent 稽核 | 對 2 筆 shortlisted `letter request`→`requested:<id>`；`--stage letter`＝`lettered:2`；`#1002` approved/rounds=1/apply=pending、`#1001` failed/rounds=3；轉換含 `shortlisted→letter_requested`；calls filter=4/scorer=4/drafter=4/reviewer=4；runner=checked-in fake | V2·R5 | ✅ |
+| S11 | 重跑抓取與階段冪等 | 重跑 `fetched:5/new:0`；`--stage filter`＝`filtered_out:0／queued:0`、`--stage score`＝`scored:0`；Job=5、Score=4、Letter=2、Agent calls=16 均未增 | V2·R7 | ✅ |
+| S12 | 安全 SQLite snapshot 與 Run stats | snapshot 只含契約欄位與 hash（JD 只留 `description_sha256`／長度，JD 與 Agent payload 的 PII 只留計數）；首次 `run` 的 `runs.Stats`＝`{fetched:5,new:5,queries:3,errors:0}`、冪等重跑那筆 `new:0`，皆無 filter/score/letter 統計 | V1/V2·R8 | ✅ |
+| S54 | JD 與稽核 payload 的 PII 遮罩 | `jobs.description` 全表 `pii_matches=0` 且恰 1 筆（`#1004`）帶 `[EMAIL]`／`[PHONE]` 佔位；`agent_calls` 全表 `pii_matches=0`，其 filter 與 scorer 共 2 筆 payload 帶佔位且 token 用量完整保留（`masked==masked_with_usage`），呼叫未被整筆作廢 | V2·R8 | ✅ |
 | S13 | 驗證 rendered systemd units | API/run ExecStart、PATH、DB 路徑正確；timer `OnCalendar=*-*-* 08:30:00 Asia/Taipei`；通過 `systemd-analyze` | V4·R7 | ✅ |
 | S14 | transient one-shot service | `systemd-run --user --wait --pipe` 於 rendered PATH 執行 binary，完成一個無外部成本 stage | V4·R7 | ✅ |
 | S15 | transient API service（含常駐 worker） | user manager 啟動同一 binary/SQLite 的 API service；loopback health 可達、is-active=active | V4·R6/R7 | ✅ |
 | S16 | transient timer（fetch-only） | timer 以 `trigger=timer` 執行；service Result=success、ExecMainStatus=0；snapshot 出現 `Trigger:timer` | V4·R7 | ✅ |
 | S17 | localhost API 正向認證 | 精確 extension Origin＋token=200；無 Origin MV3＋token=200；preflight=204 | V4·R6 | ✅ |
-| S18 | API 清單、篩選、判定與對照 | 5 筆 verdict/letter_state＝§3.2；source/process/apply/verdict filter 精確；待看 queue 於清單擷取前為空；`#1002/#1001` 詳情四維、`filter_result` 逐條、letter、狀態事件精確 | V2/V4·R6 | ⏳ |
+| S18 | API 清單、篩選、判定與對照 | 5 筆 verdict/letter_state＝§3.2；source/process/apply/verdict filter 精確；待看 queue 於清單擷取前為空；`#1002/#1001` 詳情四維、`filter_result` 逐條、letter、狀態事件精確 | V2/V4·R6 | ✅ |
 | S46 | Agent 用量稽核與每日彙總 | 每筆 `agent_calls` 附實際 model 與該次 token／費用；`GET /status` 的 `agent_usage_daily` 依台北日界 × runner × model 彙總，且各欄加總＝該組呼叫數 × 單次用量；不自報費用的 runner 其 `cost_usd` 為 0 | V1/V2·R8 | ✅ |
 | S19 | 載入固定 ID extension 模擬環境 | 固定 unpacked ID `oddnhajj…`；安全摘要 Origin=absent、Authorization present=true、token 已清空 | V4·R6 | ✅ |
 | S20 | Side Panel 判定篩選、copy、apply | 四頁籤與 light／dark theme 正常；filters_verified、detail_verified、clipboard==核准合成信、`#1002` apply pending→applied 並寫回 SQLite | V4·R6 | ✅ |
@@ -140,7 +142,7 @@ Cake 列表以 `__NEXT_DATA__` 與 DOM 收割兩種素材各擷取一次；內�
 |---|---|---|---|---|
 | S30 | 以不存在的 Profile 啟動 serve | health、Profile、Job／Run 讀取可用；Profile status=`missing`；worker 與處理型 route 暫停／409 | V7·R1 | ✅ |
 | S31 | 從 extension 建立合法合成 Profile | migration 升至含 revision 欄位的 schema；產生 `0600` YAML；provider 不重啟即 ready；回 ETag 與 revision，不自動重處理既有 Job | V7·R1/R6 | ✅ |
-| S32 | 建立各處理／letter／apply 狀態後修改 `requirements`，再手動更新 | PUT 回 `filter_changed=true`，既有 Job 保留原 revision 並 stale；POST reprocess 後 eligible Job 切新 `filter_revision`、回 `new` 重篩並依新結果分流、通過者重新排分；letter／apply 歷史不變 | V7·R1/R7 | ⏳ |
+| S32 | 建立各處理／letter／apply 狀態後修改 `qualifications`，再手動重處理 | PUT 回 `status=ready`／`score_changed=true` 且雙 revision 皆為新值，儲存當下 snapshot 與存檔前逐位元組相同（既有 Job 保留原 revision）；POST reprocess 回 `status=queued` 且 `activation.refiltered>0`、`activation.protected>0`；reprocess 後 eligible Job 帶新 `filter_revision`，letter／apply 歷史不變 | V7·R1/R7 | ✅ |
 | S33 | 重送語意相同 Profile | revision 不變、`semantic_changed=false`；狀態事件、Score 與 Agent call 數不增加 | V7·R1/R7 | ✅ |
 | S34 | 外部修改 YAML 後以舊 ETag 儲存 | 回 412；磁碟與 active snapshot 不被舊資料覆蓋；editor 保留草稿 | V7·R1/R6 | ✅ |
 | S35 | 送入 unknown field 與合成 PII | 回 422 safe issues；檔案與 snapshot 不變；log／evidence 不含 payload 或 denylist 值 | V7·R1/R8 | ✅ |
