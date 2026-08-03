@@ -18,7 +18,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const schemaVersion = 7
+const schemaVersion = 8
 
 //go:embed schema.sql
 var schemaSQL string
@@ -137,6 +137,14 @@ var upgrades = map[int]string{
 	ALTER TABLE agent_calls ADD COLUMN reasoning_tokens INTEGER NOT NULL DEFAULT 0;
 	ALTER TABLE agent_calls ADD COLUMN cost_usd REAL NOT NULL DEFAULT 0;
 	CREATE INDEX IF NOT EXISTS agent_calls_runner_model_created_idx ON agent_calls(runner, model, created_at);`,
+	// Settings the user changes from the Side Panel live in the database rather
+	// than in config.yaml: the API service owns them at runtime, and a restart
+	// must not silently undo a switch the user turned off.
+	7: `CREATE TABLE IF NOT EXISTS settings (
+		key TEXT PRIMARY KEY,
+		value TEXT NOT NULL,
+		updated_at TEXT NOT NULL
+	);`,
 }
 
 var piiPattern = regexp.MustCompile(`(?i)[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}|(?:\+886|0)9\d{8}`)
@@ -798,9 +806,12 @@ func scanJobRow(row rowScanner) (Job, error) {
 	return job, nil
 }
 
-// maxScoreReason mirrors the Scorer contract in internal/agents: a reason the
-// Agent is allowed to produce must be storable.
-const maxScoreReason = 100
+// maxScoreReason bounds one stored reason. It is a storage sanity bound, not
+// the Scorer's length contract: that contract is counted in its own units and
+// enforced in internal/agents before an answer is accepted, so this sits far
+// above anything it lets through. A reason that got past the contract has
+// already been paid for and must never be lost at write time.
+const maxScoreReason = 500
 
 func validateScore(input ScoreInput) error {
 	if input.JobID <= 0 || !validRunner(input.Runner) || len([]rune(input.Reason)) > maxScoreReason {

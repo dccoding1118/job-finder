@@ -136,3 +136,9 @@ CREATE TABLE IF NOT EXISTS job_dupe_candidates (
 );
 
 CREATE INDEX IF NOT EXISTS job_dupe_candidates_state_idx ON job_dupe_candidates(state);
+
+CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);

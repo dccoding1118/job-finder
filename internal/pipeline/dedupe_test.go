@@ -86,7 +86,7 @@ func TestMergedAliasIsNotPickedByAnyStage(t *testing.T) {
 		t.Fatalf("merged aliases = %d, want 1", counts["merged"])
 	}
 	for _, stage := range []string{"filter", "score", "letter"} {
-		picked, err := db.PickForStage(ctx, stage, "", 10)
+		picked, err := db.PickForStage(ctx, stage, store.Revisions{}, 10)
 		if err != nil {
 			t.Fatal(err)
 		}

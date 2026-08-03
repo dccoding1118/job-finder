@@ -127,7 +127,8 @@ prompt 組裝與各維給分規則屬 agents 模組（見 [test-agents](test-age
 |---|---|---|
 | PT-70 | `filter_revision` 變更後啟用，涵蓋 partial／full 各可重處理狀態 | 清除舊 filter hits 與判定、切換 revision、依矩陣重新篩選；通過者重新排入 score |
 | PT-70B | 只有 `score_revision` 變更後啟用 | `scored`／`shortlisted` 回 `queued` 重評；`filtered_out`／`discovered` 狀態與篩選結果完全不變 |
-| PT-70A | 只儲存新 revision，未送手動 reprocess | 既有 partial／full Job、Score 與狀態完全不變；worker 在 Filter／Scorer 前跳過 stale revision，不呼叫 Agent；新 ingest 使用新 revision |
+| PT-70A | 只儲存新 revision，未送手動 reprocess | 已有判定的 Job（`filtered_out`／`scored`／`shortlisted`／篩選判定過時的 `queued`）狀態、Score 與 revision 完全不變，不呼叫 Agent；新 ingest 使用新 revision |
+| PT-70C | 只儲存新 revision 後 worker 取件，佇列同時有 `new`（revision 過時）與篩選判定過時的 `queued` | `new` 換上 active revision 後照常完成篩選與評分；`queued` 者留在原狀態、Scorer 不被呼叫；待重新處理筆數變動時記一行 Info |
 | PT-71 | `letter_requested`／`letter_ready`／`letter_failed` 與 applied Job | 狀態、Letter、apply state／event 不變；不自動呼叫 Drafter／Reviewer |
 | PT-72 | 同 revision 重複啟用 | 狀態、事件、Score 與 Agent call 數量不變 |
 | PT-73 | 重新排入 score 的數量超過每日預算 | 上限內逐步處理；其餘停留 queued，跨台北日界續作 |
@@ -136,6 +137,17 @@ prompt 組裝與各維給分規則屬 agents 模組（見 [test-agents](test-age
 | PT-76 | Profile missing／invalid／degraded | worker、run 與 ingest 處理暫停或回 profile_not_ready；provider ready 後自動喚醒 |
 | PT-77 | 對已評分 Job 呼叫 `RequestReprocess` | 以當下 active revision 排回 `new` 並立即回；worker 下一輪重篩該筆、通過者重評並附加新 Score，其他 Job 不產生 Agent 呼叫 |
 | PT-77B | 對 `filtered_out` Job 呼叫 `RequestReprocess` | 回到 `new`（只有摘要者回 `discovered`）、`filter_hits` 與 `filter_results` 清空、可被 filter 階段取件 |
+| PT-78 | 每日評分預算已用盡時對 `queued` Job 呼叫 `ProcessJobNow` | 該筆完成評分並寫入 `agent_calls`；同時期的批次取件仍為零筆 |
+| PT-78B | 對 `new` Job 呼叫 `ProcessJobNow` | 同一次呼叫完成篩選，通過者續完成評分並抵達 `scored`／`shortlisted` |
+| PT-78C | 對已評分的 Job 呼叫 `ProcessJobNow` | 回 `ErrNotWaiting`；不呼叫 Agent、狀態不變 |
+| PT-79D | 一輪 worker pass，佇列同時有 `queued` 與 `new` 的 Job | 呼叫順序為 score → filter → 該筆 score；`new` 於同一輪抵達 `scored`／`shortlisted` |
+| PT-79G | 一輪 worker pass，`queued` 筆數超過單次取件上限 | score 反覆取件直到取不到，全部 `queued` 評分完成後才出現第一次 filter 呼叫 |
+| PT-79E | 批次進行中把自動處理開關關閉 | 當下這一筆完成後即收工並記一行 Info；其餘職缺保持原狀態、不再有 Agent 呼叫 |
+| PT-79F | `run --stage filter` | 只做篩選，通過者停在 `queued` 不接續評分；不受自動處理開關影響 |
+| PT-78D | 對 revision 過時的 `new` 與 `queued` Job 呼叫 `ProcessJobNow` | 兩者皆完成處理並抵達 `scored`／`shortlisted`，`score_revision` 為 active；`queued` 者先經重新處理再重篩 |
+| PT-79 | 批次階段執行中有插隊請求在等待 | 批次於當前這筆之後收工，未處理職缺維持原狀態且未呼叫 Runner；插隊請求隨即取得閘門 |
+| PT-79B | worker 與插隊請求指向同一筆 | 只有一方認領成功，另一方跳過；該筆只產生一次 Agent 呼叫 |
+| PT-80 | 自動處理開關關閉時執行 worker tick | filter 與 score 皆零筆、無 Agent 呼叫、職缺維持 `new`／`queued`；letter 階段照常消化；同期 `ProcessJobNow` 仍可完成該筆 |
 | PT-77C | 擷取 `filtered_out` 職缺的 JD 內頁 | 狀態與命中維持不變、JD 全文入庫、不被任何階段取件、不產生 Agent 呼叫 |
 
 ## 6. 模組驗收

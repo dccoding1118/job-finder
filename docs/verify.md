@@ -40,7 +40,7 @@ mise run e2e-mock   # 物化隔離 artifact → 依序跑 V1/V2/V4/V5/V7 → 產
 | R4 CLI Runner 四維評分、閾值分流、設定路由 | V2、V3 | S9 | — | ◑ |
 | R5 要求後才生成的 Drafter–Reviewer 與程式防線 | V2、V3 | S5、S10 | N-LTR | ◑ |
 | R6 extension 清單/判定/對照/生成/複製/投遞/手動/Run | V3、V4 | S17–S23 | — | ◑ |
-| R7 one-shot／timer／手動／冪等／執行上限 | V2、V3、V4 | S11、S14、S16 | — | ◑ |
+| R7 one-shot／timer／手動／冪等／執行上限／自動處理開關與插隊 | V2、V3、V4、V7 | S11、S14、S16、S39、S39B、S39C | — | ◑ |
 | R8 Run 摘要、Agent 稽核、安全 evidence | V1–V6 | S12 | — | ◑ |
 | R9 半被動列表快速判定、內頁完整評估、待看清單 | V5、V6 | S24–S25、S40–S41 | — | ◑ |
 
@@ -99,7 +99,7 @@ mock 一趟用固定合成測資；下表即「標準答案」，逐值由 `asse
 |---|---|---|---|---|
 | S1 | 物化隔離 artifact | binary_sha256 == manifest；extension、rendered API/run/timer unit 存在 | V1·R8 | ✅ |
 | S2 | 驗證隔離權限 | 驗收 root=0700；Profile／denylist／config=0600 | V1·R1 | ✅ |
-| S3 | 驗證匿名 Profile 與 schema | Profile 摘要＝§3.4；schema_version=7、WAL、foreign_keys、9 張表（含 `filter_results`）；雙 revision 欄位與 `scores` 四維欄位可用 | V1·R1 | ✅ |
+| S3 | 驗證匿名 Profile 與 schema | Profile 摘要＝§3.4；schema_version=8、WAL、foreign_keys、10 張表（含 `filter_results` 與 `settings`）；雙 revision 欄位與 `scores` 四維欄位可用 | V1·R1 | ✅ |
 | S4 | 啟動 Yourator fixture | `GET /healthz`→200 由本 harness 綁定；external_id 1000–1004 均合成 | V2·R2 | ✅ |
 | S5 | 抓取後手動 filter/score（letter 零取件） | `run`＝`fetched:5/new:5`；`--stage filter`＝`filtered_out:1／queued:4`；`--stage score`＝`scored:4`；letter 未要求不取件、不生成 | V2·R5/R7 | ✅ |
 | S6 | 驗證來源搜尋請求 | request journal＝§3.4（robots→3 query→5 detail），共 9 筆 | V2·R2 | ✅ |
@@ -136,6 +136,12 @@ mock 一趟用固定合成測資；下表即「標準答案」，逐值由 `asse
 | S36 | score worker 執行中更新 Profile 並手動 reprocess | 舊 call 保留實際 revision；activation 切換 Job revision 後，舊結果 CAS 失敗，不成為現行 Score | V7·R1/R7 | ✅ |
 | S37 | Chrome 人工 Profile gate | 系統頁各群組、Options 入口、批次時間、手動 reprocess、整數評分與 revision 燈號、全頁表單新增定位、衝突、離頁提醒及 light／dark 可用 | V7·R6 | ⏳ |
 | S38 | 單筆重新處理與處理進度 | 對已評分職缺按「重新處理」後只該筆回 `new`、worker 重篩並重評附加新 Score，其他職缺 Agent 呼叫數不變；對判不適合的職缺按同一入口後該筆重新進入篩選；系統頁處理進度與 Agent 呼叫紀錄反映該次執行 | V7·R6/R7 | ⏳ |
+
+| S39 | 自動處理開關與單筆插隊處理 | 關閉自動處理後，`new`／`queued` 職缺於 worker 掃描間隔內狀態不變且無新 Agent 呼叫；批次正在消化時關閉，最多再完成當下這一筆即停止並記一行 Info；對其中一筆送 `POST /jobs/{id}/process` 回 202，該筆完成篩選與評分且只增加該筆的 Agent 呼叫；每日評分額度已用盡時同一入口仍完成該筆；重新開啟後其餘職缺恢復消化 | V7·R6/R7 | ⏳ |
+
+| S39C | 消化順序 | 佇列同時有 `queued` 與 `new` 職缺時，log 顯示先把既有 `queued` 全部評分完（含超過單次取件上限而反覆取件的情形），才篩選 `new` 且該筆於同一輪接著評分抵達最終判定 | V7·R7 | ⏳ |
+
+| S39B | Profile 變更後的等待中職缺 | 儲存改動硬規則的 Profile 且不按「更新過時判定職缺」，開啟自動處理後 `new` 職缺仍被消化並以新 revision 完成篩選與評分；篩選判定已過時的 `queued` 職缺留在原狀態，log 記一行待重新處理筆數；對該筆送 `POST /jobs/{id}/process` 則完成重篩與重評 | V7·R6/R7 | ⏳ |
 
 ### V6 — Cake 半被動擷取與跨來源合併
 

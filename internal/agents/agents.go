@@ -481,7 +481,7 @@ location: ` + j.Location + `
 remote: ` + j.RemoteType + `
 description: ` + j.Description + `
 
-回傳 content_fit、benefit_fit、bonus_fit、industry_fit（皆為 0-100 整數）與 reason（40~60 字，勿超過）。不要計算 total。`
+回傳 content_fit、benefit_fit、bonus_fit、industry_fit（皆為 0-100 整數）與 reason（40~60 字，勿超過；中文一字算一字，連續的英文詞或數字整段只算一字）。不要計算 total。`
 }
 
 // extractObject returns the last balanced top-level JSON object in raw, ignoring
@@ -537,7 +537,7 @@ func parseScore(raw string) (ScoreResult, error) {
 			return r, fmt.Errorf("agents: score out of range")
 		}
 	}
-	if strings.TrimSpace(r.Reason) == "" || len([]rune(r.Reason)) > maxScoreReason {
+	if strings.TrimSpace(r.Reason) == "" || ReasonLength(r.Reason) > maxScoreReason {
 		return r, fmt.Errorf("agents: invalid reason")
 	}
 	return r, nil

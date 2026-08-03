@@ -119,7 +119,7 @@ run_status="$(curl --silent --output "${output_file}" --write-out '%{http_code}'
 [[ "${jobs_status}" == '200' && "${runs_status}" == '200' && "${run_status}" == '409' ]] || fail 'setup mode did not keep reads available and processing paused'
 "${binary}" verify snapshot --db "${profile_db}" >"${snapshot}"
 assert_node schema-migrated "${snapshot}" || fail 'setup database did not migrate to the current schema'
-record '- Profile status=missing、ETag="missing"；Job 讀取=200、手動 run=409；worker 暫停且 schema_version=7。'
+record '- Profile status=missing、ETag="missing"；Job 讀取=200、手動 run=409；worker 暫停且 schema_version=8。'
 pass_step
 
 begin_step 'S31' '建立 Profile 並立即啟用'

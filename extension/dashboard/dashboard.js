@@ -42,6 +42,11 @@
     duplicates: [],
     progress: null,
     profile: null,
+    settings: null,
+    // pushedJobIDs are the jobs the user sent through immediately. The server
+    // does not distinguish "waiting" from "being worked on", so the button that
+    // was pressed is what turns the action into a progress state here.
+    pushedJobIDs: new Set(),
     filters: { verdict: "recommended", process: "", apply: "", source: "" },
     filtersOpen: false,
     scrollPositions: { current: 0, queue: 0, shortlist: 0, system: 0 },
@@ -262,14 +267,41 @@
     return `<button id="reprocess" class="button is-secondary" type="button" ${busy ? "disabled" : ""} aria-label="重新處理這筆職缺">${busy ? '<span class="spinner" aria-hidden="true"></span>' : icon("refresh")}重新處理</button>`;
   }
 
+  // pendingCopy says why a waiting job is still waiting, because the three
+  // reasons need different actions: nothing (it is already being consumed), the
+  // switch, or the day's budget — and the last two are exactly what the push
+  // ignores.
+  function pendingCopy(job) {
+    const stage = job.verdict === "pending_score" ? "評分" : "篩選";
+    if (state.pushedJobIDs.has(job.id)) return `已排在最前面處理，完成後會自動更新。`;
+    if (state.settings && state.settings.resident_worker === false) return `設定檔已停用常駐 worker，這筆等待手動批次消化。`;
+    if (state.settings && state.settings.auto_processing === false) return `自動${stage}已關閉，這筆會留在原地，可用「馬上處理」單獨處理。`;
+    if (state.context.budget_exhausted) return `今日${stage}額度已用盡，職缺會保留至隔日；「馬上處理」仍可單獨處理這一筆。`;
+    return `${stage}正在背景處理，完成後會自動更新；「馬上處理」可讓這筆插到最前面。`;
+  }
+
+  // A job that is only waiting has nothing to redo, so its action is the push
+  // rather than a reprocess: it goes to the head of the worker's queue and runs
+  // whether automatic processing is off or the day's budget is spent. Once
+  // pushed, the same slot reports the stage it is in.
+  function processNowButton(job) {
+    const label = job.verdict === "pending_score" ? "評分" : "篩選";
+    if (state.pushedJobIDs.has(job.id) || state.busy.has("process-now")) {
+      return `<button class="button is-primary" type="button" disabled><span class="spinner" aria-hidden="true"></span>正在${label}</button>`;
+    }
+    if (state.settings && state.settings.resident_worker === false) {
+      return `<button class="button is-primary" type="button" disabled>等待手動批次</button>`;
+    }
+    return `<button id="process-now" class="button is-primary" type="button" aria-label="立即處理這筆職缺">${icon("spark")}馬上處理</button>`;
+  }
+
   function actionDock(job) {
     const source = `<a id="source" class="button is-secondary" href="${escapeHTML(job.url || "#")}" target="_blank" rel="noreferrer" aria-label="開啟原始職缺">${icon("external")}</a>`;
     if (state.connected === false) return `<div class="action-dock">${source}<button class="button is-primary" type="button" disabled>${icon("cloud")}等待重新連線</button></div>`;
     if (job.letter_state === "ready" && job.letter?.status === "approved") return `<div class="action-dock">${source}<button id="copy" class="button is-primary" type="button">${icon("copy")}複製求職信</button></div>`;
     if (job.letter_state === "requested") return `<div class="action-dock">${source}<button id="request-letter" class="button is-primary" type="button" disabled><span class="spinner" aria-hidden="true"></span>求職信產生中</button></div>`;
     if (job.verdict === "recommended") return `<div class="action-dock">${source}${reprocessButton(job)}<button id="request-letter" class="button is-primary" type="button" ${state.busy.has("letter") ? "disabled" : ""}>${icon("spark")}${job.letter_state === "failed" ? "再次產生求職信" : "產生求職信"}</button></div>`;
-    if (job.verdict === "pending_screen") return `<div class="action-dock">${source}<button class="button is-primary" type="button" disabled><span class="spinner" aria-hidden="true"></span>正在篩選</button></div>`;
-    if (job.verdict === "pending_score") return `<div class="action-dock">${source}<button class="button is-primary" type="button" disabled><span class="spinner" aria-hidden="true"></span>正在評分</button></div>`;
+    if (job.verdict === "pending_screen" || job.verdict === "pending_score") return `<div class="action-dock">${source}${processNowButton(job)}</div>`;
     return `<div class="action-dock">${source}${reprocessButton(job)}<button id="next-job" class="button is-primary" type="button">開下一筆${icon("arrow")}</button></div>`;
   }
 
@@ -287,7 +319,7 @@
     }
     const verdict = verdictMeta(job);
     const offline = state.connected === false ? `<div class="notice is-offline" role="alert"><div class="notice-title">${icon("cloud")}無法連線到 localhost API</div><p>目前內容仍可閱讀；產生信件與更新投遞狀態暫不可用。</p></div>` : "";
-    const pending = job.verdict === "pending_score" ? `<div class="notice is-warning" role="status"><div class="notice-title"><span class="spinner" aria-hidden="true"></span>條件篩選已通過</div><p>${state.context.budget_exhausted ? "今日評分額度已用盡，職缺會保留至隔日。" : "評分正在背景處理，完成後會自動更新。"}</p></div>` : "";
+    const pending = job.verdict === "pending_screen" || job.verdict === "pending_score" ? `<div class="notice is-warning" role="status"><div class="notice-title"><span class="spinner" aria-hidden="true"></span>${job.verdict === "pending_score" ? "條件篩選已通過" : "等待條件篩選"}</div><p>${escapeHTML(pendingCopy(job))}</p></div>` : "";
     const stale = [
       job.filter_stale && job.filter_result_revision ? `篩選結論使用舊版硬性條件 ${shortRevision(job.filter_result_revision)}` : "",
       job.score_stale ? `評分使用舊版軟性偏好 ${shortRevision(job.score_result_revision)}` : "",
@@ -456,6 +488,26 @@
       <section aria-labelledby="agent-calls-title"><div class="card-heading"><h2 id="agent-calls-title">Agent 呼叫紀錄</h2><span>最近 20 筆</span></div><div id="agent-calls" class="run-list">${calls || emptyState("尚無 Agent 呼叫", "評分或求職信執行後會顯示在這裡。")}</div></section>`;
   }
 
+  // autoProcessingSection carries the token brake: with it off the worker stops
+  // screening and scoring by itself, collection keeps running, and each job is
+  // processed only when the user asks for it on that job.
+  function autoProcessingSection() {
+    const settings = state.settings;
+    const enabled = settings ? settings.auto_processing !== false : true;
+    const resident = settings ? settings.resident_worker !== false : true;
+    const busy = state.busy.has("auto-processing");
+    const copy = !resident
+      ? "設定檔已停用常駐 worker，篩選與評分改由 CLI 批次驅動，此開關與「馬上處理」皆無作用。"
+      : enabled
+        ? "新職缺會自動完成篩選與評分。"
+        : "已停止自動篩選與評分，職缺會停在待篩選／待評分，求職信與收集不受影響。";
+    const disabled = state.connected === false || !settings || !resident || busy;
+    return `<section class="card system-group" aria-labelledby="auto-title"><div class="card-heading"><h2 id="auto-title">自動篩選與評分</h2><span>${enabled && resident ? "開啟" : "關閉"}</span></div>
+      <div class="system-card"><div class="system-row"><span class="system-copy"><strong>自動處理</strong><span>關閉後不再自動消耗 Agent 額度</span></span><span class="system-status ${enabled && resident ? "" : "is-warning"}"><span class="connection-dot"></span>${enabled && resident ? "運作中" : "已停止"}</span></div></div>
+      <p class="reprocess-copy">${escapeHTML(copy)}</p>
+      <button id="toggle-auto-processing" class="button ${enabled ? "is-secondary" : "is-primary"} is-full" type="button" ${disabled ? "disabled" : ""}>${busy ? '<span class="spinner" aria-hidden="true"></span>' : ""}${enabled ? "關閉自動篩選與評分" : "開啟自動篩選與評分"}</button></section>`;
+  }
+
   // duplicatesSection presents each suspected pair side by side. It reports the
   // similarity and the reason so the user can see why the rules stopped short of
   // merging, and it offers exactly the two decisions they can make.
@@ -495,6 +547,7 @@
     root.innerHTML = `<div class="section-stack"><div class="screen-heading"><div><h1>系統</h1><p>連線、Profile、批次與執行歷程。</p></div></div>
       <section class="card system-group" aria-labelledby="connection-title"><div class="card-heading"><h2 id="connection-title">連線與設定</h2></div><div class="system-card"><div class="system-row"><span class="system-copy"><strong>localhost API</strong><span>Side Panel 的 loopback 連線</span></span><span class="system-status ${state.connected ? "" : "is-warning"}"><span class="connection-dot"></span>${state.connected ? "正常" : "離線"}</span></div></div><button id="open-options" class="button is-secondary is-full" type="button">開啟連線設定</button></section>
       <section class="card profile-card" aria-labelledby="profile-title"><div class="card-heading"><h2 id="profile-title">Profile</h2><span class="profile-state is-${escapeHTML(profileStatus)}">${escapeHTML(profileStatus)}</span></div><p>${profileCopy}</p>${profileStatus === "ready" ? `<p class="reprocess-copy">${staleJobs ? `${staleJobs} 筆職缺使用舊版 Profile，等待手動更新。` : "所有可更新職缺均使用目前 Profile。"}${protectedJobs ? `另有 ${protectedJobs} 筆求職信歷史受保護。` : ""}</p>` : ""}<div class="button-stack"><button id="open-profile" class="button is-secondary is-full" type="button" ${profileStatus === "offline" || profileStatus === "loading" ? "disabled" : ""}>${escapeHTML(profileAction)}</button><button id="reprocess-profile" class="button is-primary is-full" type="button" ${profileStatus !== "ready" || staleJobs === 0 || state.busy.has("reprocess") ? "disabled" : ""}>${state.busy.has("reprocess") ? '<span class="spinner" aria-hidden="true"></span>正在排入更新' : `${icon("refresh")}更新過時判定職缺`}</button></div></section>
+      ${autoProcessingSection()}
       ${duplicatesSection()}
       <section class="card system-group" aria-labelledby="batch-title"><div class="card-heading"><h2 id="batch-title">自動與手動批次</h2></div><div class="system-card"><div class="system-row"><span class="system-copy"><strong>自動抓取時間</strong><span>每日 08:30（Asia/Taipei）</span></span><span class="metric-value">每日</span></div></div><button id="run" class="button is-primary is-full" type="button" ${state.connected === false || state.busy.has("run") || runUnavailable ? "disabled" : ""}>${state.busy.has("run") ? '<span class="spinner" aria-hidden="true"></span>抓取已開始' : `${icon("play")}立即手動抓取`}</button></section>
       ${progressSection()}
@@ -503,6 +556,7 @@
     document.querySelector("#open-profile")?.addEventListener("click", () => chrome.tabs.create({ url: chrome.runtime.getURL("profile/index.html") }));
     document.querySelector("#open-options")?.addEventListener("click", () => chrome.runtime.openOptionsPage());
     document.querySelector("#reprocess-profile")?.addEventListener("click", reprocessProfile);
+    document.querySelector("#toggle-auto-processing")?.addEventListener("click", toggleAutoProcessing);
     for (const button of document.querySelectorAll("[data-merge]")) {
       button.addEventListener("click", () => decideDuplicate(Number(button.dataset.merge), "merge"));
     }
@@ -550,6 +604,7 @@
     if (runs?.ok) state.runs = runs.data.items || [];
     if (duplicates?.ok) state.duplicates = duplicates.data.items || [];
     state.progress = progress?.ok ? progress.data : null;
+    state.settings = progress?.ok ? progress.data.settings || null : null;
     state.profile = profile?.ok ? profile.data : null;
     if (!connected) announce(jobs?.error || queue?.error || runs?.error || "無法連線到 jobfinder API");
     return true;
@@ -659,6 +714,7 @@
     document.querySelector("#copy")?.addEventListener("click", copyLetter);
     document.querySelector("#request-letter")?.addEventListener("click", requestLetter);
     document.querySelector("#reprocess")?.addEventListener("click", reprocessJob);
+    document.querySelector("#process-now")?.addEventListener("click", processJobNow);
     document.querySelector("#save-apply")?.addEventListener("click", saveApply);
     document.querySelector("#next-job")?.addEventListener("click", () => switchTab("queue"));
     for (const button of document.querySelectorAll("[data-unmerge]")) {
@@ -752,6 +808,45 @@
     showToast("已排入重新處理");
   }
 
+  // processJobNow asks the service to screen and score this one job ahead of the
+  // worker's batch. The request only reports that it was accepted; the result
+  // arrives through the same polling that shows any other processing job.
+  async function processJobNow() {
+    if (!state.currentJob || state.busy.has("process-now")) return;
+    const jobID = state.currentJob.id;
+    state.busy.add("process-now");
+    renderAll();
+    const result = await api(`/api/v1/jobs/${jobID}/process`, "POST");
+    state.busy.delete("process-now");
+    if (!result?.ok) {
+      renderAll();
+      return showToast(result?.error || "無法立即處理");
+    }
+    state.pushedJobIDs.add(jobID);
+    state.currentJob = result.data.job;
+    renderAll();
+    startPollingIfNeeded();
+    showToast("已插隊處理這筆職缺");
+  }
+
+  // toggleAutoProcessing flips the token brake. Collection and the user's own
+  // single-job requests are unaffected either way.
+  async function toggleAutoProcessing() {
+    if (state.busy.has("auto-processing")) return;
+    const enabled = state.settings ? state.settings.auto_processing !== false : true;
+    state.busy.add("auto-processing");
+    renderAll();
+    const result = await api("/api/v1/settings", "PUT", { auto_processing: !enabled });
+    state.busy.delete("auto-processing");
+    if (!result?.ok) {
+      renderAll();
+      return showToast(result?.error || "無法更新自動處理設定");
+    }
+    state.settings = result.data;
+    renderAll();
+    showToast(enabled ? "已關閉自動篩選與評分" : "已開啟自動篩選與評分");
+  }
+
   async function saveApply() {
     if (!state.currentJob || state.busy.has("apply")) return;
     const value = document.querySelector("#apply-state").value;
@@ -812,7 +907,12 @@
 
   function startPollingIfNeeded() {
     clearTimeout(state.pollTimer);
-    if (!processing(state.currentJob) || state.context.budget_exhausted) return;
+    if (!processing(state.currentJob)) return;
+    // A pushed job is being worked on right now, so it is polled even when the
+    // day's budget is spent or automatic processing is off — those hold back the
+    // worker, not the user's own request.
+    const pushed = state.pushedJobIDs.has(state.currentJob.id);
+    if (!pushed && (state.context.budget_exhausted || state.settings?.auto_processing === false)) return;
     state.pollUntil = Date.now() + POLL_LIMIT_MS;
     state.pollTimer = setTimeout(pollCurrent, POLL_INTERVAL_MS);
   }
@@ -820,6 +920,10 @@
   async function pollCurrent() {
     if (!processing(state.currentJob)) return;
     if (Date.now() >= state.pollUntil) {
+      // The push is no longer known to be running, so the job returns to being a
+      // waiting one and can be pushed again.
+      state.pushedJobIDs.delete(state.currentJob.id);
+      renderAll();
       showToast("仍在處理，可稍後重新整理");
       return;
     }
@@ -827,7 +931,10 @@
     if (result?.ok) {
       state.currentJob = result.data;
       renderAll();
-      if (!processing(state.currentJob)) return;
+      if (!processing(state.currentJob)) {
+        state.pushedJobIDs.delete(state.currentJob.id);
+        return;
+      }
     }
     state.pollTimer = setTimeout(pollCurrent, POLL_INTERVAL_MS);
   }

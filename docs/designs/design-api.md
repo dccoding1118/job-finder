@@ -63,6 +63,7 @@ Job viewmodel 另回四組 revision：`current_filter_revision`／`current_score
 | `GET /api/v1/jobs/{id}` | Job ID | Job、verdict、現行 Score、核准 Letter、StatusEvent | ID 非法 400；不存在 404 |
 | `POST /api/v1/jobs/{id}/letter` | Job ID | `shortlisted` 或 `letter_failed` 經 store 轉為 `letter_requested`；回 `{ "status": "requested" }` 與更新後 Job | 非法來源狀態或不存在 4xx |
 | `POST /api/v1/jobs/{id}/reprocess` | Job ID | 經 store 回到管線起點（有 JD 全文者 `new`，只有摘要者 `discovered`）並採用 active revision；回 `{ "status": "<新 process_state>" }` 與更新後 Job | 有求職信歷史或 `merged` 409 `reprocess_not_allowed`；不存在 404；Profile 未 ready 409 |
+| `POST /api/v1/jobs/{id}/process` | Job ID | 受理後回 `202` `{ "status": "processing" }` 與當下 Job；該筆插隊完成篩選（通過者續評分） | 非 `new`／`queued` 409 `not_waiting`；本服務未帶常駐 worker 409 `worker_not_resident`；不存在 404；Profile 未 ready 409 |
 | `POST /api/v1/jobs/{id}/apply` | `apply_state`、選填 `note` | 更新後 Job 狀態與新 StatusEvent | 非法轉換或不存在 4xx |
 | `GET /api/v1/queue` | 選填 `limit`、`cursor` | `discovered` Job page，含原始連結 | 非法分頁 400 |
 | `POST /api/v1/runs` | 無 | `{ "status": "started" }` 或 `{ "status": "already_running" }` | 啟動失敗 500 |
@@ -72,11 +73,13 @@ Job viewmodel 另回四組 revision：`current_filter_revision`／`current_score
 | `GET /api/v1/profile` | 無 | `status`、結構化 `profile`（含程式物化的 `derived`）、兩個 revision、摘要、issues、重新處理預估；header 帶 ETag | 認證或檔案 I/O 失敗 |
 | `PUT /api/v1/profile` | `If-Match`＋完整 Profile JSON | 新 ETag、兩個 revision、`filter_changed`／`score_changed` | 缺條件 428；衝突 412；驗證 422；儲存失敗 500 |
 | `POST /api/v1/profile/reprocess` | 無 | active 兩個 revision 與重新篩選／重新評分／排隊／受保護統計 | Profile 未 ready 409；重新處理失敗 500 |
+| `GET /api/v1/settings` | 無 | `auto_processing`（自動篩選與評分開關）、`resident_worker`（本服務是否帶常駐 worker） | 讀取失敗 500 |
+| `PUT /api/v1/settings` | `auto_processing`（布林，必填） | 寫入後的設定，欄位同 `GET` | 缺欄位或型別錯誤 400；儲存失敗 500 |
 | `GET /api/v1/duplicates` | 選填 `limit`、`cursor` | `pending` 候選 page：雙方的 job id、職稱、公司、地區、來源、相似度與原因 | 非法分頁 400 |
 | `POST /api/v1/duplicates/{id}/merge` | 候選 ID | 合併兩群組並回更新後的 canonical Job；候選轉 `merged` | 候選不存在 404；已裁決 409 |
 | `POST /api/v1/duplicates/{id}/ignore` | 候選 ID | 候選轉 `ignored`，回 `{ "status": "ignored" }` | 同上 |
 | `POST /api/v1/jobs/{id}/unmerge` | Job ID | alias 還原為合併前狀態與獨立群組，回更新後 Job | 非 `merged` 狀態 409；不存在 404 |
-| `GET /api/v1/status` | 無 | 各 `process_state` 的職缺筆數、當日篩選與評分預算餘額、最近 20 筆 Agent 呼叫摘要 | 讀取失敗 500；非 GET 405 |
+| `GET /api/v1/status` | 無 | 各 `process_state` 的職缺筆數、當日篩選與評分預算餘額、最近 20 筆 Agent 呼叫摘要、每日 token 用量、`settings`（欄位同 `GET /api/v1/settings`） | 讀取失敗 500；非 GET 405 |
 
 清單 endpoint 預設每頁 20 筆，`limit` 可設為 1–100。`next_cursor` 是 API 產生的不透明字串；有後續資料時回傳字串，末頁回 `null`。client 只能原樣帶回 `cursor`，不得解析或自行產生；非法 `limit` 或 `cursor` 回 `400 invalid_request`。Job cursor 沿用當次篩選與分數排序，篩選條件變更時必須從第一頁重新查詢。
 
@@ -88,6 +91,10 @@ Job viewmodel 另回四組 revision：`current_filter_revision`／`current_score
 
 `POST /api/v1/jobs/{id}/reprocess` 是單筆判定重做的唯一入口：handler 呼叫 pipeline 的 `RequestReprocess`，立即回應且不等待 Agent 完成，該筆由常駐 worker 以 active revision 重新篩選、通過者再評分。重做的是整條判定鏈而非只有分數——錯的判定同樣可能出在篩選關，`filtered_out` 因此是可重做的來源狀態。舊命中與舊篩選逐條結論隨之清除，舊 score 於新 score 寫入前仍是該 Job 的現行分數。求職信階段（`letter_requested`／`letter_ready`／`letter_failed`）與 `merged` 一律回 `409 reprocess_not_allowed`，因此重新處理不會改寫求職信、投遞歷史與使用者裁決過的合併。重複呼叫為冪等。
 
+
+`POST /api/v1/jobs/{id}/process` 是使用者對**單一等待中職缺**要求立即處理的入口：handler 只驗證該筆確實在 `new` 或 `queued`，隨即以脫離 request 的 context 於背景呼叫 pipeline 的 `ProcessJobNow`（見 [design-pipeline](design-pipeline.md) §2.4）並回 `202`——一次 Agent 呼叫遠長於一個 HTTP 請求該持有的時間，結果由前端既有的職缺輪詢取得。它不受自動處理開關與每日預算限制，呼叫仍照常寫入 `agent_calls`，因此當日用量如實反映實際支出。已評分或已被篩掉的職缺不是它的來源狀態（回 `409 not_waiting`），那類異議走 `reprocess`。設定檔停用常駐 worker 時本服務未持有 worker 鎖、無法得知手動批次正在花什麼，故一律回 `409 worker_not_resident`。
+
+`GET`／`PUT /api/v1/settings` 是使用者可在 Side Panel 直接改動的執行期設定的唯一讀寫面，目前只有 `auto_processing`。寫入即生效，包含**批次進行中**：worker 在每筆之間重讀該值（見 [design-pipeline](design-pipeline.md) §2.2），因此關閉後最多再完成當下進行中的那一次 Agent 呼叫。設定存於 SQLite（見 [design-schema](design-schema.md) §2）而非 `config.yaml`：服務執行期間由它擁有，重啟不得默默還原使用者關掉的開關；資料庫未曾記錄過時視為開啟。`resident_worker` 為唯讀，由啟動時的 `worker.paused` 決定，供前端說明「此開關與『馬上處理』在目前部署模式下無作用」。
 
 `GET /api/v1/status` 是處理進度的唯一讀取面：回 `jobs`（各 `process_state` 筆數，`new` 與 `queued` 即常駐 worker 的待消化量）、`filter_budget` 與 `score_budget`（各含 `remaining`、`limited`）與 `agent_calls`（最近 20 筆的 `role`、`runner`、`ok`、`duration_ms`、`job_id`、`created_at`）。`ok` 表示「runner 有回應且回應通過契約驗證」，與評分高低無關——低分或不推薦仍是成功呼叫。成功呼叫不附任何 Agent 輸出；未通過的呼叫附 `failure_kind` 與截斷至 400 字元的 `detail`。`failure_kind` 由 agents 模組分類：`runner_error`（CLI 自報錯誤，含額度、認證與逾時，優先於內容驗證）、`empty_output`、`no_json`、`invalid_json`、`reason_too_long`、`score_out_of_range`、`invalid_condition`、`invalid_content`。此 route 不含 Profile 內容、JD、薪資與信件內容。
 
