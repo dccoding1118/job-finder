@@ -22,7 +22,7 @@ timer_unit=""
 current_step=""
 current_tag=""
 current_title=""
-total_steps=32
+total_steps=33
 pass_count=0
 # covered_r accumulates the requirement IDs actually exercised, so the answer
 # sheet's coverage tally is derived from the steps that really ran.
@@ -107,7 +107,7 @@ lists_job() {
   printf '%s\n' "- 產生時間：$(TZ=Asia/Taipei date --iso-8601=seconds)"
   printf '%s\n' '- 模式：mock（本機 Yourator fixture + fake CLI Agent）'
   printf '%s\n' '- 範圍：V1、V2、V4、V5、V6；同一物化 artifact、SQLite 與 evidence'
-  printf '%s\n' '- 答案卷：逐案例（S01–S25、S40–S45）觀察值＋判定，案例 ID 對齊題目卷 docs/verify.md §4'
+  printf '%s\n' '- 答案卷：逐案例（S01–S25、S40–S45、S54）觀察值＋判定，案例 ID 對齊題目卷 docs/verify.md §4'
   printf '%s\n' '- 資料保護：不記錄 Profile、JD、信件、token 或 Agent 原始輸出'
 } >"${report}"
 
@@ -153,7 +153,7 @@ grep -Fqx 'remote: acceptable' "${output_file}" || fail 'profile remote preferen
 grep -Fqx 'directions: [P1:cloud architecture P2:backend engineering P3:platform reliability]' "${output_file}" || fail 'profile directions are invalid'
 "${binary}" verify snapshot --db "${MOCK_DB}" >"${RUNTIME_ROOT}/tmp/schema-snapshot.json" || fail 'SQLite schema snapshot failed'
 assert_node schema "${RUNTIME_ROOT}/tmp/schema-snapshot.json" >"${output_file}" 2>&1 || fail 'SQLite schema contract is invalid'
-record '- 匿名 Profile 摘要（derived 加總、學歷、硬規則）、schema version=7、WAL、foreign keys、9 張表（含 filter_results）與雙 revision 欄位已由物化 binary 建立。'
+record '- 匿名 Profile 摘要（derived 加總、學歷、硬規則）、schema version=8、WAL、foreign keys、10 張表（含 filter_results 與 settings）與雙 revision 欄位已由物化 binary 建立。'
 pass_step
 
 begin_step 'S04' 'V2·R2' '產生本機 Yourator mock 資料來源'
@@ -264,6 +264,24 @@ grep -Fq '"fetched": 5' "${snapshot}" || fail 'fetch Run count is absent'
 grep -Fq '"queries": 3' "${snapshot}" || fail 'query Run count is absent'
 grep -Fq '"letters_failed"' "${snapshot}" && fail 'run stats still carry the retired worker-stage counters'
 record '- snapshot 只含契約欄位與內容 hash；runs 只記抓取事實 fetched/new/queries/errors，不含 filter／score／letter 統計。'
+pass_step
+
+begin_step 'S54' 'V2·R8' '驗證 JD 與稽核 payload 的 PII 遮罩'
+payload_line="$(mise exec -- node -e '
+const fs = require("fs");
+const snapshot = JSON.parse(fs.readFileSync(process.argv[1]));
+const [payloads, descriptions] = [snapshot.agent_payloads, snapshot.job_descriptions];
+if (!descriptions || !(descriptions.rows > 0)) throw new Error("snapshot carries no stored JD");
+if (descriptions.pii_matches !== 0) throw new Error(`${descriptions.pii_matches} stored JDs still carry PII`);
+if (descriptions.masked !== 1) throw new Error(`${descriptions.masked} JDs were masked, want exactly the contact-carrying one`);
+if (!payloads || !(payloads.rows > 0)) throw new Error("snapshot carries no audited payloads");
+if (payloads.pii_matches !== 0) throw new Error(`${payloads.pii_matches} stored payloads still carry PII`);
+if (!(payloads.masked > 0)) throw new Error("the masked JD did not reach a stored prompt");
+if (payloads.masked !== payloads.masked_with_usage) throw new Error(`${payloads.masked - payloads.masked_with_usage} masked calls lost their usage`);
+process.stdout.write(`${descriptions.rows} ${payloads.rows} ${payloads.masked}`);
+' "${snapshot}")" || fail 'stored JDs or audited payloads are not masked'
+read -r jd_rows payload_rows payload_masked <<<"${payload_line}"
+record "- 帶招募聯絡方式的 JD（job 1004）入庫後：${jd_rows} 筆 jobs.description 全表掃不到 email／手機樣式，命中的那筆已替換為 [EMAIL]／[PHONE]；下游 ${payload_rows} 筆 agent_calls 同樣零命中，其中 ${payload_masked} 筆帶佔位並保留 token 用量，未因命中 PII 被整筆作廢。"
 pass_step
 
 service_path="${HARNESS_ROOT}/bin:/usr/local/bin:/usr/bin:/bin"
@@ -602,5 +620,5 @@ record ''
 record '### 使用者故事重建（本趟驗過的劇本）'
 record '載入 5 筆 Yourator 職缺 → #1000「intern」命中排除關鍵字當場篩掉（unfit）→ #1004 的薪資與一條必要條件無從判定，但 JD 完整故照常評分得 70（not_recommended）→ #1003 得 60（not_recommended）、#1001 得 80、#1002 得 90（後兩者 shortlisted，未要求不生成信）→ 對 2 筆 shortlisted 要求生成 → #1002 首輪核准（round 1）、#1001 三輪退回（round 3）→ dashboard 複製 #1002 的信、標記 applied → 104 搜尋頁載入 2 筆：intern 篩掉、senior 進待看清單 → Cake 搜尋頁載入 3 筆：intern 篩掉、senior 認出與 104 那筆是同一則職缺而合併、第三筆進待看清單 → senior 內頁補全文、過結構化條件後停在 new，語意篩選與評分由 worker 接手 → 再開一次 Cake 頁面直接看到 104 那筆的既有判定 → 職稱相似但不相等的兩對交由使用者裁決，一對合併、一對忽略 → 取消合併後 Cake 那筆回到待看清單，既有評分未失。'
 record ''
-record '> 對答案：逐案例（S01–S25、S40–S45）將上方觀察值對 docs/verify.md §4 的字面標準答案；測資與完整標準答案見 §3，機器斷言見 scripts/verify/oracle/assert-positive.mjs。'
+record '> 對答案：逐案例（S01–S25、S40–S45、S54）將上方觀察值對 docs/verify.md §4 的字面標準答案；測資與完整標準答案見 §3，機器斷言見 scripts/verify/oracle/assert-positive.mjs。'
 printf 'mock verification passed: %s\n' "${report}"

@@ -22,7 +22,7 @@
 | `title` | TEXT | 職稱 |
 | `company_name` | TEXT | 公司名（公開資訊，非 PII） |
 | `company_info` | TEXT | 公司產業/規模等摘要 |
-| `description` | TEXT NULL | JD 全文（純文字化）；partial 職缺（`discovered`）為 NULL |
+| `description` | TEXT NULL | JD 全文（純文字化）；寫入前將 Email 與手機號遮罩為 `[EMAIL]`／`[PHONE]`；partial 職缺（`discovered`）為 NULL |
 | `salary_min` / `salary_max` | INTEGER NULL | 月薪範圍（元）；面議為 NULL |
 | `location` | TEXT | 工作地點 |
 | `remote_type` | TEXT | `onsite` / `hybrid` / `remote` / `unknown` |
@@ -103,7 +103,7 @@
 | `role` | TEXT | `filter` / `scorer` / `drafter` / `reviewer` / `calibrator` |
 | `runner` | TEXT | `claude` / `codex` |
 | `model` | TEXT NULL | 該次呼叫實際指定的 model；未指定 model 的 runner 為 NULL |
-| `input` / `output` | TEXT | 完整 prompt 與原始輸出（不得含 PII） |
+| `input` / `output` | TEXT | 完整 prompt 與原始輸出；寫入前將 Email 與手機號遮罩為 `[EMAIL]`／`[PHONE]`，遮罩後仍命中才拒寫 |
 | `ok` | INTEGER | 0/1 |
 | `duration_ms` | INTEGER | |
 | `input_tokens` / `output_tokens` | INTEGER，預設 0 | runner 自報的輸入／輸出 token 數 |

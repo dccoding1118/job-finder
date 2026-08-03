@@ -147,7 +147,20 @@ var upgrades = map[int]string{
 	);`,
 }
 
-var piiPattern = regexp.MustCompile(`(?i)[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}|(?:\+886|0)9\d{8}`)
+var piiPattern = regexp.MustCompile(`(?i)[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}`)
+
+var phonePattern = regexp.MustCompile(`(?:\+886|0)9\d{8}`)
+
+// maskPII replaces mail addresses and mobile numbers with fixed placeholders so
+// a stored copy of a prompt or a response keeps its shape without keeping the
+// contact details themselves.
+func maskPII(text string) string {
+	return phonePattern.ReplaceAllString(piiPattern.ReplaceAllString(text, "[EMAIL]"), "[PHONE]")
+}
+
+func hasPII(text string) bool {
+	return piiPattern.MatchString(text) || phonePattern.MatchString(text)
+}
 
 // Store provides the only supported path for job persistence and transitions.
 type Store struct {
@@ -348,6 +361,15 @@ func (s *Store) migrate(ctx context.Context) error {
 func (s *Store) UpsertJob(ctx context.Context, input JobInput, runID *int64) (UpsertResult, error) {
 	if err := validateJobInput(input); err != nil {
 		return UpsertResult{}, err
+	}
+	// A JD is public text that can still carry the recruiter's own mail address
+	// or phone number. Masking at ingest is what keeps that contact information
+	// out of both the database and every prompt built from it — a job board
+	// holds those details under its own promise not to leak them, and reading a
+	// public page is no reason to hand them to a third-party model.
+	if input.Description != nil {
+		masked := maskPII(*input.Description)
+		input.Description = &masked
 	}
 	now := s.timestamp()
 	partial := input.Description == nil
@@ -580,7 +602,16 @@ func (s *Store) SaveAgentCall(ctx context.Context, input AgentCallInput) error {
 	if !validAgentRole(input.Role) {
 		return fmt.Errorf("store: invalid agent role %q", input.Role)
 	}
-	if !validRunner(input.Runner) || input.DurationMS < 0 || piiPattern.MatchString(input.Input) || piiPattern.MatchString(input.Output) {
+	if !validRunner(input.Runner) || input.DurationMS < 0 {
+		return errors.New("store: invalid agent call")
+	}
+	// The audit copy is masked rather than rejected: the JD text a prompt embeds
+	// can carry a recruiter's mail address or phone number, and dropping the row
+	// would discard the usage and verdict of a call that was already paid for.
+	// What the Agent received is untouched, so no judgement depends on this.
+	input.Input = maskPII(input.Input)
+	input.Output = maskPII(input.Output)
+	if hasPII(input.Input) || hasPII(input.Output) {
 		return errors.New("store: invalid agent call")
 	}
 	ok := 0

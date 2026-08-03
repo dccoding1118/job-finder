@@ -45,6 +45,7 @@
 | ST-15 | 以完整內容 upsert 已存在 partial Job | 補入內容、首次計算雜湊並轉為 `new` |
 | ST-16 | partial Job upsert 遇到既有 Job（含非 `discovered` 狀態） | 僅更新 `last_seen_at`；不覆蓋來源內容、不改變狀態 |
 | ST-17 | Job 欄位含不支援的 source、空 external ID、空 title 或非法 remote type | store 拒絕寫入並回傳欄位錯誤 |
+| ST-18 | JD 含 Email／手機號的職缺入庫 | `description` 命中處替換為 `[EMAIL]`／`[PHONE]`，其餘 JD 文字不變；`content_hash` 以遮罩後文字計算，同一頁面重複入庫仍為 `created=false`／`changed=false` |
 
 ### 3.3 `process_state` 狀態轉換與事件
 
@@ -96,7 +97,8 @@
 | ST-55 | `CountAgentCallsSince(role, since)` | 只計該 role 於區間內的成功呼叫；失敗呼叫不計入每日預算 |
 | ST-56 | 儲存成功與失敗的 Job 相關 agent call | 保留角色、runner、input/output、ok、duration 與時間；Job 外鍵正確 |
 | ST-57 | 儲存校準用途的 agent call | `role` 為 `calibrator`、`job_id` 可為 NULL；其餘必填欄位仍受驗證 |
-| ST-58 | agent call 含非法 role、runner、ok 值、負 duration 或 PII 命中 | 被拒絕且不寫入資料 |
+| ST-58 | agent call 含非法 role、runner、ok 值或負 duration | 被拒絕且不寫入資料 |
+| ST-59 | agent call 的 prompt 或輸出含 Email／手機號 | 寫入成功；`input`／`output` 中命中處替換為 `[EMAIL]`／`[PHONE]`，其餘文字、判定內容與 token 用量欄位不變 |
 
 ### 3.7 Profile revision 與 activation
 

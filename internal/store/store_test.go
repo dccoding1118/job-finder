@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -269,8 +270,41 @@ func TestForeignKeysAndRunAndAgentValidation(t *testing.T) {
 	if err := store.SaveAgentCall(ctx, AgentCallInput{Role: "scorer", Runner: "claude", Input: "prompt", Output: "result", DurationMS: 1}); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.SaveAgentCall(ctx, AgentCallInput{Role: "scorer", Runner: "claude", Input: "contact me@example.com", Output: "result"}); err == nil {
-		t.Fatal("agent call with email succeeded")
+}
+
+func TestSaveAgentCallMasksPIIAndKeepsUsage(t *testing.T) {
+	store := openTestStore(t, filepath.Join(t.TempDir(), "jobs.db"))
+	defer closeTestStore(t, store)
+	ctx := context.Background()
+	usage := AgentCallUsage{InputTokens: 120, OutputTokens: 40, CostUSD: 0.5}
+	if err := store.SaveAgentCall(ctx, AgentCallInput{
+		Role: "filter", Runner: "claude",
+		Input:      "JD: 意者請寄 hr@example.com.tw 或電洽 0912345678",
+		Output:     `{"verdict":"pass","contact":"hr@example.com.tw"}`,
+		OK:         true,
+		DurationMS: 2,
+		Usage:      usage,
+	}); err != nil {
+		t.Fatalf("save agent call carrying PII: %v", err)
+	}
+	var input, output string
+	var inputTokens, outputTokens int
+	var cost float64
+	if err := store.db.QueryRowContext(ctx, "SELECT input, output, input_tokens, output_tokens, cost_usd FROM agent_calls").
+		Scan(&input, &output, &inputTokens, &outputTokens, &cost); err != nil {
+		t.Fatalf("read agent call: %v", err)
+	}
+	if hasPII(input) || hasPII(output) {
+		t.Fatalf("stored call kept PII: input=%q output=%q", input, output)
+	}
+	if !strings.Contains(input, "[EMAIL]") || !strings.Contains(input, "[PHONE]") {
+		t.Fatalf("input lost its placeholders: %q", input)
+	}
+	if !strings.Contains(output, `"verdict":"pass"`) {
+		t.Fatalf("masking damaged the verdict: %q", output)
+	}
+	if inputTokens != usage.InputTokens || outputTokens != usage.OutputTokens || cost != usage.CostUSD {
+		t.Fatalf("usage not preserved: %d/%d/%v", inputTokens, outputTokens, cost)
 	}
 }
 
@@ -294,6 +328,43 @@ func TestListRunsReadsCompletedAndRunningRuns(t *testing.T) {
 	}
 	if len(runs) != 2 || runs[0].Trigger != RunTriggerManualExtension || runs[1].FinishedAt == nil {
 		t.Fatalf("unexpected runs: %+v", runs)
+	}
+}
+
+func TestUpsertJobMasksPIIInDescription(t *testing.T) {
+	store := openTestStore(t, filepath.Join(t.TempDir(), "jobs.db"))
+	defer closeTestStore(t, store)
+	ctx := context.Background()
+	job := fullJob("需熟悉 Go 與 Kubernetes。意者請寄 hr@example.com.tw 或電洽 0912345678")
+	created, err := store.UpsertJob(ctx, job, nil)
+	if err != nil {
+		t.Fatalf("upsert job: %v", err)
+	}
+	stored := *created.Job.Description
+	if hasPII(stored) {
+		t.Fatalf("stored description kept PII: %q", stored)
+	}
+	if !strings.Contains(stored, "[EMAIL]") || !strings.Contains(stored, "[PHONE]") {
+		t.Fatalf("description lost its placeholders: %q", stored)
+	}
+	if !strings.Contains(stored, "需熟悉 Go 與 Kubernetes") {
+		t.Fatalf("masking damaged the requirements text: %q", stored)
+	}
+	// The hash is taken over the masked text, so re-ingesting the same page is
+	// still a no-op rather than a content change that resets the pipeline.
+	repeat, err := store.UpsertJob(ctx, job, nil)
+	if err != nil {
+		t.Fatalf("re-upsert job: %v", err)
+	}
+	if repeat.Created || repeat.Changed {
+		t.Fatalf("re-ingesting the same JD was not idempotent: created=%v changed=%v", repeat.Created, repeat.Changed)
+	}
+	summary, err := store.SnapshotForVerification(ctx)
+	if err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+	if summary.Descriptions.Rows != 1 || summary.Descriptions.PIIMatches != 0 || summary.Descriptions.Masked != 1 {
+		t.Fatalf("description summary is invalid: %+v", summary.Descriptions)
 	}
 }
 

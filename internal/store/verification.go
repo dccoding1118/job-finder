@@ -20,6 +20,30 @@ type VerificationSnapshot struct {
 	Jobs          []VerificationJob        `json:"jobs"`
 	Runs          []Run                    `json:"runs"`
 	AgentCalls    []VerificationAgentCalls `json:"agent_calls"`
+	AgentPayloads VerificationAgentPayload `json:"agent_payloads"`
+	Descriptions  VerificationDescriptions `json:"job_descriptions"`
+}
+
+// VerificationDescriptions is the same whole-table verdict for the stored JDs,
+// which are masked at ingest and therefore never the source of PII downstream.
+type VerificationDescriptions struct {
+	Rows       int `json:"rows"`
+	PIIMatches int `json:"pii_matches"`
+	Masked     int `json:"masked"`
+}
+
+// VerificationAgentPayload is the whole-table verdict on the stored prompts and
+// responses, reduced to counts so the evidence itself carries no payload text.
+type VerificationAgentPayload struct {
+	Rows int `json:"rows"`
+	// PIIMatches must stay 0: a stored payload never keeps a mail address or a
+	// mobile number.
+	PIIMatches int `json:"pii_matches"`
+	// Masked counts the rows a placeholder was substituted into, and
+	// MaskedWithUsage how many of those still carry their token accounting —
+	// masking replaces rejecting, so the two are equal.
+	Masked          int `json:"masked"`
+	MaskedWithUsage int `json:"masked_with_usage"`
 }
 
 type VerificationJob struct {
@@ -219,13 +243,78 @@ func (s *Store) SnapshotForVerification(ctx context.Context) (VerificationSnapsh
 	for callRows.Next() {
 		var call VerificationAgentCalls
 		var ok int
-		if err := callRows.Scan(&call.Role, &call.Runner, &ok, &call.FilterRevision, &call.ScoreRevision, &call.Count); err != nil {
-			return out, fmt.Errorf("verification: scan agent calls: %w", err)
+		if scanErr := callRows.Scan(&call.Role, &call.Runner, &ok, &call.FilterRevision, &call.ScoreRevision, &call.Count); scanErr != nil {
+			return out, fmt.Errorf("verification: scan agent calls: %w", scanErr)
 		}
 		call.OK = ok == 1
 		out.AgentCalls = append(out.AgentCalls, call)
 	}
-	return out, callRows.Err()
+	if callErr := callRows.Err(); callErr != nil {
+		return out, callErr
+	}
+	out.AgentPayloads, err = s.agentPayloadSummary(ctx)
+	if err != nil {
+		return out, err
+	}
+	out.Descriptions, err = s.descriptionSummary(ctx)
+	if err != nil {
+		return out, err
+	}
+	return out, nil
+}
+
+func (s *Store) descriptionSummary(ctx context.Context) (VerificationDescriptions, error) {
+	var summary VerificationDescriptions
+	rows, err := s.db.QueryContext(ctx, "SELECT description FROM jobs WHERE description IS NOT NULL")
+	if err != nil {
+		return summary, fmt.Errorf("verification: read job descriptions: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var description string
+		if scanErr := rows.Scan(&description); scanErr != nil {
+			return summary, fmt.Errorf("verification: scan job description: %w", scanErr)
+		}
+		summary.Rows++
+		if hasPII(description) {
+			summary.PIIMatches++
+		}
+		if containsPlaceholder(description) {
+			summary.Masked++
+		}
+	}
+	return summary, rows.Err()
+}
+
+func (s *Store) agentPayloadSummary(ctx context.Context) (VerificationAgentPayload, error) {
+	var summary VerificationAgentPayload
+	rows, err := s.db.QueryContext(ctx, "SELECT input, output, input_tokens, output_tokens FROM agent_calls")
+	if err != nil {
+		return summary, fmt.Errorf("verification: read agent payloads: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var input, output string
+		var inputTokens, outputTokens int
+		if scanErr := rows.Scan(&input, &output, &inputTokens, &outputTokens); scanErr != nil {
+			return summary, fmt.Errorf("verification: scan agent payload: %w", scanErr)
+		}
+		summary.Rows++
+		if hasPII(input) || hasPII(output) {
+			summary.PIIMatches++
+		}
+		if containsPlaceholder(input) || containsPlaceholder(output) {
+			summary.Masked++
+			if inputTokens > 0 || outputTokens > 0 {
+				summary.MaskedWithUsage++
+			}
+		}
+	}
+	return summary, rows.Err()
+}
+
+func containsPlaceholder(text string) bool {
+	return strings.Contains(text, "[EMAIL]") || strings.Contains(text, "[PHONE]")
 }
 
 func digest(value string) string {
