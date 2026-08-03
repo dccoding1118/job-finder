@@ -77,8 +77,15 @@ actual_checksum="$(sha256sum "${binary}" | awk '{print $1}')"
 [[ -n "${expected_checksum}" && "${expected_checksum}" == "${actual_checksum}" ]] || fail 'artifact checksum mismatch'
 grep -Fqx "  path: ${LIVE_DB}" "${config}" || fail 'live config does not target live SQLite'
 grep -Fqx '    base_url: https://www.yourator.co' "${config}" || fail 'live config does not target official Yourator'
-[[ "$(grep -Ec '^[[:space:]]+agent: (claude|codex)$' "${config}")" == '6' ]] || fail 'live config must define six role agent endpoints'
-[[ "$(grep -Ec '^[[:space:]]+model: [^[:space:]]+$' "${config}")" == '6' ]] || fail 'live config must define a model for every role endpoint'
+# Every role carries a primary and a fallback, and both have to name the agent
+# and the model outright: a live run must never reach an external CLI through an
+# implicit default. The expected endpoint count is derived from the roles the
+# config declares, so adding a role extends this check instead of ageing it out.
+role_count="$(grep -Ec '^    (filter|scorer|drafter|reviewer):$' "${config}")"
+[[ "${role_count}" == '4' ]] || fail 'live config must define the filter, scorer, drafter and reviewer roles'
+endpoint_count=$(( role_count * 2 ))
+[[ "$(grep -Ec '^[[:space:]]+agent: (claude|codex)$' "${config}")" == "${endpoint_count}" ]] || fail "live config must name an agent for all ${endpoint_count} role endpoints"
+[[ "$(grep -Ec '^[[:space:]]+model: [^[:space:]]+$' "${config}")" == "${endpoint_count}" ]] || fail "live config must name a model for all ${endpoint_count} role endpoints"
 if grep -Fq "${HARNESS_ROOT}" "${config}" "${RUNTIME_ROOT}/systemd-live/"*; then
 	fail 'live config or rendered units reference the mock harness'
 fi
@@ -87,7 +94,7 @@ if ! "${binary}" run --config "${config}" --stage filter --limit 1 >"${output_fi
 fi
 grep -Fqx 'filtered_out: 0' "${output_file}" || fail 'cost-free config preflight produced unexpected work'
 record "- artifact：binary_sha256=${actual_checksum}；Git dirty 狀態不影響執行。"
-record '- 六個 role endpoints 均明確指定 agent 與 model，並在外部呼叫前通過 strict config 與 Runner 建構。'
+record "- filter／scorer／drafter／reviewer 四個 role 的 primary 與 fallback 共 ${endpoint_count} 個 endpoints 均明確指定 agent 與 model，並在外部呼叫前通過 strict config 與 Runner 建構。"
 pass_step
 
 begin_step '02' '匿名 Profile、權限與 schema'
@@ -152,14 +159,21 @@ record "- 安全摘要：${complete_summary}；Agent 原始輸出與信件內容
 pass_step
 
 begin_step '07' 'live fetch 重跑冪等'
+# Not inserting a duplicate is only half of idempotence. The other half is that
+# an unchanged listing still hashes to the same content: a source page carrying
+# per-request state would reset every job to `new` and buy the whole batch's
+# screening and scoring again on every run.
+before_fingerprint="$(mise exec -- node "${PROJECT_ROOT}/scripts/verify/oracle/assert-positive.mjs" live-fingerprint "${snapshot}" 2>"${output_file}")" || fail 'pre-rerun fingerprint failed'
 if ! "${binary}" run --config "${config}" --stage fetch --limit 1 >"${output_file}" 2>&1; then
   external_failure 'repeated live Yourator fetch did not complete'
 fi
 grep -Fqx 'new: 0' "${output_file}" || fail 'repeated live fetch inserted duplicate Jobs'
 "${binary}" verify snapshot --db "${LIVE_DB}" >"${snapshot}" || fail 'repeated live snapshot failed'
+after_fingerprint="$(mise exec -- node "${PROJECT_ROOT}/scripts/verify/oracle/assert-positive.mjs" live-fingerprint "${snapshot}" 2>"${output_file}")" || fail 'post-rerun fingerprint failed'
+[[ "${before_fingerprint}" == "${after_fingerprint}" ]] || fail "repeated live fetch changed stored content hashes or processing states (${before_fingerprint} → ${after_fingerprint}); an unchanged listing must not be re-screened and re-scored"
 repeat_summary="$(mise exec -- node "${PROJECT_ROOT}/scripts/verify/oracle/assert-positive.mjs" live-snapshot "${snapshot}" complete 2>"${output_file}")" || fail 'repeated live snapshot violates contracts'
 [[ "${repeat_summary}" == "${complete_summary}" ]] || fail 'live rerun changed Job identity or Agent counts'
-record "- 安全摘要維持 ${repeat_summary}；不重複新增 Job 或 Agent 呼叫。"
+record "- 安全摘要維持 ${repeat_summary}；不重複新增 Job 或 Agent 呼叫，且 ${before_fingerprint%%:*} 筆職缺的 content hash 與處理狀態逐筆未變。"
 pass_step
 
 begin_step '08' 'rendered live systemd units'
@@ -213,6 +227,9 @@ pass_step
 begin_step '11' '真 MV3 extension 唯讀連線'
 if ! VERIFY_ROOT="${VERIFY_ROOT}" VERIFY_EXTENSION_DIR="${ARTIFACT_ROOT}/extension" VERIFY_BROWSER_PROFILE="${RUNTIME_ROOT}/browser-profile-live" VERIFY_EVIDENCE_ROOT="${EVIDENCE_ROOT}" \
   xvfb-run -a mise exec -- node "${PROJECT_ROOT}/scripts/verify/browser/extension-live-e2e.js" >"${output_file}" 2>&1; then
+  # The browser verifier's own error is the only thing that says which assertion
+  # gave way, so it goes to stderr rather than being swallowed by the step name.
+  sed -n '1,120p' "${output_file}" >&2
   fail 'live MV3 extension verification failed'
 fi
 browser_evidence="${EVIDENCE_ROOT}/extension-live-browser.json"

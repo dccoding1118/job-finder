@@ -4,7 +4,7 @@
 > **題目卷 ↔ 答案卷**：本檔是題目卷；`mise run e2e-mock` 每趟產生 `evidence/<timestamp>-mock.md` 答案卷（逐案例的實際觀察值與判定，案例 ID 與本檔 §4 對齊）。**人工驗收＝拿答案卷逐案例對本檔標準答案**（§7）。
 > **只驗真程式真的跑得出來的部分**。mock fixture（合成 Yourator／104 頁、fake CLI Agent、隔離 Chromium）**允許但明標「模擬，不等於真來源、真 CLI Agent 或實際 Chrome 已驗收」**；真依賴另走 V3 live（§6）與人工 Chrome gate（§9）。
 > **三態判定**：`PASS` ／ `ENVIRONMENT_BLOCKED`（exit 2，外部依賴不可用，未判定產品）／ `FAIL`（exit 1，產品行為不符），不得以「安全完成」當 PASS。
-> 標準答案的機器真相源是 `scripts/verify/oracle/assert-positive.mjs`；本檔為人重述並指向它，兩者不得分歧。對應 `docs/design.md` §8 測試策略。最後更新：2026-07-29。
+> 標準答案的機器真相源是 `scripts/verify/oracle/assert-positive.mjs`；本檔為人重述並指向它，兩者不得分歧。對應 `docs/design.md` §8 測試策略。最後更新：2026-08-03。
 
 負向案例（N）目前僅保留骨架（§5），待正向流程穩定後，以相同的需求對照與 evidence 格式累加；不阻礙目前 V 的交付。
 
@@ -19,16 +19,16 @@ mise run e2e-mock   # 物化隔離 artifact → 依序跑 V1/V2/V4/V5/V7 → 產
 - **沙盒**：`.local-dev/verify/`（gitignored 隔離根，0700，不碰日常 Profile/設定/SQLite）。
   `artifact/` 承載 mock/live 共用 product binary、extension 與 production unit templates；
   `harness/` 只承載 mock fixture/fake Agent；`runtime/` 產生 config、SQLite、browser profile 與 rendered units；
-  `evidence/` 保留歷次答案卷。腳本位於 `scripts/verify/`（runbook 於根層、browser E2E 於 `browser/`、Playwright 設定 `playwright.config.js`）。
+  `evidence/` 保留歷次答案卷。腳本位於 `scripts/verify/`（runbook 於根層——一般 mock、Profile mock 與 worker mock 各一支；browser E2E 於 `browser/`、Playwright 設定 `playwright.config.js`）。
 - **跑完要檢查哪些產物**（人工照著看一遍）：
 
   | 產物 | 位置 | 看什麼 |
   |---|---|---|
-  | 答案卷 | `.local-dev/verify/evidence/<最新>-mock.md` | 逐案例觀察值＋PASS/FAIL；收尾 tally 與使用者故事重建 |
+  | 答案卷 | `.local-dev/verify/evidence/<最新>-{mock,profile-mock,worker-mock}.md` | 逐案例觀察值＋PASS/FAIL；收尾 tally 與使用者故事重建 |
   | SQLite snapshot | `<binary> verify snapshot --db .local-dev/verify/runtime/mock.db` | 5 筆 Job 的終態、篩選逐條判定、四維分數、letter 輪次、狀態事件 |
   | browser evidence | `evidence/extension-browser.json`、`evidence/extension-dashboard.png` | extension 模擬互動的安全摘要與截圖 |
 
-- **跑到哪停**：`mise run e2e-mock` 一趟涵蓋 V1／V2／V4／V5、V7 的 S30–S36 與 V8 的 S46、S52（✅）。V6 的 Cake 步驟（S40–S45、S41b）與 V7 的 S39 系列尚未實作（⏳）。V3 live 需真 Yourator＋已授權 `claude`/`codex` CLI，另跑 `mise run e2e-live`（⏳，§6）。實際 Chrome 安裝與相容性一律人工 gate（👤，§9）。
+- **跑到哪停**：`mise run e2e-mock` 一趟涵蓋 V1／V2／V4／V5、V6 全部步驟、V7 的 S30–S36 與 S39 系列，以及 V8 的 S46、S52（✅），依序產生一般 mock、Profile mock 與 worker mock 三份答案卷。V3 live 需真 Yourator＋已授權 `claude`/`codex` CLI，另跑 `mise run e2e-live`（⏳，§6）。實際 Chrome 安裝與相容性一律人工 gate（👤，§9）。
 
 ## 2. 覆蓋度地圖（需求 ←→ 案例）
 
@@ -77,14 +77,23 @@ mock 一趟用固定合成測資；下表即「標準答案」，逐值由 `asse
 | v5intern | backend intern engineer | 命中 exclude → `unfit`／`filtered_out` | — |
 | v5senior | Senior backend engineer | `discovered`／`pending_detail`，進待看清單 | 同步過結構化條件 → 停在 `new`／`pending_screen`；語意篩選與評分由 worker 接手 |
 
-### 3.3.1 Cake 兩筆測資（V6）
+### 3.3.1 Cake 測資（V6）
 
-| item | 標題／公司 | 列表判定 | 內頁 capture 後 |
-|---|---|---|---|
-| v6intern | backend intern engineer／Example Services | 命中 exclude → `unfit`／`filtered_out` | — |
-| v6dup | Senior backend engineer／Example Services 股份有限公司 | `discovered`／`pending_detail` | 與 V5 的 `v5senior`（104）判定為同一職缺 ⇒ 自動合併，回 canonical 的既有判定 |
+Cake 列表以 `__NEXT_DATA__` 與 DOM 收割兩種素材各擷取一次；內頁一律走 `cake_dom`。
 
-`v6dup` 與 `v5senior` 的公司名寫法與職稱大小寫刻意不同，用以驗證正規化；地區相同。另備 `v6grey`（同公司、職稱相似但不相等）驗證灰帶候選，其來源必須是該群組尚未涵蓋的第三個平台——同來源的兩筆一律不進比較（見 [design-schema](designs/design-schema.md) §4.2）。
+| item | 標題／公司 | 列表素材 | 列表判定 | 內頁 capture 後 |
+|---|---|---|---|---|
+| v6intern | backend intern engineer／Example Services | `__NEXT_DATA__` | 命中 exclude → `unfit`／`filtered_out` | — |
+| v6dup | Senior backend engineer／Beta Co., Ltd. | `__NEXT_DATA__` | 與 V5 的 `v5senior`（104，Beta Co）判定為同一職缺 ⇒ 自動合併，回 canonical 的既有判定 | 全文寫入 alias；metadata 行讀出地點 台北市、月薪 120000–150000、remote `hybrid` |
+| v6nometa | Platform reliability engineer／Cake Only Labs | `__NEXT_DATA__` | `discovered`／`pending_detail` | metadata 行辨識不到地點、月薪與遠端形式 ⇒ `unknown`／null |
+| v6same1、v6same2 | Backend engineer、Backend engineer（Platform），同為 Delta Works | DOM 收割 | 兩筆各自 `discovered`／`pending_detail` | — |
+| v6grey | Data platform engineer, Core／Grey Labs 股份有限公司 | DOM 收割 | 與 104 的 `v6greybase`（Senior data platform engineer／Grey Labs）成為灰帶候選 | — |
+| v6ignore | Mobile platform engineer, Core／Ignore Works Co., Ltd. | DOM 收割 | 與 104 的 `v6ignorebase`（Senior mobile platform engineer／Ignore Works）成為灰帶候選 | — |
+
+- `v6dup` 與 `v5senior` 的公司名寫法與職稱大小寫刻意不同，用以驗證正規化；地區相容。
+- `v6same1`／`v6same2` 公司相同且正規化職稱相等，但同屬 Cake：同來源兩筆一律不進比較（見 [design-schema](designs/design-schema.md) §4.2）。
+- 灰帶兩對的職稱 Jaccard 相似度 0.75（相似但不相等），來源分屬 104 與 Cake——同來源的兩筆一律不進比較。`v6grey` 那對由使用者 `merge`、`v6ignore` 那對由使用者 `ignore`。
+- 自動合併只在**雙方皆無 score／letter／apply 產出**時成立，因此 Cake 列表 capture 排在 V5 的 104 列表判定之後、104 內頁補全文之前執行。
 
 ### 3.4 Profile 與來源請求測資
 
@@ -92,9 +101,9 @@ mock 一趟用固定合成測資；下表即「標準答案」，逐值由 `asse
 - V7 bootstrap 另以不存在的 Profile 啟動；首次儲存使用同一份合成內容。revision 由 canonical 結構計算，evidence 只記 revision 短碼與筆數，不保存 Profile request／response body。
 - 來源請求序：先 `GET /robots.txt` → 3 個方向各一次 `GET /api/v4/jobs`（`term[]`＝`{cloud,platform}`／`{backend,Go}`／`{Kubernetes,reliability}`，page=1）→ 5 個唯一 `GET /jobs/1000..1004`。跨 query 重複項不重抓。
 
-## 4. 正向案例 V（mock，32 步原子案例）
+## 4. 正向案例 V（mock，原子案例）
 
-`mise run e2e-mock` 依序執行 V1／V2／V4／V5 與 V7 各步，共用同一 artifact，分別使用一般 mock 與 Profile mock 的隔離 SQLite、Profile 與答案卷；任一步失敗即停止並保留隔離目錄。每步一個原子觀察，標準答案為字面值（詳細測資見 §3，機器斷言見 `assert-positive.mjs`）。
+`mise run e2e-mock` 依序執行 V1／V2／V4／V5／V6 與 V7 各步，共用同一 artifact，分別使用一般 mock、Profile mock 與 worker mock 的隔離 SQLite、Profile 與答案卷；任一步失敗即停止並保留隔離目錄。每步一個原子觀察，標準答案為字面值（詳細測資見 §3，機器斷言見 `assert-positive.mjs`）。
 
 | 步 | 動作 | 標準答案（字面預期） | 案例·需求 | 狀態 |
 |---|---|---|---|---|
@@ -139,23 +148,25 @@ mock 一趟用固定合成測資；下表即「標準答案」，逐值由 `asse
 | S37 | Chrome 人工 Profile gate | 系統頁各群組、Options 入口、批次時間、手動 reprocess、整數評分與 revision 燈號、全頁表單新增定位、衝突、離頁提醒及 light／dark 可用 | V7·R6 | 👤 |
 | S38 | 單筆重新處理與處理進度 | 對已評分職缺按「重新處理」後只該筆回 `new`、worker 重篩並重評附加新 Score，其他職缺 Agent 呼叫數不變；對判不適合的職缺按同一入口後該筆重新進入篩選；系統頁處理進度與 Agent 呼叫紀錄反映該次執行 | V7·R6/R7 | 👤 |
 
-| S39 | 自動處理開關與單筆插隊處理 | 關閉自動處理後，`new`／`queued` 職缺於 worker 掃描間隔內狀態不變且無新 Agent 呼叫；批次正在消化時關閉，最多再完成當下這一筆即停止並記一行 Info；對其中一筆送 `POST /jobs/{id}/process` 回 202，該筆完成篩選與評分且只增加該筆的 Agent 呼叫；每日評分額度已用盡時同一入口仍完成該筆；重新開啟後其餘職缺恢復消化 | V7·R6/R7 | ⏳ |
+| S39 | 自動處理開關與單筆插隊處理 | 關閉自動處理後，`new`／`queued` 職缺於 worker 掃描間隔內狀態不變且無新 Agent 呼叫；批次正在消化時關閉，最多再完成當下這一筆即停止並記一行 Info；對其中一筆送 `POST /jobs/{id}/process` 回 202，該筆完成篩選與評分且只增加該筆的 Agent 呼叫；每日評分額度已用盡時同一入口仍完成該筆；重新開啟後其餘職缺恢復消化 | V7·R6/R7 | ✅ |
 
-| S39C | 消化順序 | 佇列同時有 `queued` 與 `new` 職缺時，log 顯示先把既有 `queued` 全部評分完（含超過單次取件上限而反覆取件的情形），才篩選 `new` 且該筆於同一輪接著評分抵達最終判定 | V7·R7 | ⏳ |
+| S39C | 消化順序 | 佇列同時有 55 筆 `queued` 與 1 筆 `new` 時，log 顯示先以單次取件上限 50 取件、再取件消化剩餘 5 筆（未設每日上限時單次取件上限即為批次界限），才篩選該筆 `new` 且它於同一輪接著評分抵達最終判定 | V7·R7 | ✅ |
 
-| S39B | Profile 變更後的等待中職缺 | 儲存改動硬規則的 Profile 且不按「更新過時判定職缺」，開啟自動處理後 `new` 職缺仍被消化並以新 revision 完成篩選與評分；篩選判定已過時的 `queued` 職缺留在原狀態，log 記一行待重新處理筆數；對該筆送 `POST /jobs/{id}/process` 則完成重篩與重評 | V7·R6/R7 | ⏳ |
+| S39B | Profile 變更後的等待中職缺 | 儲存改動硬規則的 Profile 且不按「更新過時判定職缺」，開啟自動處理後 `new` 職缺仍被消化並以新 revision 完成篩選與評分；篩選判定已過時的 `queued` 職缺留在原狀態，log 記一行待重新處理筆數；對該筆送 `POST /jobs/{id}/process` 則完成重篩與重評 | V7·R6/R7 | ✅ |
 
 ### V6 — Cake 半被動擷取與跨來源合併
 
+本組的列表 capture 排在 V5 的 104 列表判定之後、104 內頁補全文之前執行：自動合併只在雙方皆無產出時成立（§3.3.1）。
+
 | 步 | 動作 | 標準答案（字面預期） | 案例·需求 | 狀態 |
 |---|---|---|---|---|
-| S40 | Cake 列表 capture（`source=cake`） | v6intern→`unfit/filtered_out`、v6dup→`discovered/pending_detail`；列表路徑 Agent 呼叫數不變 | V6·R2/R3/R9 | ⏳ |
-| S41 | Cake 內頁 capture 補全文（`cake_dom` 素材） | 全文含職缺描述與職務需求兩段且各自保留區塊標題、`external_id` 與列表項目一致；地點、月薪與遠端形式由 metadata 行辨識，辨識不到時為 `unknown`／null | V6·R2/R9 | ⏳ |
-| S41b | 同一來源的兩筆相似職缺 capture | 不自動合併也不出現於 `GET /duplicates`；兩筆各自保有獨立群組與判定 | V6·R2.8 | ⏳ |
-| S42 | v6dup 與既有 104 `v5senior` 分群 | 兩筆歸入同一 group；canonical 依來源優先序為 104 那筆；alias `process_state=merged`，狀態事件記錄合併前狀態與 canonical id | V6·R2.8 | ⏳ |
-| S43 | 合併後的判定與清單 | Cake capture 回 canonical 的 job id 與既有 verdict；`GET /jobs`、`GET /queue` 不含 `merged`；Job 詳情的 `group.members` 含兩個來源連結；Agent 呼叫數不變 | V6·R2.8/R9.7 | ⏳ |
-| S44 | 灰帶候選與人工裁決 | `v6grey` 不自動合併，出現於 `GET /duplicates`；`merge` 後合併成立且候選轉 `merged`；`ignore` 後不再出現 | V6·R2.8/R6.12 | ⏳ |
-| S45 | 取消合併 | alias 還原為合併前狀態與獨立 group，重新出現於清單；既有 Score 與 Letter 未被刪除 | V6·R2.8 | ⏳ |
+| S40 | Cake 列表 capture（`source=cake`，`__NEXT_DATA__` 素材） | v6intern→`unfit/filtered_out`、v6dup 與 v6nometa→`discovered/pending_detail`；列表路徑 Agent 呼叫數不變 | V6·R2/R3/R9 | ✅ |
+| S41 | Cake 內頁 capture 補全文（`cake_dom` 素材） | 全文含職缺描述與職務需求兩段且各自保留區塊標題、`external_id` 與列表項目一致；地點、月薪與遠端形式由 metadata 行辨識，辨識不到時為 `unknown`／null | V6·R2/R9 | ✅ |
+| S41b | 同一來源的兩筆相似職缺 capture（DOM 收割素材） | 不自動合併也不出現於 `GET /duplicates`；兩筆各自保有獨立群組與 `discovered` 判定 | V6·R2.8 | ✅ |
+| S42 | v6dup 與既有 104 `v5senior` 分群 | 兩筆歸入同一 group；canonical 依來源優先序為 104 那筆；alias `process_state=merged`，狀態事件記錄合併前狀態與 canonical id | V6·R2.8 | ✅ |
+| S43 | 合併後的判定與清單 | Cake capture 回 canonical 的 job id 與既有 verdict；`GET /jobs`、`GET /queue` 不含 `merged`；Job 詳情的 `group.members` 含兩個來源連結；Agent 呼叫數不變 | V6·R2.8/R9.7 | ✅ |
+| S44 | 灰帶候選與人工裁決 | `v6grey`／`v6ignore` 兩對皆不自動合併，並列於 `GET /duplicates`（`reason=title_similar`、兩側來源分屬 104 與 Cake）；`v6grey` 那對 `merge` 後合併成立、候選轉已裁決；`v6ignore` 那對 `ignore` 後不再出現且兩筆各自獨立 | V6·R2.8/R6.12 | ✅ |
+| S45 | 取消合併 | alias 還原為合併前狀態與獨立 group，重新出現於清單；既有 Score 與 Letter 未被刪除 | V6·R2.8 | ✅ |
 
 ### V8 — 兩關判定的 Profile 連動（S8／S9 之外的部分）
 
@@ -196,7 +207,7 @@ mise run e2e-live
 | 真來源 fetch | 每方向 keywords 組一個正式 query（每來源最多三組），結果進同一池 | 至少一筆真 Job；跨 query/page 依 external ID 去重；**零筆＝FAIL**；evidence 只記來源、筆數、external ID hash 與 request/format 摘要 | ⏳ |
 | 真資料格式 | 讀 live SQLite 安全 snapshot | external ID、canonical HTTPS URL、標題、公司、非空 JD、地點、remote enum、content hash 正確；salary 可 NULL，非 NULL 時 min≤max | ⏳ |
 | 真 Agent filter／score／letter | 對一筆結構化條件全過的 Job 跑語意篩選與評分；再對一筆推薦職缺**明確要求後**生成 | 逐條判定與彙總結論、四維、加權總分、reason、runner audit、信件終態合法；要求前零 Drafter/Reviewer 呼叫；score/letter 各最多一筆；executable 非 repo 內 fake | ⏳ |
-| 冪等與 Run | 再執行相同 live query | 同 source/external ID 不新增重複 Job；Run stats、Agent 上限、錯誤摘要正確 | ⏳ |
+| 冪等與 Run | 再執行相同 live query | 同 source/external ID 不新增重複 Job；**未變更的職缺其 `content_hash` 與 `process_state` 逐筆不變**（否則整批會被重置回 `new` 並重付篩選與評分）；Run stats、Agent 上限、錯誤摘要正確 | ⏳ |
 | systemd／API／extension 模擬 | live config 啟 transient systemd 與 localhost API，隔離 Chromium 操作 extension | 讀同一 live SQLite；browser verifier 依實際 Job 狀態選資料、不依賴 mock 合成標題或固定 ID；仍屬自動模擬，非實際 Chrome gate | ⏳ |
 
 開發中未提交變更可直接驗收。artifact manifest 以 binary/extension/config/unit checksum 為主要追溯；Git revision 與 dirty 狀態只作輔助，不構成執行閘門。
@@ -225,8 +236,6 @@ mise run e2e-live
 ## 9. 後續累加順序
 
 1. 在具備正式來源連線與已授權 CLI 的環境跑通 **V3**：真來源至少一筆、真 Agent score／letter 與安全格式 evidence 缺一不可。
-2. 完成 **V6** 的 Cake 半被動擷取與跨來源合併 harness（S40–S45、S41b），再將 V1–V6 彙整為完整日常求職迴圈。
-3. 完成 **V7** 的自動處理開關與插隊 harness（S39、S39B、S39C）。
-4. 依 §5 骨架累加負向案例 N，沿用相同需求對照與 evidence 格式。
+2. 依 §5 骨架累加負向案例 N，沿用相同需求對照與 evidence 格式。
 
 **人工 gate 是常態流程，不是待辦**：凡動到 extension、Side Panel、Profile editor 或任一 content script 的改動，交付前由驗收者把同一份 artifact 載入實機 Chrome 走一次（步驟見 `docs/guides/runbook-extension.md`），涵蓋 §4 標為 👤 的步驟與該次改動觸及的頁面。自動隔離 Chromium 不得替代人工結論；結論當場即知，不回寫本檔。

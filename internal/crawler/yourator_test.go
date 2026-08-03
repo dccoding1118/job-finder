@@ -88,6 +88,36 @@ func TestExtractJobDescriptionIncludesNestedYouratorSections(t *testing.T) {
 	}
 }
 
+// The JD section on a real listing encloses the page's own hydration state,
+// which differs on every request. Keeping it would make an unchanged listing
+// look changed on every fetch, and that resets the job to `new` — re-screening
+// and re-scoring the whole batch each run.
+func TestExtractJobDescriptionDropsPageStateAndStaysStable(t *testing.T) {
+	page := func(events string) string {
+		return `<section class="relative job-description row main-info">
+  <div><h2>工作內容</h2><section class="content__area"><p>Build cloud services.</p></section></div>
+  <div class="recommendations">
+    <script type="application/json" data-dom-id="RelativeEventWrapper-react-component-` + events + `">{"title":"相關的主題專區","events":[{"id":` + events + `,"name":"遠端工作職缺專區 Remote Jobs"}]}</script>
+    <style>.recommendations { display: none; }</style>
+  </div>
+</section>`
+	}
+
+	first := extractJobDescription(page("71"))
+	second := extractJobDescription(page("82"))
+	if first != second {
+		t.Fatalf("description is not stable across requests:\n%q\n%q", first, second)
+	}
+	if !strings.Contains(first, "工作內容\nBuild cloud services.") {
+		t.Fatalf("description lost the job content: %q", first)
+	}
+	for _, leaked := range []string{"相關的主題專區", "RelativeEventWrapper", "display: none"} {
+		if strings.Contains(first, leaked) {
+			t.Fatalf("description carries page state %q: %q", leaked, first)
+		}
+	}
+}
+
 func TestExtractJobDescriptionRejectsIncompleteOuterSection(t *testing.T) {
 	if description := extractJobDescription(`<section class="job-description"><section>incomplete</section>`); description != "" {
 		t.Fatalf("description = %q, want empty", description)

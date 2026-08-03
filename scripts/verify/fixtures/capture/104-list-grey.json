@@ -1,0 +1,21 @@
+{
+  "source": "104",
+  "items": [
+    {
+      "href": "https://www.104.com.tw/job/v6greybase",
+      "title": "Senior data platform engineer",
+      "company_name": "Grey Labs",
+      "location": "Taipei",
+      "salary_text": "月薪120,000元",
+      "remote": false
+    },
+    {
+      "href": "https://www.104.com.tw/job/v6ignorebase",
+      "title": "Senior mobile platform engineer",
+      "company_name": "Ignore Works",
+      "location": "Taipei",
+      "salary_text": "月薪120,000元",
+      "remote": false
+    }
+  ]
+}

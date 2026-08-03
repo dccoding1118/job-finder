@@ -1,0 +1,13 @@
+{
+  "source": "cake",
+  "url": "https://www.cake.me/companies/beta-co/jobs/senior-backend-engineer",
+  "cake_dom": {
+    "title": "Senior backend engineer",
+    "company_name": "Beta Co., Ltd.",
+    "sections": [
+      { "title": "職缺描述", "body": "Build Go backend and cloud platform services" },
+      { "title": "職務需求", "body": "Familiar with Go, Kubernetes and cloud platforms" }
+    ],
+    "meta": ["台北市", "月薪 120,000 ~ 150,000 元", "部分遠端"]
+  }
+}
