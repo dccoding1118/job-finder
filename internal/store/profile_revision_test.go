@@ -497,6 +497,63 @@ func TestSaveFilterResultRejectsAnUndecidedCompleteJD(t *testing.T) {
 	}
 }
 
+// Adoption covers exactly the states that hold no assessment: a job waiting to
+// be screened takes the active screening revision, a queued job takes the
+// active scoring one — but only while the screening that queued it still
+// stands, because a superseded screening has to be bought again.
+func TestAdoptStageRevisionOnlyCoversJobsWithNothingToProtect(t *testing.T) {
+	data := openTestStore(t, filepath.Join(t.TempDir(), "jobs.db"))
+	defer closeTestStore(t, data)
+	ctx := context.Background()
+	stale := revisions("sha256:old-filter", "sha256:old-score")
+	active := revisions("sha256:filter", "sha256:score")
+
+	create := func(externalID string) int64 {
+		t.Helper()
+		input := fullJob("a full description")
+		input.ExternalID, input.URL, input.FilterRevision = externalID, "https://example.test/jobs/"+externalID, stale.Filter
+		created, err := data.UpsertJob(ctx, input, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return created.Job.ID
+	}
+	adopt := func(stage string, jobID int64) bool {
+		t.Helper()
+		adopted, err := data.AdoptStageRevision(ctx, stage, jobID, active)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return adopted
+	}
+
+	waiting := create("waiting")
+	if !adopt("filter", waiting) {
+		t.Fatal("a job waiting to be screened must adopt the active screening revision")
+	}
+	if err := passFilter(t, data, waiting, active); err != nil {
+		t.Fatalf("the adopted job must pass the screening CAS: %v", err)
+	}
+	if adopt("filter", waiting) {
+		t.Fatal("a job that has left `new` must not adopt a screening revision")
+	}
+	if !adopt("score", waiting) {
+		t.Fatal("a queued job on a current screening must adopt the active scoring revision")
+	}
+
+	superseded := create("superseded")
+	if err := passFilter(t, data, superseded, stale); err != nil {
+		t.Fatal(err)
+	}
+	if adopt("score", superseded) {
+		t.Fatal("a job queued on a superseded screening waits for the user's reprocess")
+	}
+	count, err := data.CountAwaitingReprocess(ctx, active)
+	if err != nil || count != 1 {
+		t.Fatalf("jobs awaiting reprocess = %d (%v), want 1", count, err)
+	}
+}
+
 // Only `new` and `queued` are picked up. A job waiting on the user to open its
 // page is not work the worker may take.
 func TestPickForStageIgnoresJobsWaitingOnTheUser(t *testing.T) {
@@ -510,7 +567,7 @@ func TestPickForStageIgnoresJobsWaitingOnTheUser(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, stage := range []string{"filter", "score"} {
-		jobs, err := data.PickForStage(ctx, stage, pair.Filter, 10)
+		jobs, err := data.PickForStage(ctx, stage, pair, 10)
 		if err != nil {
 			t.Fatal(err)
 		}

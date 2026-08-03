@@ -172,7 +172,7 @@ func TestLetterStagePicksOnlyRequestedJobs(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	picked, err := store.PickForStage(ctx, "letter", "", 10)
+	picked, err := store.PickForStage(ctx, "letter", Revisions{}, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -182,7 +182,7 @@ func TestLetterStagePicksOnlyRequestedJobs(t *testing.T) {
 	if err = store.TransitionProcess(ctx, result.Job.ID, "letter_requested"); err != nil {
 		t.Fatal(err)
 	}
-	picked, err = store.PickForStage(ctx, "letter", "", 10)
+	picked, err = store.PickForStage(ctx, "letter", Revisions{}, 10)
 	if err != nil {
 		t.Fatal(err)
 	}

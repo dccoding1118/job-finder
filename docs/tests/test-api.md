@@ -35,6 +35,11 @@
 | AT-10 | 合法投遞狀態與選填 note | 經 store 更新並新增 StatusEvent |
 | AT-11 | 非法 apply 狀態、非 `letter_ready` Job 或不存在 Job | 回 4xx；DB 狀態與事件數不變 |
 | AT-13 | `GET /queue` | 只回 `discovered`，附原始連結 |
+| AT-60 | 對 `new` 或 `queued` Job 送出 `POST /jobs/{id}/process` | 回 202 `processing` 與當下 Job；pipeline 的 `ProcessJobNow` 於背景收到該 job id；handler 不等待 Agent 完成 |
+| AT-61 | 對 `scored`、`filtered_out`、`letter_ready` 或不存在的 Job 送出同一路由 | 回 409 `not_waiting`（不存在回 404）；不呼叫 pipeline |
+| AT-62 | 服務未帶常駐 worker（`worker.paused`）時送出同一路由 | 回 409 `worker_not_resident`；不呼叫 pipeline |
+| AT-63 | `GET`／`PUT /api/v1/settings` | GET 回 `auto_processing`（預設 true）與 `resident_worker`；PUT 寫入後回新值並存入 store；缺 `auto_processing` 回 400 |
+| AT-64 | 關閉自動處理後讀 `GET /api/v1/status` | `settings.auto_processing` 為 false，與 `/settings` 一致 |
 
 ### 3.1 求職信生成要求（PRD R5.0）
 

@@ -84,7 +84,7 @@ func TestCapturingTheJDOfAScreenedOutJobKeepsTheRejection(t *testing.T) {
 	if result.ProcessState != "filtered_out" || len(result.FilterHits) == 0 {
 		t.Fatalf("captured job = %+v, want the rejection and its hits to stand", result)
 	}
-	pending, err := db.PickForStage(ctx, "filter", "", 10)
+	pending, err := db.PickForStage(ctx, "filter", store.Revisions{}, 10)
 	if err != nil || len(pending) != 0 {
 		t.Fatalf("a screened-out job must reach no stage: %d %v", len(pending), err)
 	}
@@ -110,7 +110,7 @@ func TestIngestJobPassesScreeningAndLeavesScoringToWorker(t *testing.T) {
 	if result.ProcessState != "new" || result.Score != nil {
 		t.Fatalf("captured job = %+v, want a job awaiting semantic screening", result)
 	}
-	pending, err := db.PickForStage(ctx, "filter", "", 10)
+	pending, err := db.PickForStage(ctx, "filter", store.Revisions{}, 10)
 	if err != nil || len(pending) != 1 {
 		t.Fatalf("jobs awaiting screening = %d, %v", len(pending), err)
 	}
@@ -166,7 +166,7 @@ func TestRequestReprocessReturnsAScreenedOutJobToScreening(t *testing.T) {
 	if detail.Job.ProcessState != "new" || detail.Job.FilterHits != nil || detail.Filter != nil {
 		t.Fatalf("reprocessed job = %+v hits=%+v filter=%+v", detail.Job.ProcessState, detail.Job.FilterHits, detail.Filter)
 	}
-	pending, err := db.PickForStage(ctx, "filter", "", 10)
+	pending, err := db.PickForStage(ctx, "filter", store.Revisions{}, 10)
 	if err != nil || len(pending) != 1 {
 		t.Fatalf("reprocessed job must await screening: %d %v", len(pending), err)
 	}
@@ -233,7 +233,11 @@ func TestScoreBudgetStopsAtDailyLimit(t *testing.T) {
 	_ = db
 }
 
-func TestWorkerSkipsStaleRevisionBeforeFilteringOrCallingScorer(t *testing.T) {
+// A job waiting to be screened carries no verdict, so a Profile change costs it
+// nothing: the worker adopts the active revision and screens it. A job queued
+// on a superseded screening does carry one, and buying it again is the user's
+// call — the score stage leaves it where it is and calls no Agent for it.
+func TestWorkerAdoptsStaleScreeningButLeavesQueuedJobsForReprocess(t *testing.T) {
 	p, db := openPipeline(t, filterFor(profile.Requirements{Remote: "acceptable"}))
 	runner := &letterRunner{name: "claude", replies: []string{`{"content_fit":90,"benefit_fit":90,"bonus_fit":90,"industry_fit":90,"reason":"fit"}`}}
 	p.Scorer = agents.Scorer{Primary: runner}
@@ -254,13 +258,25 @@ func TestWorkerSkipsStaleRevisionBeforeFilteringOrCallingScorer(t *testing.T) {
 		}
 	}
 
+	active, err := p.snapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
 	filtered, err := p.FilterJobsWithStats(ctx, 0)
-	if err != nil || filtered.Processed != 0 {
-		t.Fatalf("stale filter processed=%d err=%v", filtered.Processed, err)
+	if err != nil || filtered.Processed != 1 || filtered.Queued != 1 {
+		t.Fatalf("stale filter processed=%d queued=%d err=%v", filtered.Processed, filtered.Queued, err)
 	}
 	scored, err := p.ScoreWithStats(ctx, 0)
-	if err != nil || scored.Processed != 0 || runner.calls != 0 {
+	if err != nil || scored.Processed != 1 || runner.calls != 1 {
 		t.Fatalf("stale score processed=%d calls=%d err=%v", scored.Processed, runner.calls, err)
+	}
+	waiting, err := db.CountAwaitingReprocess(ctx, active.Revisions)
+	if err != nil || waiting != 1 {
+		t.Fatalf("jobs awaiting reprocess = %d (%v), want the one queued on a superseded screening", waiting, err)
+	}
+	held, err := db.ListJobs(ctx, store.JobFilter{ProcessState: "queued"}, store.JobSortNewest)
+	if err != nil || len(held) != 1 || held[0].ExternalID != "stale-score" {
+		t.Fatalf("only the job queued on a superseded screening stays put: %+v (%v)", held, err)
 	}
 }
 

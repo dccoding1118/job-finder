@@ -4,7 +4,9 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/dccoding1118/job-finder/internal/store"
 )
@@ -168,5 +170,105 @@ func TestStatusReportsBacklogBudgetAndAgentCalls(t *testing.T) {
 	server.Handler().ServeHTTP(rejected, authedRequest(http.MethodPost, "/api/v1/status", nil))
 	if rejected.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("status POST = %d, want 405", rejected.Code)
+	}
+}
+
+// The push is accepted and the work runs in the background, so the response
+// says only that the job is being processed.
+func TestProcessNowAcceptsAWaitingJobAndRunsItInBackground(t *testing.T) {
+	processor := &fakeProcessor{processedNow: make(chan int64, 1)}
+	server, data := newTestServer(t, processor)
+	processor.store = data
+	ctx := context.Background()
+	jobID := seedScoredJob(t, data, "push-job", "scored")
+	if err := data.ReprocessJob(ctx, jobID, store.Revisions{Filter: testRevision, Score: testRevision}); err != nil {
+		t.Fatal(err)
+	}
+
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, authedRequest(http.MethodPost, "/api/v1/jobs/1/process", nil))
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("process status = %d", response.Code)
+	}
+	if body := decode(t, response); body["status"] != "processing" {
+		t.Fatalf("process body = %v", body)
+	}
+	select {
+	case pushed := <-processor.processedNow:
+		if pushed != jobID {
+			t.Fatalf("pushed job = %d, want %d", pushed, jobID)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the accepted push never reached the pipeline")
+	}
+}
+
+// An assessed job has nothing to push: its route back is a reprocess.
+func TestProcessNowRefusesAJobThatIsNotWaiting(t *testing.T) {
+	processor := &fakeProcessor{processedNow: make(chan int64, 1)}
+	server, data := newTestServer(t, processor)
+	processor.store = data
+	seedScoredJob(t, data, "assessed-job", "scored")
+
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, authedRequest(http.MethodPost, "/api/v1/jobs/1/process", nil))
+	if response.Code != http.StatusConflict {
+		t.Fatalf("process status = %d, want 409", response.Code)
+	}
+	if len(processor.processedNow) != 0 {
+		t.Fatal("a refused push must not reach the pipeline")
+	}
+}
+
+// Without a resident worker the stages belong to a hand-driven batch this
+// process cannot see, so it must not run one job beside it.
+func TestProcessNowIsRefusedWithoutAResidentWorker(t *testing.T) {
+	data, err := store.Open(filepath.Join(t.TempDir(), "jobs.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = data.Close() })
+	processor := &fakeProcessor{store: data, processedNow: make(chan int64, 1)}
+	server, err := New(Config{Addr: "127.0.0.1:0", Token: "test-token", ExtensionOrigin: "chrome-extension://test-id"}, data, nil, processor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seedScoredJob(t, data, "paused-job", "scored")
+
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, authedRequest(http.MethodPost, "/api/v1/jobs/1/process", nil))
+	if response.Code != http.StatusConflict {
+		t.Fatalf("process status = %d, want 409", response.Code)
+	}
+}
+
+// The switch is the user's, so it is readable and writable from the Side Panel
+// and reported alongside the progress it governs.
+func TestSettingsReportAndStoreTheAutoProcessingSwitch(t *testing.T) {
+	server, data := newTestServer(t, &fakeProcessor{})
+
+	read := httptest.NewRecorder()
+	server.Handler().ServeHTTP(read, authedRequest(http.MethodGet, "/api/v1/settings", nil))
+	if body := decode(t, read); body["auto_processing"] != true || body["resident_worker"] != true {
+		t.Fatalf("default settings = %v", body)
+	}
+
+	write := httptest.NewRecorder()
+	server.Handler().ServeHTTP(write, authedRequest(http.MethodPut, "/api/v1/settings", map[string]any{"auto_processing": false}))
+	if write.Code != http.StatusOK {
+		t.Fatalf("settings write status = %d", write.Code)
+	}
+	if body := decode(t, write); body["auto_processing"] != false {
+		t.Fatalf("settings after write = %v", body)
+	}
+	if enabled, err := data.AutoProcessing(context.Background()); err != nil || enabled {
+		t.Fatalf("stored switch = %v, %v; want off", enabled, err)
+	}
+
+	status := httptest.NewRecorder()
+	server.Handler().ServeHTTP(status, authedRequest(http.MethodGet, "/api/v1/status", nil))
+	settings, ok := decode(t, status)["settings"].(map[string]any)
+	if !ok || settings["auto_processing"] != false {
+		t.Fatalf("status settings = %v", settings)
 	}
 }

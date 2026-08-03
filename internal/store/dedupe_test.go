@@ -323,7 +323,7 @@ func TestMergedJobsAreNeitherListedNorPicked(t *testing.T) {
 		}
 	}
 	for _, stage := range []string{"filter", "score", "letter"} {
-		picked, err := store.PickForStage(ctx, stage, "", 10)
+		picked, err := store.PickForStage(ctx, stage, Revisions{}, 10)
 		if err != nil {
 			t.Fatal(err)
 		}

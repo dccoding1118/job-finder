@@ -33,7 +33,7 @@
 | AT-18 | prompt 經 stdin 傳入，stdout 為 JSON envelope | 取 envelope 的 `result` 欄位為回覆；`is_error` 為真或 `subtype` 非 `success` 時視為 Invoke 失敗 |
 | AT-19 | CLI 將最終訊息寫入 `-o` 指定的暫存檔，stdout 另含 transcript | 以該檔內容為回覆，不受 stdout transcript 影響；暫存檔隨 invocation 暫存目錄清除 |
 | AT-07 | CLI 在 transcript 中回音 prompt，並將同一答案輸出兩次 | 解析取最後一個完整物件，不把兩份答案之間的雜訊併入 |
-| AT-05 | Scorer 回傳四維 0–100 整數與 100 字內理由 | 解析為合法 `ScoreResult`，四維與理由完整保留 |
+| AT-05 | Scorer 回傳四維 0–100 整數與上限內理由 | 解析為合法 `ScoreResult`，四維與理由完整保留 |
 | AT-06 | Scorer 缺少任一維度、分數超出範圍、分數非整數或理由過長 | 拒絕輸出，回傳契約錯誤 |
 
 ### 3.2 呼叫策略與稽核
@@ -81,6 +81,8 @@
 | AT-40 | 分類被拒回應：CLI 自報錯誤（含 rate limit）、空輸出、無 JSON、JSON 無法解析、`reason` 超過上限、四維超出範圍、Filter 條件欄位不合法、其他內容不合法 | 各回對應失敗類別（含 `invalid_condition`）；CLI 自報錯誤優先於內容驗證 |
 | AT-41 | 四維皆為低分但格式合法的評分回應 | 通過驗證並視為成功呼叫；低分不得被判定為失敗 |
 | AT-42 | `reason` 恰為 100 字與 101 字 | 前者通過驗證；後者被拒 |
+| AT-43 | 以字數規則計算 `reason` 長度：純中文、單一英文詞、含 `Node.js`／`C++`／`Go/Rust` 的混排 | 中文逐字計數，連續英數整段計一字，連字與 `.`／`/`／`+`／`#` 不切斷該詞 |
+| AT-44 | 中英混排、runes 超過 100 但依字數規則未超過上限的 `reason` | 通過驗證，不觸發重跑 |
 
 ## 4.4 B7 單元測試案例：Filter 與四維 Scorer
 

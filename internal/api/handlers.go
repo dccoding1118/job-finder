@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -60,6 +61,8 @@ func (s *Server) job(w http.ResponseWriter, r *http.Request) {
 		s.requestLetter(w, r, id)
 	case len(parts) == 2 && parts[1] == "reprocess" && r.Method == http.MethodPost:
 		s.reprocessJob(w, r, id)
+	case len(parts) == 2 && parts[1] == "process" && r.Method == http.MethodPost:
+		s.processJobNow(w, r, id)
 	case len(parts) == 2 && parts[1] == "unmerge" && r.Method == http.MethodPost:
 		s.unmergeJob(w, r, id)
 	default:
@@ -150,6 +153,82 @@ func (s *Server) reprocessJob(w http.ResponseWriter, r *http.Request, id int64) 
 	writeJSON(w, 200, map[string]any{"status": detail.Job.ProcessState, "job": s.jobViewWithGroup(r, detail)})
 }
 
+// processJobNow puts one job the user is looking at through screening and
+// scoring right away, ahead of the resident worker's batch and regardless of
+// whether automatic processing is switched on or the day's budget is spent —
+// it is the user asking for this one job, on the job they are looking at.
+//
+// The request is accepted and the work runs in the background: an Agent call
+// takes far longer than a request should be held open, and the job views the
+// Side Panel already polls report the result. Only the reasons the job cannot
+// be processed at all are answered synchronously.
+func (s *Server) processJobNow(w http.ResponseWriter, r *http.Request, id int64) {
+	if !s.requireProfile(w) {
+		return
+	}
+	if s.pipeline == nil || !s.cfg.ResidentWorker {
+		writeError(w, http.StatusConflict, "worker_not_resident", "this service does not carry the worker, so stages are driven by hand")
+		return
+	}
+	detail, found, err := s.store.GetJobDetail(r.Context(), id)
+	if err != nil {
+		writeError(w, 500, "internal", "unable to read job")
+		return
+	}
+	if !found {
+		writeError(w, http.StatusNotFound, "not_found", "job was not found")
+		return
+	}
+	if detail.Job.ProcessState != "new" && detail.Job.ProcessState != "queued" {
+		writeError(w, http.StatusConflict, "not_waiting", "only a job waiting to be screened or scored can be processed now")
+		return
+	}
+	// The request's context ends with the response, so the work carries a context
+	// detached from it and keeps the request's values.
+	ctx := context.WithoutCancel(r.Context())
+	go func() {
+		if err := s.pipeline.ProcessJobNow(ctx, id); err != nil {
+			slog.Error("immediate processing failed", "job_id", id, "error", err)
+		}
+	}()
+	writeJSON(w, http.StatusAccepted, map[string]any{"status": "processing", "job": s.jobViewWithGroup(r, detail)})
+}
+
+// settings reads and writes the runtime settings the user owns from the Side
+// Panel. They live in the database rather than in config.yaml because the API
+// service owns them while it runs, and a restart must not undo them.
+func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		writeJSON(w, 200, s.settingsView(r))
+	case http.MethodPut:
+		var request struct {
+			AutoProcessing *bool `json:"auto_processing"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil || request.AutoProcessing == nil {
+			writeError(w, 400, "invalid_request", "auto_processing is required")
+			return
+		}
+		if err := s.store.SetAutoProcessing(r.Context(), *request.AutoProcessing); err != nil {
+			writeError(w, 500, "internal", "unable to save settings")
+			return
+		}
+		writeJSON(w, 200, s.settingsView(r))
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method is not allowed")
+	}
+}
+
+// settingsView reports the switch together with whether this process is the one
+// that could act on it, so the view can say why a switch has no effect.
+func (s *Server) settingsView(r *http.Request) map[string]any {
+	enabled, err := s.store.AutoProcessing(r.Context())
+	if err != nil {
+		enabled = true
+	}
+	return map[string]any{"auto_processing": enabled, "resident_worker": s.cfg.ResidentWorker}
+}
+
 func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method is not allowed")
@@ -170,7 +249,7 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "internal", "unable to read agent usage")
 		return
 	}
-	value := map[string]any{"jobs": counts, "agent_calls": agentCallViews(calls), "agent_usage_daily": usage}
+	value := map[string]any{"jobs": counts, "agent_calls": agentCallViews(calls), "agent_usage_daily": usage, "settings": s.settingsView(r)}
 	if s.pipeline != nil {
 		if remaining, limited, err := s.pipeline.FilterBudgetRemaining(r.Context()); err == nil {
 			value["filter_budget"] = map[string]any{"remaining": remaining, "limited": limited}

@@ -55,7 +55,7 @@ func TestReprocessJobReturnsJobToScreeningAndKeepsOldScore(t *testing.T) {
 	if detail.Score == nil || detail.Score.Reason != "first pass" {
 		t.Fatalf("previous score must stay readable until the new one lands: %+v", detail.Score)
 	}
-	picked, err := store.PickForStage(ctx, "filter", revision, 10)
+	picked, err := store.PickForStage(ctx, "filter", revisions(revision, revision), 10)
 	if err != nil || len(picked) != 1 || picked[0].ID != jobID {
 		t.Fatalf("reprocessed job must be picked for filter: %v %+v", err, picked)
 	}
@@ -226,9 +226,9 @@ func TestCountJobsByStateAndRecentAgentCalls(t *testing.T) {
 	}
 }
 
-// A job left behind on an older Profile revision must not occupy the stage's
-// pick: it sorts first and the stage can only discard it, so an unfiltered pick
-// would keep every eligible job waiting forever.
+// A job queued on a superseded screening must not occupy the score stage's
+// pick: it sorts first and needs a new screening the stage cannot buy, so an
+// unfiltered pick would keep every eligible job waiting forever.
 func TestPickForStageSkipsOtherRevisionsSoQueueDoesNotStarve(t *testing.T) {
 	t.Parallel()
 	store := openTestStore(t, filepath.Join(t.TempDir(), "jobs.db"))
@@ -254,7 +254,7 @@ func TestPickForStageSkipsOtherRevisionsSoQueueDoesNotStarve(t *testing.T) {
 	queued("stale-1", stale)
 	fresh := queued("active-1", active)
 
-	picked, err := store.PickForStage(ctx, "score", active, 1)
+	picked, err := store.PickForStage(ctx, "score", revisions(active, active), 1)
 	if err != nil {
 		t.Fatalf("pick: %v", err)
 	}

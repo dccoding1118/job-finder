@@ -107,8 +107,8 @@ test("a scored job can be reprocessed on its own and the system tab shows proces
   await expect(page.locator("#verdict-label")).toContainText("篩選中");
   await expect(page.getByRole("button", { name: "重新處理這筆職缺" })).toHaveCount(0);
   await page.getByRole("tab", { name: "系統" }).click();
-  await expect(page.locator(".system-card").nth(2)).toContainText("評分中");
-  await expect(page.locator(".system-card").nth(2)).toContainText("剩 0");
+  await expect(page.locator(".system-card").nth(3)).toContainText("評分中");
+  await expect(page.locator(".system-card").nth(3)).toContainText("剩 0");
   await expect(page.locator("#agent-calls")).toContainText("理由超過 100 字上限");
   await expect(page.locator("#agent-calls")).toContainText("90s");
   await expect(page.locator("#agent-calls .run-item").nth(1)).toContainText("呼叫成功");
@@ -116,6 +116,56 @@ test("a scored job can be reprocessed on its own and the system tab shows proces
   const calls = await page.evaluate(() => window.__calls);
   expect(calls.some((call) => call.path === "/api/v1/jobs/5/reprocess" && call.method === "POST")).toBeTruthy();
   expect(calls.some((call) => call.path === "/api/v1/status")).toBeTruthy();
+});
+
+test("a waiting job is pushed through immediately and the switch stops automatic processing", async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 900 });
+  await page.addInitScript(() => {
+    const waiting = { id: 6, source: "yourator", url: "https://www.yourator.co/jobs/6", title: "Synthetic waiting job", company_name: "Example", location: "Taipei", score_total: null, process_state: "queued", apply_state: "none", verdict: "pending_score" };
+    window.__calls = [];
+    window.__auto = false;
+    window.chrome = {
+      storage: { local: {
+        get: (defaults, callback) => callback(defaults),
+        set: (values, callback) => callback?.(values),
+      } },
+      runtime: {
+        onMessage: { addListener: () => {} },
+        openOptionsPage: () => Promise.resolve(),
+        sendMessage: (request) => {
+          window.__calls.push(request);
+          if (request.type === "profile-api") return Promise.resolve({ ok: true, data: { status: "ready", filter_revision: `sha256:${"a".repeat(64)}`, score_revision: `sha256:${"c".repeat(64)}`, summary: { total_years: 8, skill_count: 3, experience_count: 1, directions: ["cloud architecture"] }, issues: [], reprocess_estimate: {} } });
+          if (request.type === "current-page") return Promise.resolve({ ok: true, context: { kind: "unsupported", status: "unsupported" } });
+          if (request.path === "/api/v1/jobs/6/process") return Promise.resolve({ ok: true, data: { status: "processing", job: { ...waiting, description: "Synthetic description", status_events: [] } } });
+          if (request.path === "/api/v1/jobs/6") return Promise.resolve({ ok: true, data: { ...waiting, description: "Synthetic description", status_events: [] } });
+          if (request.path?.startsWith("/api/v1/jobs?")) return Promise.resolve({ ok: true, data: { items: [waiting], next_cursor: null } });
+          if (request.path === "/api/v1/settings" && request.method === "PUT") {
+            window.__auto = request.body.auto_processing;
+            return Promise.resolve({ ok: true, data: { auto_processing: window.__auto, resident_worker: true } });
+          }
+          if (request.path === "/api/v1/status") return Promise.resolve({ ok: true, data: { jobs: { queued: 3, new: 1 }, score_budget: { remaining: 0, limited: true }, agent_calls: [], settings: { auto_processing: window.__auto, resident_worker: true } } });
+          return Promise.resolve({ ok: true, data: { items: [], next_cursor: null } });
+        },
+      },
+    };
+  });
+  await page.goto(dashboardPath);
+  await page.getByRole("tab", { name: /推薦/ }).click();
+  await page.getByRole("button", { name: /Synthetic waiting job/ }).click();
+  // The day's scoring budget is spent and automatic processing is off, so the
+  // job says why it is waiting and the push is still offered.
+  await expect(page.locator("#screen-current")).toContainText("自動評分已關閉");
+  await page.getByRole("button", { name: "立即處理這筆職缺" }).click();
+  await expect(page.getByRole("button", { name: "立即處理這筆職缺" })).toHaveCount(0);
+  await expect(page.locator("#screen-current")).toContainText("正在評分");
+
+  await page.getByRole("tab", { name: "系統" }).click();
+  await expect(page.locator("#screen-system")).toContainText("已停止");
+  await page.getByRole("button", { name: "開啟自動篩選與評分" }).click();
+  await expect(page.getByRole("button", { name: "關閉自動篩選與評分" })).toBeEnabled();
+  const calls = await page.evaluate(() => window.__calls);
+  expect(calls.filter((call) => call.path === "/api/v1/jobs/6/process" && call.method === "POST")).toHaveLength(1);
+  expect(calls.some((call) => call.path === "/api/v1/settings" && call.method === "PUT" && call.body.auto_processing === true)).toBeTruthy();
 });
 
 test("options accepts a loopback endpoint and stores its token", async ({ page }) => {

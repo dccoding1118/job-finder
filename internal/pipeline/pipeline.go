@@ -59,6 +59,18 @@ type Pipeline struct {
 	MaxLetterPerDay int
 	MaxLetterLength int
 	MinInterval     time.Duration
+	// Gate serializes this process's Agent calls and lets the user's single-job
+	// request cut ahead of the resident worker. It is shared by every copy of the
+	// Pipeline value in one process; nil means no serialization, which is what a
+	// one-shot CLI stage needs.
+	Gate *Gate
+	// AutoProcessing reports whether automatic screening and scoring may go on.
+	// The batch loops consult it between jobs rather than only at the start of a
+	// pass: one pass can run for an hour, and a switch the user has just turned
+	// off must stop the spend now, not when the pass happens to end. nil means
+	// always on, which is what the CLI's hand-driven stages use — the switch
+	// governs automatic work, not a batch the user is driving themselves.
+	AutoProcessing func(context.Context) (bool, error)
 	// Logger receives one structured record per Agent-backed unit of work, which
 	// is what makes a long or failing stage observable while it runs.
 	Logger *slog.Logger
@@ -94,6 +106,35 @@ func (p Pipeline) snapshot() (workProfile, error) {
 	}
 	filterRevision, scoreRevision, _ := profile.RevisionPair(value)
 	return workProfile{Value: value, YAML: yaml, Revisions: store.Revisions{Filter: filterRevision, Score: scoreRevision}, Filter: p.Filter}, nil
+}
+
+// autoAllowed reports whether automatic screening and scoring may run now.
+func (p Pipeline) autoAllowed(ctx context.Context) (bool, error) {
+	if p.AutoProcessing == nil {
+		return true, nil
+	}
+	return p.AutoProcessing(ctx)
+}
+
+// stopBatch reports whether a batch loop must stop before taking another job:
+// either the user turned automatic processing off mid-pass, or their own
+// single-job request is waiting. The jobs left behind keep their state and are
+// picked up on the next pass.
+func (p Pipeline) stopBatch(ctx context.Context, stage string, remaining int) bool {
+	enabled, err := p.autoAllowed(ctx)
+	if err != nil {
+		p.logger().Error("stage stopped: the automatic processing switch could not be read", "stage", stage, "remaining", remaining, "error", err)
+		return true
+	}
+	if !enabled {
+		p.logger().Info("stage stopped: automatic processing was switched off", "stage", stage, "remaining", remaining)
+		return true
+	}
+	if p.Gate.Yield() {
+		p.logger().Info("stage yielded to a priority request", "stage", stage, "remaining", remaining)
+		return true
+	}
+	return false
 }
 
 func (p Pipeline) now() time.Time {
@@ -165,6 +206,8 @@ type StageStats struct {
 	Processed   int
 	FilteredOut int
 	Queued      int
+	// Scored counts the jobs the screening pass carried straight on to scoring.
+	Scored      int
 	Shortlisted int
 	LettersOK   int
 	LettersFail int
@@ -191,7 +234,7 @@ func (p Pipeline) LetterWithStats(ctx context.Context, limit int) (StageStats, e
 	}
 	// The letter stage records the revision it actually drafted under rather than
 	// requiring the job to already carry it, so it picks by state alone.
-	jobs, err := p.Store.PickForStage(ctx, "letter", "", limit)
+	jobs, err := p.Store.PickForStage(ctx, "letter", store.Revisions{}, limit)
 	if err != nil {
 		return StageStats{}, err
 	}
@@ -321,6 +364,16 @@ func (p Pipeline) FilterJobs(ctx context.Context, limit int) (int, error) {
 // costs nothing, so a job it rejects never reaches the Agent; only a job that
 // passes every deterministic condition is worth one semantic call.
 func (p Pipeline) FilterJobsWithStats(ctx context.Context, limit int) (StageStats, error) {
+	return p.filterJobs(ctx, limit, false)
+}
+
+// filterJobs is the screening pass. thenScore carries each job that screening
+// queues straight on to scoring, which is how the resident worker runs it: a
+// job the user is waiting on reaches a verdict in the minutes its own two calls
+// take, instead of waiting for the whole screening batch to finish first. The
+// hand-driven `run --stage filter` leaves it off, because a stage the user
+// named must do that stage and no more.
+func (p Pipeline) filterJobs(ctx context.Context, limit int, thenScore bool) (StageStats, error) {
 	active, err := p.snapshot()
 	if err != nil {
 		return StageStats{}, err
@@ -334,7 +387,7 @@ func (p Pipeline) FilterJobsWithStats(ctx context.Context, limit int) (StageStat
 		p.logger().Debug("filter stage skipped", "stage", "filter", "reason", "daily budget exhausted", "max_per_day", p.MaxFilterPerDay)
 		return StageStats{}, nil
 	}
-	jobs, err := p.Store.PickForStage(ctx, "filter", active.Revisions.Filter, limit)
+	jobs, err := p.Store.PickForStage(ctx, "filter", active.Revisions, limit)
 	if err != nil {
 		return StageStats{}, err
 	}
@@ -345,14 +398,14 @@ func (p Pipeline) FilterJobsWithStats(ctx context.Context, limit int) (StageStat
 		log.Info("filter stage picked jobs", "stage", "filter", "jobs", len(jobs), "budget_remaining", remaining, "budget_limited", limited)
 	}
 	for i, job := range jobs {
+		if p.stopBatch(ctx, "filter", len(jobs)-i) {
+			break
+		}
 		snapshot, snapshotErr := p.snapshot()
 		if snapshotErr != nil {
 			return stats, snapshotErr
 		}
-		if !usesRevision(job.FilterRevision, snapshot.Revisions.Filter) {
-			continue
-		}
-		result, semantic, err := p.screenJob(ctx, job, snapshot, i > 0)
+		result, stored, err := p.screenAndStore(ctx, job, snapshot, i > 0, false)
 		if err != nil {
 			if ctx.Err() != nil {
 				return stats, err
@@ -361,11 +414,8 @@ func (p Pipeline) FilterJobsWithStats(ctx context.Context, limit int) (StageStat
 			failures = append(failures, fmt.Errorf("filter job %d: %w", job.ID, err))
 			continue
 		}
-		if err := p.Store.SaveFilterResult(ctx, job.ID, result, snapshot.Revisions); errors.Is(err, store.ErrStaleRevision) {
-			log.Info("filter result discarded as stale", "stage", "filter", "job_id", job.ID, "revision", snapshot.Revisions.Filter)
+		if !stored {
 			continue
-		} else if err != nil {
-			return stats, err
 		}
 		switch result.Outcome {
 		case store.FilterFail:
@@ -373,8 +423,23 @@ func (p Pipeline) FilterJobsWithStats(ctx context.Context, limit int) (StageStat
 		default:
 			stats.Queued++
 		}
-		log.Info("job screened", "stage", "filter", "job_id", job.ID, "filter_revision", snapshot.Revisions.Filter, "verdict", result.Outcome, "stage_kind", result.Stage, "semantic", semantic)
 		stats.Processed++
+		// Only a passing outcome leaves the job at `queued`; an undecided excerpt
+		// goes back to the 待看 list and has nothing to score yet.
+		if !thenScore || result.Outcome != store.FilterPass {
+			continue
+		}
+		scored, scoreErr := p.scoreQueuedNow(ctx, job, snapshot)
+		if scoreErr != nil {
+			if ctx.Err() != nil {
+				return stats, scoreErr
+			}
+			failures = append(failures, scoreErr)
+			continue
+		}
+		if scored {
+			stats.Scored++
+		}
 	}
 	if stats.Processed > 0 {
 		log.Info("filter stage completed", "stage", "filter", "processed", stats.Processed, "filtered_out", stats.FilteredOut, "queued", stats.Queued)
@@ -382,9 +447,44 @@ func (p Pipeline) FilterJobsWithStats(ctx context.Context, limit int) (StageStat
 	return stats, errors.Join(failures...)
 }
 
+// screenAndStore is the single-job screening unit both the batch pass and the
+// user's own request run: it claims the job so the two paths never pay for the
+// same call, screens it, and records the result under the snapshot's revisions.
+// stored is false when the job was already claimed elsewhere, left the stage's
+// state, or the store rejected the result as stale — in all three cases nothing
+// is left to count.
+func (p Pipeline) screenAndStore(ctx context.Context, job store.Job, snapshot workProfile, pace, priority bool) (store.FilterResult, bool, error) {
+	if !p.Gate.Claim(job.ID) {
+		return store.FilterResult{}, false, nil
+	}
+	defer p.Gate.Unclaim(job.ID)
+	// A job waiting to be screened carries no verdict a Profile change could
+	// invalidate, so it adopts the active revision and is screened under it
+	// rather than waiting for a reprocess that would buy nothing.
+	if !usesRevision(job.FilterRevision, snapshot.Revisions.Filter) {
+		adopted, err := p.Store.AdoptStageRevision(ctx, "filter", job.ID, snapshot.Revisions)
+		if err != nil || !adopted {
+			return store.FilterResult{}, false, err
+		}
+		p.logger().Info("job adopted the active screening revision", "stage", "filter", "job_id", job.ID, "filter_revision", snapshot.Revisions.Filter)
+	}
+	result, semantic, err := p.screenJob(ctx, job, snapshot, pace, priority)
+	if err != nil {
+		return store.FilterResult{}, false, err
+	}
+	if err := p.Store.SaveFilterResult(ctx, job.ID, result, snapshot.Revisions); errors.Is(err, store.ErrStaleRevision) {
+		p.logger().Info("filter result discarded as stale", "stage", "filter", "job_id", job.ID, "revision", snapshot.Revisions.Filter)
+		return result, false, nil
+	} else if err != nil {
+		return result, false, err
+	}
+	p.logger().Info("job screened", "stage", "filter", "job_id", job.ID, "filter_revision", snapshot.Revisions.Filter, "verdict", result.Outcome, "stage_kind", result.Stage, "semantic", semantic, "priority", priority)
+	return result, true, nil
+}
+
 // screenJob runs the structural conditions and, only when they all hold, one
 // Filter Agent call. semantic reports whether the Agent was actually consulted.
-func (p Pipeline) screenJob(ctx context.Context, job store.Job, snapshot workProfile, pace bool) (store.FilterResult, bool, error) {
+func (p Pipeline) screenJob(ctx context.Context, job store.Job, snapshot workProfile, pace, priority bool) (store.FilterResult, bool, error) {
 	partial := job.Description == nil
 	conditions := snapshot.Filter.Evaluate(job, partial)
 	// A structural failure is decisive and costs no call. Anything else still
@@ -413,7 +513,12 @@ func (p Pipeline) screenJob(ctx context.Context, job store.Job, snapshot workPro
 	if job.Description != nil {
 		description = *job.Description
 	}
+	// The gate is taken around the call itself, not the whole job: the structural
+	// half costs nothing and needs no turn, and a priority request only ever waits
+	// for the one call in flight.
+	p.acquire(priority)
 	output, err := screener.Screen(ctx, view, agents.Job{Title: job.Title, CompanyName: job.CompanyName, Description: description, Location: job.Location, RemoteType: job.RemoteType, SalaryMin: job.SalaryMin, SalaryMax: job.SalaryMax})
+	p.Gate.Release()
 	if err != nil {
 		return store.FilterResult{}, false, err
 	}
@@ -459,7 +564,7 @@ func (p Pipeline) ScoreWithStats(ctx context.Context, limit int) (StageStats, er
 		p.logger().Debug("score stage skipped", "stage", "score", "reason", "daily budget exhausted", "max_per_day", p.MaxScorePerDay)
 		return StageStats{}, nil
 	}
-	jobs, err := p.Store.PickForStage(ctx, "score", active.Revisions.Score, limit)
+	jobs, err := p.Store.PickForStage(ctx, "score", active.Revisions, limit)
 	if err != nil {
 		return StageStats{}, err
 	}
@@ -470,62 +575,127 @@ func (p Pipeline) ScoreWithStats(ctx context.Context, limit int) (StageStats, er
 		log.Info("score stage picked jobs", "stage", "score", "jobs", len(jobs), "budget_remaining", remaining, "budget_limited", limited)
 	}
 	for i, job := range jobs {
+		if p.stopBatch(ctx, "score", len(jobs)-i) {
+			break
+		}
 		snapshot, snapshotErr := p.snapshot()
 		if snapshotErr != nil {
 			return stats, snapshotErr
 		}
-		if !usesRevision(job.ScoreRevision, snapshot.Revisions.Score) {
-			continue
-		}
-		if i > 0 && p.MinInterval > 0 {
-			select {
-			case <-ctx.Done():
-				return stats, ctx.Err()
-			case <-time.After(p.MinInterval):
-			}
-		}
-		desc := ""
-		if job.Description != nil {
-			desc = *job.Description
-		}
-		jobID := job.ID
-		scorer := p.Scorer
-		scorer.Audit = func(role, runner, model, input, output string, ok bool, duration time.Duration, usage agents.Usage) error {
-			return p.Store.SaveAgentCall(ctx, store.AgentCallInput{JobID: &jobID, Role: role, Runner: runner, Model: model, Input: input, Output: output, OK: ok, DurationMS: duration.Milliseconds(), Usage: storeUsage(usage), ScoreRevision: snapshot.Revisions.Score})
-		}
-		// The bonus conditions the screening gate already extracted are handed over
-		// rather than re-derived: the JD is broken down once, by one gate.
-		view, viewErr := p.scoreView(ctx, snapshot, job.ID)
-		if viewErr != nil {
-			return stats, viewErr
-		}
-		log.Info("scoring job", "stage", "score", "job_id", jobID, "source", job.Source, "score_revision", snapshot.Revisions.Score)
-		startedAt := time.Now()
-		score, e := scorer.Score(ctx, view, agents.Job{Title: job.Title, CompanyName: job.CompanyName, Description: desc, Location: job.Location, RemoteType: job.RemoteType, SalaryMin: job.SalaryMin, SalaryMax: job.SalaryMax}, p.baseline())
-		if e != nil {
+		shortlisted, stored, err := p.scoreAndStore(ctx, job, snapshot, i > 0, false)
+		if err != nil {
 			if ctx.Err() != nil {
-				return stats, e
+				return stats, err
 			}
-			log.Error("score failed", "stage", "score", "job_id", jobID, "duration_ms", time.Since(startedAt).Milliseconds(), "error", e)
-			failures = append(failures, fmt.Errorf("score job %d: %w", job.ID, e))
+			failures = append(failures, fmt.Errorf("score job %d: %w", job.ID, err))
 			continue
 		}
-		total := float64(score.Content)*p.Weights[0] + float64(score.Benefit)*p.Weights[1] + float64(score.Bonus)*p.Weights[2] + float64(score.Industry)*p.Weights[3]
-		state := "scored"
-		if total >= p.Threshold {
-			state = "shortlisted"
+		if !stored {
+			continue
+		}
+		if shortlisted {
 			stats.Shortlisted++
 		}
-		if err := p.Store.CommitScore(ctx, store.ScoreInput{JobID: job.ID, Content: score.Content, Benefit: score.Benefit, Bonus: score.Bonus, Industry: score.Industry, Total: total, Reason: score.Reason, Runner: score.Runner, ScoreRevision: snapshot.Revisions.Score}, state); errors.Is(err, store.ErrStaleRevision) {
-			log.Info("score discarded as stale", "stage", "score", "job_id", jobID, "score_revision", snapshot.Revisions.Score)
-			continue
-		} else if err != nil {
-			return stats, err
-		}
-		log.Info("job scored", "stage", "score", "job_id", jobID, "total", total, "state", state, "runner", score.Runner, "duration_ms", time.Since(startedAt).Milliseconds())
 		stats.Processed++
 	}
 	return stats, errors.Join(failures...)
+}
+
+// scoreQueuedNow scores a job the screening pass has just queued, in the same
+// turn. It is the screening pass's own continuation, so it stops for the same
+// reasons that pass does — a switched-off brake, a waiting single-job request,
+// or a spent scoring budget — and in each case the job simply stays `queued`
+// for the score stage to take on a later pass. scored is false whenever the
+// call was not made.
+func (p Pipeline) scoreQueuedNow(ctx context.Context, job store.Job, snapshot workProfile) (bool, error) {
+	if p.stopBatch(ctx, "score", 1) {
+		return false, nil
+	}
+	remaining, limited, err := p.ScoreBudgetRemaining(ctx)
+	if err != nil {
+		return false, err
+	}
+	if limited && remaining <= 0 {
+		p.logger().Debug("scoring the screened job deferred", "stage", "score", "job_id", job.ID, "reason", "daily budget exhausted", "max_per_day", p.MaxScorePerDay)
+		return false, nil
+	}
+	// Screening has just written the active score revision onto the job, so the
+	// value picked before screening is brought up to date rather than re-read.
+	job.ScoreRevision = &snapshot.Revisions.Score
+	_, stored, err := p.scoreAndStore(ctx, job, snapshot, true, false)
+	if err != nil {
+		return false, fmt.Errorf("score job %d: %w", job.ID, err)
+	}
+	return stored, nil
+}
+
+// scoreAndStore is the single-job scoring unit both the batch pass and the
+// user's own request run. shortlisted reports whether the job cleared the
+// threshold; stored is false when the job was already claimed elsewhere, left
+// the score stage, or the store rejected the score as stale.
+func (p Pipeline) scoreAndStore(ctx context.Context, job store.Job, snapshot workProfile, pace, priority bool) (bool, bool, error) {
+	if !p.Gate.Claim(job.ID) {
+		return false, false, nil
+	}
+	defer p.Gate.Unclaim(job.ID)
+	log := p.logger()
+	// A queued job holds no score yet, so a changed scoring gate is adopted here
+	// the same way screening adopts its own. A superseded screening is not
+	// adopted: that job needs screening again, which only the user asks for.
+	if !usesRevision(job.ScoreRevision, snapshot.Revisions.Score) {
+		adopted, err := p.Store.AdoptStageRevision(ctx, "score", job.ID, snapshot.Revisions)
+		if err != nil || !adopted {
+			return false, false, err
+		}
+		log.Info("job adopted the active scoring revision", "stage", "score", "job_id", job.ID, "score_revision", snapshot.Revisions.Score)
+	}
+	if pace && p.MinInterval > 0 {
+		select {
+		case <-ctx.Done():
+			return false, false, ctx.Err()
+		case <-time.After(p.MinInterval):
+		}
+	}
+	desc := ""
+	if job.Description != nil {
+		desc = *job.Description
+	}
+	jobID := job.ID
+	scorer := p.Scorer
+	scorer.Audit = func(role, runner, model, input, output string, ok bool, duration time.Duration, usage agents.Usage) error {
+		return p.Store.SaveAgentCall(ctx, store.AgentCallInput{JobID: &jobID, Role: role, Runner: runner, Model: model, Input: input, Output: output, OK: ok, DurationMS: duration.Milliseconds(), Usage: storeUsage(usage), ScoreRevision: snapshot.Revisions.Score})
+	}
+	// The bonus conditions the screening gate already extracted are handed over
+	// rather than re-derived: the JD is broken down once, by one gate.
+	view, viewErr := p.scoreView(ctx, snapshot, job.ID)
+	if viewErr != nil {
+		return false, false, viewErr
+	}
+	log.Info("scoring job", "stage", "score", "job_id", jobID, "source", job.Source, "score_revision", snapshot.Revisions.Score, "priority", priority)
+	startedAt := time.Now()
+	p.acquire(priority)
+	score, err := scorer.Score(ctx, view, agents.Job{Title: job.Title, CompanyName: job.CompanyName, Description: desc, Location: job.Location, RemoteType: job.RemoteType, SalaryMin: job.SalaryMin, SalaryMax: job.SalaryMax}, p.baseline())
+	p.Gate.Release()
+	if err != nil {
+		if ctx.Err() == nil {
+			log.Error("score failed", "stage", "score", "job_id", jobID, "duration_ms", time.Since(startedAt).Milliseconds(), "error", err)
+		}
+		return false, false, err
+	}
+	total := float64(score.Content)*p.Weights[0] + float64(score.Benefit)*p.Weights[1] + float64(score.Bonus)*p.Weights[2] + float64(score.Industry)*p.Weights[3]
+	state := "scored"
+	shortlisted := total >= p.Threshold
+	if shortlisted {
+		state = "shortlisted"
+	}
+	if err := p.Store.CommitScore(ctx, store.ScoreInput{JobID: job.ID, Content: score.Content, Benefit: score.Benefit, Bonus: score.Bonus, Industry: score.Industry, Total: total, Reason: score.Reason, Runner: score.Runner, ScoreRevision: snapshot.Revisions.Score}, state); errors.Is(err, store.ErrStaleRevision) {
+		log.Info("score discarded as stale", "stage", "score", "job_id", jobID, "score_revision", snapshot.Revisions.Score)
+		return false, false, nil
+	} else if err != nil {
+		return false, false, err
+	}
+	log.Info("job scored", "stage", "score", "job_id", jobID, "total", total, "state", state, "runner", score.Runner, "duration_ms", time.Since(startedAt).Milliseconds())
+	return shortlisted, true, nil
 }
 
 // link places one freshly upserted job in its cross-source group and reports the

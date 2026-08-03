@@ -38,15 +38,32 @@ worker 隨 API server process 常駐（同 binary、同 systemd service），持
 
 | 階段 | 取件狀態 | 動作 | 結果 |
 |---|---|---|---|
-| filter | `new` | 硬規則判定（§3）：程式比對結構化條件；全過者呼叫 Filter Agent 取條件拆解與語意條件判定 → SaveFilterResult | 依 §3.4 彙總：`filtered_out`（任一 `fail`）∣ `queued`（其餘）∣ `discovered`（該筆其實只有摘要，退回待看補全文） |
 | score | `queued` | Scorer → SaveScore | `scored`（total < 閾值）∣ `shortlisted`（≥ 閾值） |
+| filter | `new` | 硬規則判定（§3）：程式比對結構化條件；全過者呼叫 Filter Agent 取條件拆解與語意條件判定 → SaveFilterResult；判定為 `queued` 者於同一輪接著評分 | 依 §3.4 彙總：`filtered_out`（任一 `fail`）∣ `queued`（其餘）∣ `discovered`（該筆其實只有摘要，退回待看補全文） |
 | letter | `letter_requested` | Drafter／Reviewer | `letter_ready` ∣ `letter_failed` |
+
+**取件順序是 score → filter，且 filter 通過者於同一輪接著評分**：判準是**每一筆多久拿到最終判定**。score 取件**重複到取不到為止**才輪到 filter——單次取件受批次上限（50）與當日剩餘預算所限，等待評分的職缺可能多於一次取件量，必須全數處理完才開始篩選新職缺。已篩過的職缺只差一次評分呼叫就有結論，若讓 filter 先跑，它會被整批尚未開始的職缺擋在後面；而剛篩過的職缺若排到批次尾端才評分，一批數十筆下來第一筆要等上一小時才有分數。兩者合起來讓單筆從「開始處理」到「有結論」等於它自己的兩次呼叫。此順序與 LLM prompt cache 無關——每次呼叫的 prompt 尾端都是該筆 JD，快取命中與否取決於前綴（角色指令與 Profile 子集），不受兩個角色交錯與否影響。
+
+`run --stage filter` 是使用者指名的單一階段，不做接續評分：指名哪個階段就只做哪個階段。
 
 filter 階段是**兩段式**：先跑不耗 token 的結構化比對，任一條 `fail` 即結束（不呼叫 Agent）；只有結構化條件全過的職缺才付一次 Filter Agent 呼叫。LLM 不可用時（額度、認證、服務中斷）該筆不寫任何結果、不改狀態，留在 `new` 由下一輪重跑整套篩選。
 
-worker 是 process 內單一消化者，以 process 內 mutex 序列化取件；資料正確性仍由 store 的 expected state ＋ expected revision CAS 保證，不能以 mutex 取代。無待處理件時休眠等待，有件即取，因此排程 fetch、CLI 與 extension capture 三個入口寫進來的職缺走的是同一條消化路徑，沒有「等下一輪」的空窗。
+worker 是 process 內背景消化者，與使用者的單筆插隊請求（§2.4）共用一道 process 內閘門；資料正確性仍由 store 的 expected state ＋ expected revision CAS 保證，不能以閘門取代。無待處理件時休眠等待，有件即取，因此排程 fetch、CLI 與 extension capture 三個入口寫進來的職缺走的是同一條消化路徑，沒有「等下一輪」的空窗。
 
-filter、score 與 letter 每筆工作開始時各自從 Profile provider 取得一次 immutable snapshot。filter 只處理 `jobs.filter_revision` 與 snapshot `filter_revision` 相符的工作，score 只處理 `jobs.score_revision` 相符者，**該限制下推到取件查詢**（`PickForStage` 帶該階段的 active revision）：舊 revision 的職缺等使用者要求重新處理，取件時就排除，否則它們以較舊的 `updated_at` 永遠排在最前面、取滿每次取件上限後被逐筆丟棄，相符的職缺永遠輪不到。letter 記錄工作開始時實際取得的 revision，不要求與既有 Score 相同，取件也不限 revision。Profile 為 `missing`、`invalid` 或 `degraded` 時 worker 暫停取件。
+**自動處理開關**：使用者可在 Side Panel 關閉自動篩選與評分（設定存於 store，見 [design-api](design-api.md) §4）。關閉時 worker 每輪跳過 filter 與 score 取件，職缺停留 `new`／`queued`；**批次進行中關閉也立即生效**——開關在每筆之間重讀，不是每輪只讀一次：一趟批次可能夾帶數十筆、跑上一小時，剛關掉開關的使用者不該為那一小時繼續付費。已在進行中的那一次 Agent 呼叫照常完成並記錄，其餘職缺保持原狀態等下次。收集（fetch 與 capture）、結構化硬規則與 letter 階段皆不受影響——letter 只處理使用者已明確要求的職缺，關閉它等於讓使用者的要求無故落空。開關的唯一效果是停止**自動**的 token 消耗；單筆插隊處理仍可用。設定檔的 `worker.paused` 是另一個軸：它讓 serve 完全不啟動 worker、也不持有 worker 鎖，改由 `run --stage` 手動批次消化，此模式下插隊入口一律拒絕。
+
+filter、score 與 letter 每筆工作開始時各自從 Profile provider 取得一次 immutable snapshot。舊 revision 的職缺該等使用者、還是該直接沿用 active revision，取決於**該筆是否已握有判定**：
+
+| 狀態 | revision 過時時的處理 | 理由 |
+|---|---|---|
+| `new`（等待篩選） | 該階段先以 store 的 `AdoptStageRevision` 將 `filter_revision` 換成 active（`score_revision` 清空），再以當下 Profile 篩選 | 尚無任何判定可作廢，本來就要篩一次，換 revision 不增加任何呼叫成本 |
+| `queued` 且 `filter_revision` 為 active | 同上換 `score_revision`，再評分 | 尚無分數可作廢，評分呼叫本來就要付 |
+| `queued` 且 `filter_revision` 過時 | 取件即排除，等使用者重新處理 | 該筆的篩選判定已作廢，重篩要再付一次 Filter 呼叫，該由使用者決定 |
+| `filtered_out`／`scored`／`shortlisted` 等已有判定者 | 不屬任何階段取件範圍，等使用者重新處理 | 同上，且會覆寫使用者看過的判定 |
+
+**該限制下推到取件查詢**（`PickForStage`）：`new` 與 `letter_requested` 不限 revision，score 階段則限 `jobs.filter_revision` 為 active。否則被排除的職缺以較舊的 `updated_at` 永遠排在最前面、取滿每次取件上限後被逐筆丟棄，相符的職缺永遠輪不到。letter 記錄工作開始時實際取得的 revision，不要求與既有 Score 相同，取件也不限 revision。Profile 為 `missing`、`invalid` 或 `degraded` 時 worker 暫停取件。
+
+被「篩選判定過時」擋住的職缺數量改變時，worker 記一行 Info（§6.1），因此消化停滯時 log 有可讀的原因與筆數，而非靜默。
 
 **letter 階段只處理使用者已要求的職缺**（PRD R5.0）：`shortlisted` 不是取件狀態，達閾值的推薦職缺停留在該狀態直到使用者要求。使用者的要求由 API（[design-api](design-api.md)）或 `jobfinder letter request --job ID` 經 store 轉為 `letter_requested`，worker 才取件。無待處理要求時，letter 階段自然是零筆、零 Agent 呼叫、零費用。
 
@@ -80,6 +97,22 @@ pipeline 提供 **ingest 入口**供 API capture endpoint 呼叫（見 [design-a
 `IngestJob` 通過結構化條件者留在 `new` 由 worker 非同步完成語意篩選與評分，**不在 capture 路徑上等待任何 Agent**（PRD R9.2）。被篩掉者的 `filtered_out` 則在同步回應中即得——插件據此立即呈現「不適合」，只有通過結構化條件的才需等待後續結果（Side Panel 的呈現見 [design-extension](design-extension.md) §4.2）。`IngestJob` 不生成求職信——推薦職缺一律停留在 `shortlisted` 等待使用者決定（PRD R5.0）。
 
 `IngestList` 的設計約束是**即時性**：使用者仍停在 104 清單頁，回應必須在該頁面可用的時間內完成，因此整條路徑不含任何 LLM 呼叫與網路抓取（PRD R3.7、R9.1）。
+
+### 2.4 單筆插隊處理（`ProcessJobNow`）
+
+`ProcessJobNow(jobID)`：pipeline 提供此入口供 API 呼叫（[design-api](design-api.md) §4），對使用者當下正在看的**單一等待中職缺**立即完成篩選，通過者於同一次呼叫續完成評分。來源狀態只有 `new` 與 `queued`，其餘狀態回 `ErrNotWaiting`。
+
+**revision 過時不擋此入口**：對單筆按下「馬上處理」就是使用者要求以當下 Profile 判定這一筆，與重新處理是同一份同意。因此 `new` 直接沿用 active revision 篩選；`queued` 但篩選判定已過時者，先以 `RequestReprocess` 送回管線起點，再於同一次呼叫完成篩選與評分（有 JD 全文者續作，只有摘要者停在 `discovered` 等補全文）。
+
+| 面向 | 規則 |
+|---|---|
+| 自動處理開關 | 不受限：開關治理的是自動消化，插隊是使用者對這一筆的明確要求 |
+| 每日預算 | 不受限；呼叫照常寫入 `agent_calls`，當日用量如實反映實際支出 |
+| 呼叫間隔 | 不套用 `llm.min_interval`：間隔是連續批次的節流，單筆請求沒有前一筆 |
+| 序列化 | 與 worker 共用閘門，仍是一次一個 Agent 呼叫 |
+| 完成通知 | 無：API 受理即回，結果由前端輪詢職缺讀取面取得 |
+
+**插隊機制**：閘門守的是 **Agent 呼叫本身**而非整趟批次——一趟批次可能消化數十筆，若以整趟為單位，插隊請求得等上數分鐘。批次迴圈在每筆之前檢查是否有插隊請求在等待、以及自動處理開關是否仍為開，任一成立即收工（未處理的職缺保持原狀態，下一輪續作），因此插隊最多只等當下這一次 Agent 呼叫。閘門另以 job id 記錄 process 內認領：worker 取件與插隊請求可能指向同一筆，未認領者跳過，避免同一筆付兩次呼叫；結果正確性仍由 store CAS 保證。
 
 ## 3. 硬規則篩選（R3）
 
@@ -190,7 +223,7 @@ activation 本身只做狀態切換與重新入隊，不呼叫 LLM；重篩的 F
 
 每日預算以**台北時間日界**重置，計數依 `agent_calls` 當日該 role 的成功呼叫數導出，不另存計數器（重啟後預算不歸零）。worker 常駐後沒有「輪」可作為上限單位，而 extension capture 由使用者隨時觸發，時間窗預算是成本封頂的唯一著力點。
 
-預算用盡時 worker 停止該階段取件，職缺停留 `new`／`queued`／`letter_requested` 至隔日；此為刻意的成本封頂，不記為錯誤。API 據此讓 Side Panel 呈現「已達今日上限」而非「處理中」。
+預算用盡時 worker 停止該階段取件，職缺停留 `new`／`queued`／`letter_requested` 至隔日；此為刻意的成本封頂，不記為錯誤。API 據此讓 Side Panel 呈現「已達今日上限」而非「處理中」。預算封的是自動消化；使用者對單筆的插隊處理（§2.4）不受它限制。
 
 ## 6. 錯誤處理
 
@@ -216,6 +249,9 @@ worker 與各階段以 `log/slog` 輸出結構化記錄至 stderr，由 systemd 
 | 單筆評分開始／完成 | Info | `stage`、`job_id`、`source`、`score_revision`；完成另附 `total`、`state`、`runner`、`duration_ms` |
 | 單筆評分失敗 | Error | `stage`、`job_id`、`duration_ms`、`error` |
 | 判定結果因 revision 過期被丟棄 | Info | `stage`、`job_id`、`revision` |
+| 批次因自動處理開關關閉而收工 | Info | `stage`、`remaining` |
+| 單筆沿用 active revision（`new` 換 `filter_revision`／`queued` 換 `score_revision`） | Info | `stage`、`job_id`、該階段的 revision |
+| 因篩選判定過時而待重新處理的筆數改變 | Info | `jobs`、`filter_revision` |
 | 單筆重新處理入隊 | Info | `stage`、`job_id`、`filter_revision` |
 | 單筆求職信開始／完成／失敗 | Info／Error | `stage`、`job_id`、`state`、`rounds`、`duration_ms`、`error` |
 | filter 階段完成一批 | Info | `stage`、`processed`、`filtered_out`、`queued` |
@@ -238,6 +274,7 @@ log 不得含 JD、Profile、薪資、求職信內容或 Agent 原始輸入輸�
 | `dedupe.source_priority` | canonical 選擇的來源優先序（預設 `104` > `cake` > `yourator`） |
 | `llm` | §5 每日預算、呼叫間隔與 timeout；`llm.roles` 為各角色的 primary/fallback 分別指定 agent CLI 與 model（見 design-agents） |
 | `worker.scan_interval` | 常駐 worker 無待處理件時的掃描間隔（預設 5s） |
+| `worker.paused` | true 時 serve 不啟動常駐 worker、不持有 worker 鎖，filter／score／letter 改由 `run --stage` 手動批次消化（預設 false）；與 Side Panel 的自動處理開關是不同的軸（§2.2） |
 | `api.addr` | B4 API 監聽位址，預設 `127.0.0.1:8686` |
 | `api.token` / `api.extension_origin` | API 驗證 token 與允許的 extension origin |
 

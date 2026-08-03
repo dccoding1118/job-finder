@@ -32,6 +32,9 @@ type fakeProcessor struct {
 	reprocessed   []int64
 	filterRemain  int
 	filterLimited bool
+	// processedNow receives every job the API pushed through immediately. It is a
+	// channel because that work runs in the background, outside the response.
+	processedNow chan int64
 }
 
 func (f *fakeProcessor) IngestList(context.Context, []crawler.RawJob) ([]pipeline.IngestResult, error) {
@@ -53,6 +56,13 @@ func (f *fakeProcessor) RequestLetter(_ context.Context, id int64) error {
 func (f *fakeProcessor) RequestReprocess(ctx context.Context, id int64) error {
 	f.reprocessed = append(f.reprocessed, id)
 	return f.store.ReprocessJob(ctx, id, store.Revisions{Filter: testRevision, Score: testRevision})
+}
+
+func (f *fakeProcessor) ProcessJobNow(_ context.Context, id int64) error {
+	if f.processedNow != nil {
+		f.processedNow <- id
+	}
+	return nil
 }
 
 func (f *fakeProcessor) FilterBudgetRemaining(context.Context) (int, bool, error) {
@@ -84,7 +94,7 @@ func newTestServer(t *testing.T, processor Processor) (*Server, *store.Store) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = data.Close() })
-	server, err := New(Config{Addr: "127.0.0.1:0", Token: "test-token", ExtensionOrigin: "chrome-extension://test-id"}, data, nil, processor)
+	server, err := New(Config{Addr: "127.0.0.1:0", Token: "test-token", ExtensionOrigin: "chrome-extension://test-id", ResidentWorker: true}, data, nil, processor)
 	if err != nil {
 		t.Fatal(err)
 	}

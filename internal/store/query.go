@@ -308,19 +308,20 @@ func (s *Store) ListJobs(ctx context.Context, filter JobFilter, sort JobSort) ([
 	return jobs, nil
 }
 
-// PickForStage selects the next jobs for one pipeline stage. A non-empty
-// revision restricts the pick to the jobs that stage may actually act on: a job
-// left on an older Profile revision waits for the user to ask for it to be
-// reprocessed, so picking it would return work the caller can only discard —
-// and, because the oldest rows sort first, would starve every eligible job
-// behind it. Each stage matches its own gate's revision column; `filter_unknown`
-// belongs to no stage, because only the user releases a job from it.
-func (s *Store) PickForStage(ctx context.Context, stage, revision string, limit int) ([]Job, error) {
+// PickForStage selects the next jobs for one pipeline stage. What a stale
+// Profile revision means depends on what the job already carries: `new` and
+// `letter_requested` hold no assessment of their own, so a revision change
+// costs them nothing and they are picked whatever revision they were stamped
+// with — the stage adopts the active one and does the work the job was waiting
+// for anyway. A `queued` job carries a screening verdict, so it is picked only
+// while that verdict is current; a superseded screening has to be bought again
+// and waits for the user's own reprocess. `filter_unknown` belongs to no stage,
+// because only the user releases a job from it.
+func (s *Store) PickForStage(ctx context.Context, stage string, revisions Revisions, limit int) ([]Job, error) {
 	if limit <= 0 {
 		return nil, fmt.Errorf("store: invalid pick limit %d", limit)
 	}
 	stateByStage := map[string]string{"filter": "new", "score": "queued", "letter": "letter_requested"}
-	columnByStage := map[string]string{"filter": "filter_revision", "score": "score_revision"}
 	state, ok := stateByStage[stage]
 	if !ok {
 		return nil, fmt.Errorf("store: invalid pipeline stage %q", stage)
@@ -329,10 +330,9 @@ func (s *Store) PickForStage(ctx context.Context, stage, revision string, limit 
 	// alias must cost no filter, score, or letter work whatever else changes.
 	query := "SELECT " + jobColumns + " FROM jobs WHERE process_state = ? AND process_state <> 'merged'"
 	args := []any{state}
-	if column, matched := columnByStage[stage]; matched && revision != "" {
-		// #nosec G202 -- column comes from the fixed stage table above.
-		query += " AND " + column + " = ?"
-		args = append(args, revision)
+	if stage == "score" && revisions.Filter != "" {
+		query += " AND filter_revision = ?"
+		args = append(args, revisions.Filter)
 	}
 	query += " ORDER BY updated_at, id LIMIT ?"
 	args = append(args, limit)

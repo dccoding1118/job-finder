@@ -25,6 +25,11 @@ type Config struct {
 	// decisions are applied with, so a manual merge picks the canonical copy by
 	// the same rules an automatic one does.
 	Dedupe store.DedupeOptions
+	// ResidentWorker reports that this process carries the worker and holds its
+	// lock. Without it the stages belong to a hand-driven `run --stage`, so the
+	// automatic-processing switch has nothing to govern and a single-job request
+	// would run beside a batch this process cannot see.
+	ResidentWorker bool
 }
 
 // Triggerer starts one background fetch. Filter, score, and letter need no
@@ -38,6 +43,7 @@ type Processor interface {
 	IngestJob(context.Context, crawler.RawJob) (pipeline.IngestResult, error)
 	RequestLetter(context.Context, int64) error
 	RequestReprocess(context.Context, int64) error
+	ProcessJobNow(context.Context, int64) error
 	FilterBudgetRemaining(context.Context) (int, bool, error)
 	ScoreBudgetRemaining(context.Context) (int, bool, error)
 }
@@ -94,6 +100,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("/api/v1/capture/job", s.captureJob)
 	mux.HandleFunc("/api/v1/duplicates", s.duplicates)
 	mux.HandleFunc("/api/v1/duplicates/", s.duplicate)
+	mux.HandleFunc("/api/v1/settings", s.settings)
 	mux.HandleFunc("/api/v1/profile", s.profile)
 	mux.HandleFunc("/api/v1/profile/reprocess", s.reprocessProfile)
 	return s.authorize(mux)
