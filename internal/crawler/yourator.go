@@ -27,7 +27,13 @@ var (
 	blockTagPattern        = regexp.MustCompile(`(?is)</?(?:br|div|h[1-6]|hr|li|ol|p|section|ul)\b[^>]*>`)
 	jobSectionStartPattern = regexp.MustCompile(`(?is)<section[^>]*\bjob-description\b[^>]*>`)
 	sectionTagPattern      = regexp.MustCompile(`(?is)</?section\b[^>]*>`)
-	salaryPattern          = regexp.MustCompile(`(?i)(?:NT\$\s*)?([\d,]+)\s*-\s*([\d,]+)`)
+	// The JD section encloses the page's own script elements, whose bodies are
+	// never prose: they carry the component state the page hydrates from. Their
+	// contents are dropped whole rather than flattened, because stripping only
+	// the tags would turn that state into JD text (see htmlToText).
+	scriptElementPattern = regexp.MustCompile(`(?is)<script\b[^>]*>.*?</script\s*>`)
+	styleElementPattern  = regexp.MustCompile(`(?is)<style\b[^>]*>.*?</style\s*>`)
+	salaryPattern        = regexp.MustCompile(`(?i)(?:NT\$\s*)?([\d,]+)\s*-\s*([\d,]+)`)
 )
 
 type Yourator struct {
@@ -279,8 +285,16 @@ func extractJobDescription(source string) string {
 	return ""
 }
 
+// htmlToText flattens one HTML fragment into the plain text the database keeps.
+// Script and style bodies are removed first: they are markup-free, so tag
+// stripping alone would keep them, and the state a page hydrates from is both
+// far larger than the JD around it and different on every request — which would
+// make the content hash of an unchanged listing change on every fetch, sending
+// the job back through screening and scoring each time.
 func htmlToText(source string) string {
-	value := blockTagPattern.ReplaceAllString(source, "\n")
+	value := scriptElementPattern.ReplaceAllString(source, " ")
+	value = styleElementPattern.ReplaceAllString(value, " ")
+	value = blockTagPattern.ReplaceAllString(value, "\n")
 	value = tagPattern.ReplaceAllString(value, " ")
 	value = html.UnescapeString(html.UnescapeString(value))
 	lines := make([]string, 0)

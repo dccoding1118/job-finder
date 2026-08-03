@@ -207,7 +207,7 @@ mise run e2e-live
 | 真來源 fetch | 每方向 keywords 組一個正式 query（每來源最多三組），結果進同一池 | 至少一筆真 Job；跨 query/page 依 external ID 去重；**零筆＝FAIL**；evidence 只記來源、筆數、external ID hash 與 request/format 摘要 | ⏳ |
 | 真資料格式 | 讀 live SQLite 安全 snapshot | external ID、canonical HTTPS URL、標題、公司、非空 JD、地點、remote enum、content hash 正確；salary 可 NULL，非 NULL 時 min≤max | ⏳ |
 | 真 Agent filter／score／letter | 對一筆結構化條件全過的 Job 跑語意篩選與評分；再對一筆推薦職缺**明確要求後**生成 | 逐條判定與彙總結論、四維、加權總分、reason、runner audit、信件終態合法；要求前零 Drafter/Reviewer 呼叫；score/letter 各最多一筆；executable 非 repo 內 fake | ⏳ |
-| 冪等與 Run | 再執行相同 live query | 同 source/external ID 不新增重複 Job；Run stats、Agent 上限、錯誤摘要正確 | ⏳ |
+| 冪等與 Run | 再執行相同 live query | 同 source/external ID 不新增重複 Job；**未變更的職缺其 `content_hash` 與 `process_state` 逐筆不變**（否則整批會被重置回 `new` 並重付篩選與評分）；Run stats、Agent 上限、錯誤摘要正確 | ⏳ |
 | systemd／API／extension 模擬 | live config 啟 transient systemd 與 localhost API，隔離 Chromium 操作 extension | 讀同一 live SQLite；browser verifier 依實際 Job 狀態選資料、不依賴 mock 合成標題或固定 ID；仍屬自動模擬，非實際 Chrome gate | ⏳ |
 
 開發中未提交變更可直接驗收。artifact manifest 以 binary/extension/config/unit checksum 為主要追溯；Git revision 與 dirty 狀態只作輔助，不構成執行閘門。

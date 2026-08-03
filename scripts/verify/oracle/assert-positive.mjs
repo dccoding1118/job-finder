@@ -627,6 +627,20 @@ if (mode === "no-alias") {
   process.exit(0);
 }
 
+// live-fingerprint reduces the stored jobs to what a repeated fetch of an
+// unchanged source must reproduce exactly: the identity, the content hash the
+// change detection keys on, and the processing state that hash decides. A live
+// source whose pages carry per-request state would otherwise reset every job to
+// `new` on each run and pay for the whole batch again.
+if (mode === "live-fingerprint") {
+  const data = readJSON();
+  const rows = data.jobs
+    .map((job) => [job.source, job.external_id, job.content_hash ?? "", job.process_state].join("|"))
+    .sort();
+  process.stdout.write(`${rows.length}:${sha256(rows.join("\n"))}`);
+  process.exit(0);
+}
+
 if (mode === "queued-count") {
   const data = readJSON();
   process.stdout.write(String(data.jobs.filter(({ process_state }) => process_state === "queued").length));
