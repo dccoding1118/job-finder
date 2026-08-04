@@ -31,7 +31,9 @@
 
 新增全自動平台＝新增一個 `Source` 實作＋設定檔掛載；新增插件平台＝新增一個解析器＋插件 URL pattern，pipeline 皆不改。**半被動是多平台擴充的主路線**——可全自動的平台是例外（僅 Yourator），多數台灣平台的搜尋路徑都在人機驗證之後。
 
-**列表解析逐項容錯（各半被動來源共用）**：列表解析器對**單一項目**欠缺必要欄位（識別不出職缺路徑、或缺職稱／公司／地區）一律**略過該項**，不使整批擷取失敗；擷取回應只涵蓋成功解析的項目。列表擷取的產物是使用者眼前整頁的標記，整批回錯會讓一張版面配置略有差異的卡片令**同頁其他每一筆**都失去標記。內頁解析相反：素材無法解析時回 error，因為該頁只有那一筆職缺，沒有可保住的其他結果。
+**列表逐項容錯（所有來源共用）**：列表中**單一項目**欠缺識別欄位（識別不出職缺路徑、或缺職稱／公司）一律**略過該項**，不使整批擷取失敗；擷取結果只涵蓋成功解析的項目。識別不出的職缺本就無法擷取全文與評分，而整批回錯會讓一筆異常項目令**同批其他每一筆**一併失去——半被動來源是同頁其他卡片失去標記，全自動來源是該次排程的所有來源全數落空。內頁解析相反：素材無法解析時回 error，因為該頁只有那一筆職缺，沒有可保住的其他結果。
+
+地區不屬識別欄位：來源未載明時填 `unknown`（見 [design-schema](design-schema.md)），由 pipeline 的地區條件判為 unknown，不略過該筆。
 
 ## 2.1 104 解析器 — 列表項目（partial）
 
@@ -101,7 +103,7 @@
 | Yourator 資料 | `RawJob` 欄位 | 處理方式 |
 |---|---|---|
 | 列表 JSON `id` | `external_id` | 轉為十進位字串。 |
-| 列表 JSON `name`、`path`、`company.brand`、`salary`、`location` | `title`、`url`、`company_name`、薪資、`location` | URL 為 `https://www.yourator.co` 加 `path`；薪資僅在 `NT$ min - max` 月薪格式時解析，其他格式為 NULL。 |
+| 列表 JSON `name`、`path`、`company.brand`、`salary`、`location` | `title`、`url`、`company_name`、薪資、`location` | URL 為 `https://www.yourator.co` 加 `path`；薪資僅在 `NT$ min - max` 月薪格式時解析，其他格式為 NULL；`location` 為 null 或空字串時填 `unknown`。 |
 | 公開職缺 HTML 外層 `section.job-description` | `description` | 依巢狀 `section` 平衡邊界擷取完整容器，包含工作內容、條件要求、遠端型態、加分條件與其他職缺資訊；**先整段移除 `script`／`style` 元素內容**，再移除 HTML tag、解碼 entity 並保留標題與段落換行。容器不存在或結構不完整時保留 partial 職缺。 |
 | 職稱與 JD 中的 `remote`／`遠端`／`hybrid`／`混合` | `remote_type` | 依序判定 remote、hybrid，其他為 onsite。 |
 
