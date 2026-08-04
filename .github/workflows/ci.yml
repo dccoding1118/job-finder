@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: jdx/mise-action@v2
+        with:
+          version: 2025.1.0
+          install: true
+          cache: true
+
+      - name: gofumpt
+        run: |
+          unformatted="$(gofumpt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "以下檔案未經 gofumpt 格式化：" >&2
+            echo "$unformatted" >&2
+            exit 1
+          fi
+
+      - name: lint
+        run: mise run lint
+
+      - name: test
+        run: mise run test
+
+      - name: extension manifest 可解析
+        run: node --input-type=module -e "import('node:fs').then(fs => JSON.parse(fs.readFileSync('extension/manifest.json','utf8')))"

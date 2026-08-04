@@ -73,15 +73,40 @@ API 不公開網路埠。Windows 工作站以背景常駐的 SSH local forward�
 
 清空既有職缺重新開始時，停止 `jobfinder-api.service` 與 `jobfinder-run.timer` 後刪除 SQLite（連同 `-wal`、`-shm`），下次啟動即以最新 schema 重建空庫。Profile、denylist 與設定不受影響。
 
-## 7. 產品化雛型（S2 → S3 方向，暫不實作）
+## 7. CI 與 release 工件
 
-| 面向 | S2（單租戶 Alpha） | S3（多租戶 SaaS） |
+**版號的單一真相是 git tag `v<MAJOR>.<MINOR>.<PATCH>`**，Go binary 與 extension 的版號皆由 tag 推導，不在原始碼中另存一份。
+
+| workflow | 觸發 | 動作 |
 |---|---|---|
-| 打包 | 容器化（單一 image：web ＋ pipeline 子命令） | 同左，web / worker / crawler 拆分部署單元 |
-| 運算 | Cloud Run service（UI）＋ Cloud Run job（run，每租戶一組） | Cloud Run 多實例；集中抓取池獨立 worker |
-| 排程 | Cloud Scheduler → Cloud Run job | Cloud Scheduler ＋任務佇列（per-tenant 派工） |
-| 資料庫 | SQLite（掛 volume，每租戶一檔）或直接上 Cloud SQL | Cloud SQL（PostgreSQL）多租戶 schema |
-| LLM | 直串 API；金鑰入 Secret Manager | 同左＋成本工程（批次、模型分級、用量計量） |
-| 身分 | Google OAuth | OAuth ＋計費身分（Stripe 等） |
-| CI/CD | GitHub Actions → Artifact Registry → Cloud Run | 同左＋環境分層（staging/prod） |
-| 觀測 | Cloud Logging | ＋指標告警、per-tenant 用量儀表板 |
+| `.github/workflows/ci.yml` | pull request、push 至 `main` | 以 `mise.toml` 鎖定的工具鏈執行 gofumpt 檢查（只檢查不改寫）、`lint`、`test`，並確認 extension manifest 可解析 |
+| `.github/workflows/release.yml` | push tag `v*` | 驗證 tag 格式 → 重跑 lint／test → 建置多平台 binary → 打包 extension → 產生 checksum → 建立 GitHub Release |
+
+release 工件：
+
+| 工件 | 內容 |
+|---|---|
+| `jobfinder_<tag>_<os>_<arch>.tar.gz` | 靜態 binary（`CGO_ENABLED=0`、`-trimpath`，版號經 `-ldflags` 注入 `cli.version`）＋ `LICENSE`、`README.md`、`systemd/` unit 模板。平台為 `linux/amd64`、`linux/arm64`、`darwin/arm64`、`darwin/amd64` |
+| `jobfinder-extension_<tag>.zip` | extension 目錄，`manifest.json` 的 `version` 於打包時改寫為 tag 去掉 `v` 的語意版號 |
+| `SHA256SUMS` | 上述所有工件的 SHA256 |
+
+`jobfinder version` 印出注入的版號；未經 release 建置的 binary 回報 `dev`。
+
+extension zip 需人工上傳至 Chrome Web Store 並送審——審查結果有變數，不納入自動發佈。
+
+`scripts/deploy/` 的安裝與更新目前由開發 checkout 重新建置（見 §4）；改為下載 release 工件並驗證 checksum 屬待實作項。
+
+## 8. 產品化雛型（S3 方向，暫不實作）
+
+| 面向 | 目標狀態 |
+|---|---|
+| 打包 | 容器化單一 image；worker 與集中抓取池可獨立部署 |
+| 運算 | 容器服務（API）＋容器 job（抓取）；多實例 |
+| 排程 | 雲端排程服務 ＋任務佇列（per-tenant 派工） |
+| 資料庫 | PostgreSQL 多租戶 schema |
+| LLM | 直串 API；金鑰入 secret 管理服務；成本工程（批次、模型分級、用量計量） |
+| 身分 | Google OAuth ＋計費身分 |
+| CI/CD | GitHub Actions → container registry → 容器服務；環境分層（staging／prod） |
+| 觀測 | 集中式 log ＋指標告警、per-tenant 用量儀表板 |
+
+帳號、計費與多租戶的實作不在本 repo。

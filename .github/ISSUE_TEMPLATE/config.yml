@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 安全性問題
+    url: https://github.com/dccoding1118/job-finder/security/advisories/new
+    about: 漏洞與 PII 洩漏請走私密回報，不要開公開 issue。
+  - name: 使用問題
+    url: https://github.com/dccoding1118/job-finder#快速開始
+    about: 安裝與設定請先看 README 與 docs/。

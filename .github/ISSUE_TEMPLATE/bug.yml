@@ -1,0 +1,39 @@
+name: Bug 回報
+description: 回報行為不符預期之處
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感謝回報。這是個人專案，**不保證回覆或處理**。
+
+        ⚠️ 請先把姓名、Email、電話、學校與公司名從 log、Profile 片段與截圖中移除——含個資的 issue 會被直接關閉。
+  - type: textarea
+    id: what
+    attributes:
+      label: 發生了什麼
+      description: 預期行為與實際行為
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: 重現步驟
+      placeholder: |
+        1. …
+        2. …
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: 版本
+      description: "`jobfinder version` 的輸出"
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: 相關 log
+      description: "`journalctl --user -u jobfinder-api.service` 的相關片段（已去除個資）"
+      render: text

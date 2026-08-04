@@ -1,0 +1,80 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: jdx/mise-action@v2
+        with:
+          version: 2025.1.0
+          install: true
+          cache: true
+
+      - name: 版號格式與 tag 一致性
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          case "$tag" in
+            v[0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo "tag 必須為 vMAJOR.MINOR.PATCH，實得 $tag" >&2; exit 1 ;;
+          esac
+          echo "VERSION=$tag" >> "$GITHUB_ENV"
+          echo "SEMVER=${tag#v}" >> "$GITHUB_ENV"
+
+      - name: 前置驗證
+        run: |
+          mise run lint
+          mise run test
+
+      - name: 建置多平台 binary
+        run: |
+          mkdir -p dist
+          ldflags="-s -w -X github.com/dccoding1118/job-finder/cmd/jobfinder/cli.version=${VERSION}"
+          for target in linux/amd64 linux/arm64 darwin/arm64 darwin/amd64; do
+            goos="${target%/*}"
+            goarch="${target#*/}"
+            out="dist/jobfinder_${VERSION}_${goos}_${goarch}"
+            mkdir -p "$out"
+            CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" \
+              go build -trimpath -ldflags "$ldflags" -o "$out/jobfinder" ./cmd/jobfinder
+            cp LICENSE README.md "$out/"
+            cp -r deploy/production/systemd "$out/systemd"
+            tar -C dist -czf "${out}.tar.gz" "$(basename "$out")"
+            rm -rf "$out"
+          done
+
+      - name: 打包 extension
+        run: |
+          work="$(mktemp -d)"
+          cp -r extension "$work/extension"
+          node -e '
+            const fs = require("node:fs");
+            const path = process.argv[1];
+            const manifest = JSON.parse(fs.readFileSync(path, "utf8"));
+            manifest.version = process.env.SEMVER;
+            fs.writeFileSync(path, JSON.stringify(manifest, null, 2) + "\n");
+          ' "$work/extension/manifest.json"
+          (cd "$work/extension" && zip -qr "$GITHUB_WORKSPACE/dist/jobfinder-extension_${VERSION}.zip" .)
+
+      - name: checksum
+        run: |
+          cd dist
+          sha256sum ./*.tar.gz ./*.zip > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: 建立 GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$VERSION" \
+            --title "$VERSION" \
+            --generate-notes \
+            dist/*.tar.gz dist/*.zip dist/SHA256SUMS

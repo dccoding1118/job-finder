@@ -1,0 +1,20 @@
+name: 功能建議
+description: 提出你希望有的能力
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        歡迎提出，但請先知道：開發方向由維護者單獨決定，**建議不保證被採納或回覆**，也不接受外部 Pull Request（見 [CONTRIBUTING.md](../blob/main/CONTRIBUTING.md)）。
+  - type: textarea
+    id: problem
+    attributes:
+      label: 你被什麼卡住
+      description: 描述使用情境與目前的困擾，不是直接描述解法
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: 你想到的做法
+      description: 選填

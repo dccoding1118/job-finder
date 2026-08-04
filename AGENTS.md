@@ -6,7 +6,9 @@
 
 ## 1. 專案概覽
 
-`jobfinder` 是單人單機使用的匿名 AI 求職媒合工具：從合規的職缺來源收集職缺，以本地規則與 Agent 評分篩選並標示判定；使用者對推薦職缺要求後才產出經審查的客製化求職信，最後手動投遞並追蹤狀態。
+`jobfinder` 是匿名 AI 求職媒合工具：從合規的職缺來源收集職缺，以本地規則與 Agent 評分篩選並標示判定；使用者對推薦職缺要求後才產出經審查的客製化求職信，最後手動投遞並追蹤狀態。
+
+**產品形態**：Chrome extension 是產品本體——它同時是唯一 UI 與受保護平台（104／Cake）的唯一資料採集器，不會被 Web UI 取代。後端是可替換的媒合引擎，同一份程式碼支撐「使用者自部署」與「代管雲端」兩種部署，extension 對後端只認 endpoint ＋ auth。目前實作到自部署形態（單機、SQLite、localhost API、Bearer token）；帳號、計費與多租戶不在本 repo。定位與階段見 `docs/roadmap.md`，架構決策見 `docs/changes/change-productization-architecture.md`。本專案採 AGPL-3.0，不接受外部 PR。
 
 - 需求與範圍：`docs/PRD.md`
 - 系統架構與開發順序：`docs/design.md`
@@ -106,5 +108,6 @@ MVP 以 `jobfinder run` 作為 one-shot pipeline，由 systemd user timer 每日
 
 - commit、push 與建立 PR 僅在使用者要求時執行。
 - 開發前先確認工作樹中的既有變更，避免覆蓋未提交內容。
-- 上版前執行 `mise run fmt`、`mise run lint` 與 `mise run test`。
+- 上版前執行 `mise run fmt`、`mise run lint` 與 `mise run test`；PR 與 `main` 另由 `.github/workflows/ci.yml` 把關。
 - 標準「開發完成後上版並開 PR」流程使用 `/ship` skill。
+- 發佈版本：推 tag `v<MAJOR>.<MINOR>.<PATCH>`，由 `.github/workflows/release.yml` 產出帶版號與 checksum 的 binary 與 extension zip（見 `docs/deploy.md` §7）。版號不寫進原始碼。
