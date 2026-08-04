@@ -4,6 +4,6 @@
   "version": "0.0.0",
   "description": "Browser end-to-end verification tooling for jobfinder",
   "devDependencies": {
-    "@playwright/test": "1.61.1"
+    "@playwright/test": "1.62.1"
   }
 }
