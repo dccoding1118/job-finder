@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/dccoding1118/job-finder/internal/store"
 )
 
 const defaultYouratorBaseURL = "https://www.yourator.co"
@@ -103,8 +105,12 @@ func (y Yourator) Fetch(ctx context.Context, spec SearchSpec) ([]RawJob, error) 
 				return nil, fmt.Errorf("crawler: Yourator response has no jobs")
 			}
 			for _, item := range response.Payload.Jobs {
-				if item.ID == 0 || item.Name == "" || item.Path == "" || item.Company.Brand == "" || item.Location == "" {
-					return nil, fmt.Errorf("crawler: Yourator job has required field missing")
+				// A listing without an id, title, path or company cannot be
+				// identified, fetched or judged, so it is skipped rather than
+				// failing the page: one unusable entry would otherwise discard
+				// every other job of this run, across every source.
+				if item.ID == 0 || item.Name == "" || item.Path == "" || item.Company.Brand == "" {
+					continue
 				}
 				externalID := strconv.FormatInt(item.ID, 10)
 				if _, exists := seen[externalID]; exists {
@@ -117,7 +123,11 @@ func (y Yourator) Fetch(ctx context.Context, spec SearchSpec) ([]RawJob, error) 
 				}
 				description := extractJobDescription(string(detail))
 				min, max := parseSalary(item.Salary)
-				jobs = append(jobs, RawJob{Source: y.Name(), ExternalID: externalID, URL: base + item.Path, Title: item.Name, CompanyName: item.Company.Brand, CompanyInfo: "", Description: description, SalaryMin: min, SalaryMax: max, Location: item.Location, RemoteType: remoteType(item.Name + "\n" + description)})
+				location := item.Location
+				if location == "" {
+					location = store.LocationUnknown
+				}
+				jobs = append(jobs, RawJob{Source: y.Name(), ExternalID: externalID, URL: base + item.Path, Title: item.Name, CompanyName: item.Company.Brand, CompanyInfo: "", Description: description, SalaryMin: min, SalaryMax: max, Location: location, RemoteType: remoteType(item.Name + "\n" + description)})
 			}
 			if !response.Payload.HasMore {
 				break

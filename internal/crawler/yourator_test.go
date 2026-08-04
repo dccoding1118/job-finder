@@ -12,6 +12,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/dccoding1118/job-finder/internal/store"
 )
 
 func TestYouratorGroupsDirectionQueriesAndDeduplicatesDetails(t *testing.T) {
@@ -63,6 +65,41 @@ func TestYouratorGroupsDirectionQueriesAndDeduplicatesDetails(t *testing.T) {
 		if details[fmt.Sprintf("/jobs/%d", id)] != 1 {
 			t.Fatalf("detail counts = %v", details)
 		}
+	}
+}
+
+func TestYouratorKeepsPageWhenListItemsAreUnusable(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v4/jobs", func(w http.ResponseWriter, _ *http.Request) {
+		jobs := []map[string]any{
+			{"id": 1, "name": "Stated locality", "path": "/jobs/1", "salary": "NT$ 10,000 - 20,000", "location": "Taipei", "company": map[string]string{"brand": "Synthetic Org"}},
+			{"id": 2, "name": "No locality", "path": "/jobs/2", "salary": "面議", "location": nil, "company": map[string]string{"brand": "Synthetic Org"}},
+			{"id": 3, "name": "No company", "path": "/jobs/3", "location": "Taipei", "company": map[string]string{}},
+			{"id": 0, "name": "No id", "path": "/jobs/4", "location": "Taipei", "company": map[string]string{"brand": "Synthetic Org"}},
+			{"id": 5, "name": "", "path": "", "location": "Taipei", "company": map[string]string{"brand": "Synthetic Org"}},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"payload": map[string]any{"hasMore": false, "jobs": jobs}})
+	})
+	mux.HandleFunc("/jobs/", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = fmt.Fprintf(w, `<section class="job-description">Synthetic description %s</section>`, html.EscapeString(r.URL.Path))
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	jobs, err := (Yourator{BaseURL: server.URL}).Fetch(context.Background(), oneQuerySpec())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(jobs) != 2 {
+		t.Fatalf("jobs = %d, want the two identifiable listings", len(jobs))
+	}
+	if jobs[0].ExternalID != "1" || jobs[0].Location != "Taipei" {
+		t.Fatalf("stated locality job = %+v", jobs[0])
+	}
+	if jobs[1].ExternalID != "2" || jobs[1].Location != store.LocationUnknown {
+		t.Fatalf("job without locality = %+v", jobs[1])
 	}
 }
 
