@@ -51,7 +51,9 @@
 
 ## 5. 遠端存取與維運
 
-API 不公開網路埠。Windows 工作站以背景常駐的 SSH local forward，將專用的本機 `127.0.0.1:18686` 轉送到 VM 的 `127.0.0.1:8686`，extension Options 使用該本機 endpoint；不得將 service 改綁 `0.0.0.0` 作為替代。通道由 Windows Task Scheduler 於登入時啟動，IAP 先處理底層重連，常駐 wrapper 在 SSH process 退出後重建完整 session；完整設定、驗證與排障步驟見 [Windows extension 與 GCP API 常駐通道](guides/runbook-extension.md)。
+API 不公開網路埠。後端與瀏覽器同機時 extension 直連 loopback，不需要本節。
+
+後端跑在遠端 Linux 機器（目前的自用配置）時，Windows 工作站以背景常駐的 SSH local forward，將專用的本機 `127.0.0.1:18686` 轉送到 VM 的 `127.0.0.1:8686`，extension Options 使用該本機 endpoint；不得將 service 改綁 `0.0.0.0` 作為替代。通道由 Windows Task Scheduler 於登入時啟動，IAP 先處理底層重連，常駐 wrapper 在 SSH process 退出後重建完整 session；完整設定、驗證與排障步驟見 [Windows extension 與 GCP API 常駐通道](guides/runbook-extension.md)。
 
 日常診斷使用 `journalctl --user -u jobfinder-api.service`、`journalctl --user -u jobfinder-run.service` 與 Side Panel 的 Run 歷史。驗證 systemd 環境時，以 `systemd-run --user --wait --pipe` 執行相同 binary／設定組合，API 使用 transient service，timer 使用 transient timer 實際觸發 one-shot；互動 shell 成功不構成 service 環境成功的證據。user bus 不可用時，開發驗收回 `ENVIRONMENT_BLOCKED`，不誤判為產品失敗。
 
@@ -73,15 +75,43 @@ API 不公開網路埠。Windows 工作站以背景常駐的 SSH local forward�
 
 清空既有職缺重新開始時，停止 `jobfinder-api.service` 與 `jobfinder-run.timer` 後刪除 SQLite（連同 `-wal`、`-shm`），下次啟動即以最新 schema 重建空庫。Profile、denylist 與設定不受影響。
 
-## 7. 產品化雛型（S2 → S3 方向，暫不實作）
+## 7. CI 與 release 工件
 
-| 面向 | S2（單租戶 Alpha） | S3（多租戶 SaaS） |
+**版號的單一真相是 git tag `v<MAJOR>.<MINOR>.<PATCH>`**，Go binary 與 extension 的版號皆由 tag 推導，不在原始碼中另存一份。
+
+| workflow | 觸發 | 動作 |
 |---|---|---|
-| 打包 | 容器化（單一 image：web ＋ pipeline 子命令） | 同左，web / worker / crawler 拆分部署單元 |
-| 運算 | Cloud Run service（UI）＋ Cloud Run job（run，每租戶一組） | Cloud Run 多實例；集中抓取池獨立 worker |
-| 排程 | Cloud Scheduler → Cloud Run job | Cloud Scheduler ＋任務佇列（per-tenant 派工） |
-| 資料庫 | SQLite（掛 volume，每租戶一檔）或直接上 Cloud SQL | Cloud SQL（PostgreSQL）多租戶 schema |
-| LLM | 直串 API；金鑰入 Secret Manager | 同左＋成本工程（批次、模型分級、用量計量） |
-| 身分 | Google OAuth | OAuth ＋計費身分（Stripe 等） |
-| CI/CD | GitHub Actions → Artifact Registry → Cloud Run | 同左＋環境分層（staging/prod） |
-| 觀測 | Cloud Logging | ＋指標告警、per-tenant 用量儀表板 |
+| `.github/workflows/ci.yml` | pull request、push 至 `main` | 以 `mise.toml` 鎖定的工具鏈執行 gofumpt 檢查（只檢查不改寫）、`lint`、`test`，並確認 extension manifest 可解析 |
+| `.github/workflows/release.yml` | push tag `v*` | 驗證 tag 格式 → 重跑 lint／test → 建置多平台 binary → 打包 extension → 產生 checksum → 建立 GitHub Release |
+
+release 工件：
+
+| 工件 | 內容 |
+|---|---|
+| `jobfinder_<tag>_<os>_<arch>.tar.gz` | 靜態 binary（`CGO_ENABLED=0`、`-trimpath`，版號經 `-ldflags` 注入 `internal/version.tag`）＋ `LICENSE`、`README.md`；Linux 另附 `systemd/` unit 模板。平台為 `linux/amd64`、`linux/arm64`、`darwin/arm64`、`darwin/amd64` |
+| `jobfinder_<tag>_windows_amd64.zip` | 同上，`jobfinder.exe`；不附 unit 模板（Windows 的常駐與排程機制尚未落地，見 `docs/roadmap.md` S2） |
+| `jobfinder-extension_<tag>.zip` | extension 目錄，`manifest.json` 的 `version` 於打包時改寫為 tag 去掉 `v` 的語意版號 |
+| `SHA256SUMS` | 上述所有工件的 SHA256 |
+
+版號的唯一決策點是 `internal/version`：逐欄位取 ldflags 注入值 → `debug.ReadBuildInfo()` → 寫死的 fallback。`jobfinder version` 因此在任何建置路徑都印得出可辨識的身分——release 建置印 tag，本機建置印 `dev (<commit>) (dirty)`，不偽造版本號。
+
+`-X` 的符號路徑 `github.com/dccoding1118/job-finder/internal/version.tag` 是字串綁定：package 搬家或變數改名會使注入**靜默失效**，版號悄悄退回 `dev`。改動時必須同步 `release.yml`。
+
+extension zip 需人工上傳至 Chrome Web Store 並送審——審查結果有變數，不納入自動發佈。
+
+`scripts/deploy/` 的安裝與更新目前由開發 checkout 重新建置（見 §4）；改為下載 release 工件並驗證 checksum 屬待實作項。
+
+## 8. 產品化雛型（S3 方向，暫不實作）
+
+| 面向 | 目標狀態 |
+|---|---|
+| 打包 | 容器化單一 image；worker 與集中抓取池可獨立部署 |
+| 運算 | 容器服務（API）＋容器 job（抓取）；多實例 |
+| 排程 | 雲端排程服務 ＋任務佇列（per-tenant 派工） |
+| 資料庫 | PostgreSQL 多租戶 schema |
+| LLM | 直串 API；金鑰入 secret 管理服務；成本工程（批次、模型分級、用量計量） |
+| 身分 | Google OAuth ＋計費身分 |
+| CI/CD | GitHub Actions → container registry → 容器服務；環境分層（staging／prod） |
+| 觀測 | 集中式 log ＋指標告警、per-tenant 用量儀表板 |
+
+帳號、計費與多租戶的實作不在本 repo。

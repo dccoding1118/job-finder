@@ -8,14 +8,23 @@
 
 ## §2 未完成任務
 
-（無）
+- [ ] 公開 GitHub repo。多數資安與對外可見度設定被 private＋免費方案擋住，須依下列**硬順序**在轉 public 當天一次做完（Dependabot alerts 與 automated security fixes 已於 private 階段開啟）：
+  1. 本地備妥 `.github/workflows/codeql.yml`（**先別推**——private repo 的 `analyze` job 會恆紅）。
+  2. `gh repo edit dccoding1118/job-finder --visibility public`（直接生效，不需 `--accept-visibility-change-consequences`，該旗標在部分 gh 版本會報 unknown flag）。
+  3. 開啟 secret scanning ＋ push protection、Private vulnerability reporting（`SECURITY.md` 指向後者）。
+  4. 推 codeql 分支並開 PR，讓 CI ＋ codeql 在**已 public** 的 repo 上首跑；README 補上 CodeQL badge。
+  5. 全綠合併 → 設 main 分支保護（required status checks 填 `check`、`analyze`；solo dev 不設 required reviews，會卡死自己）→ 打首版 tag 觸發 release。
 
 **Roadmap（暫不實作，規劃見 `docs/roadmap.md`）**
 
 - [ ] S1：反向校準閉環（前端入口，不做 CLI 指令）、每日高分職缺推送、成效統計、深入評估、履歷匯入產生 Profile 草稿、多 Profile。
 - [ ] `requirements` 增設語意硬排除欄位（如 `exclude_conditions[]`，自然語言、併入 Filter Agent 該次呼叫逐條判定，JD 未提及回 `unknown`）：「不接受海外出差／外派」「不接受輪班」這類需求既不是產業也難以用關鍵字精準命中，現有六個 requirements 欄位皆無法承接，目前只能填 `intents.content_dislikes` 走軟性扣分。
-- [ ] 產品化部署架構：以 chrome extension 為主的 AI 輔助求職媒合產品，規劃用戶適合的後端部署架構，與可能的收費模式(ex: 開源、自部署後端免費，提供雲端部署收費版本，但似乎與 chrome extension 本身的付費版無關，可能是另外的 credit 模式)。
-- [ ] 產品化上版/釋出流程：部署改走 CI/release 正式版工件、主程式搬至 `~/.local/bin/jobfinder`、API 請求層 log、Agent「輸出已過契約驗證但 Invoke 回錯」不重跑的重試契約。
-- [ ] 產品化 LLM 配置：此專案對 LLM 的使用情境，LLM 其實沒有用到工具的部分，所以最適合的是使用 LLM 而不是 Agent，須針對篩選、評分與求職信生成/審核增加 LLM API 機制，並將原每日篩選、評分硬上限改成軟上限，當處理量到達指定門檻，觸發告警顯示今日以篩選/評分 XX 筆職缺，但還可以繼續處理。提供 LLM API、agent binary 整合配置，設定使用某個 agent (用戶須自己配置好環境 path，使用訂閱額度) 或 LLM API / API Key。
-- [ ] 產品化監控功能：在 extension UI 增加集中式、更詳細的運作流程日誌與監控細節，分別查看 UI/API 運作、worker 批次、fetch 批次、求職信處理的日誌。fetch 批次歷程中，那些英文改成中文說明呈現。
-- [ ] 產品化設定功能：將配置檔內其餘功能提供到 extension 上配置（每日上限、掃描間隔、去重門檻、LLM 路由等；自動篩選與評分開關已落地）。處理量告警待「產品化 LLM 配置」的軟上限一併處理。
+- [ ] S2 LLM 直串 API：此專案對 LLM 的使用沒有工具呼叫，最適合的是 LLM API 而非 Agent；須針對篩選、評分與求職信生成／審核增加 LLM API 機制，並將每日篩選、評分的硬上限改為軟上限（達門檻告警但可續行）。提供 LLM API 與 agent binary 兩種配置（使用 agent 時由使用者自行配置環境 path 與訂閱額度）。
+- [ ] S2 extension 連線模式：Options 增設自部署 token／雲端帳號兩種模式，endpoint 改用 `optional_host_permissions` 並於使用者填入自有網域時 runtime 請求授權。
+- [ ] S2 來源能力矩陣與雙層開關：來源標記 `mode`；「此部署是否開放該來源」為部署層設定、「使用者是否啟用」存 store 並由設定 UI 開關。
+- [ ] S2 Chrome Web Store 上架：隱私政策頁、廣域 optional host permission 的用途說明；上架後 `api.extension_origin` 改為內建預設值。
+- [ ] S2 Windows 自部署：以 Task Scheduler（登入時啟動 `serve`、每日觸發 `run`）取代 systemd user unit，設定與資料路徑改走 Windows 使用者目錄。`windows/amd64` 工件已由 release 流程產出。完成後自用不再需要 SSH 通道（該通道只是遠端後端的過渡作法）。
+- [ ] S2 安裝流程改吃 release 工件：`install.sh`／`update.sh` 由下載並驗證 checksum 的 release 工件部署，取代開發 checkout 直接 build；主程式改安裝至 `~/.local/bin/jobfinder`，`~/.local/lib/jobfinder/` 僅保留 rollback 工件與安裝 metadata。
+- [ ] S2 監控功能：在 extension UI 增加集中式、更詳細的運作流程日誌與監控細節，分別查看 UI／API 運作、worker 批次、fetch 批次、求職信處理的日誌；fetch 批次歷程中的英文改成中文呈現。
+- [ ] S2 設定功能：將配置檔內其餘功能提供到 extension 上配置（每日上限、掃描間隔、去重門檻、LLM 路由等；自動篩選與評分開關已落地）。處理量告警待 LLM 直串 API 的軟上限一併處理。
+- [ ] 工程面跨階段項：API 請求層 log、薪資字串解析涵蓋度、Agent「輸出已過契約驗證但 Invoke 回錯」不重跑的重試契約。

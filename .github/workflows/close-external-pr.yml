@@ -1,0 +1,31 @@
+name: Close external PR
+
+on:
+  pull_request_target:
+    types: [opened, reopened]
+
+permissions:
+  pull-requests: write
+
+jobs:
+  close:
+    if: >-
+      github.event.pull_request.author_association != 'OWNER' &&
+      github.event.pull_request.author_association != 'MEMBER' &&
+      github.event.pull_request.author_association != 'COLLABORATOR' &&
+      github.event.pull_request.user.type != 'Bot'
+    runs-on: ubuntu-latest
+    steps:
+      - name: 說明並關閉
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          gh pr comment "$PR" --repo "$REPO" --body \
+          "感謝你花時間送出這個 PR，但**本專案目前不接受外部 Pull Request**，因此這裡會直接關閉，不是針對內容。
+
+          程式碼公開的目的是讓你能檢視、自行部署與自行修改（AGPL-3.0 保障這些權利）；開發方向由維護者單獨決定。詳見 [CONTRIBUTING.md](https://github.com/$REPO/blob/main/CONTRIBUTING.md)。
+
+          如果這個改動解決了某個實際問題，歡迎改開 issue 描述那個問題——issue 是開放的（但不保證處理）。你也可以自由 fork 改成自己要的樣子。"
+          gh pr close "$PR" --repo "$REPO"
