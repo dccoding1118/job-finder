@@ -3,6 +3,12 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 建置並打包但不建立 Release，用於在推 tag 前驗證整條流程
+        type: boolean
+        default: true
 
 permissions:
   contents: write
@@ -21,6 +27,11 @@ jobs:
 
       - name: 版號格式與 tag 一致性
         run: |
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            echo "VERSION=v0.0.0-dryrun" >> "$GITHUB_ENV"
+            echo "SEMVER=0.0.0" >> "$GITHUB_ENV"
+            exit 0
+          fi
           tag="${GITHUB_REF_NAME}"
           case "$tag" in
             v[0-9]*.[0-9]*.[0-9]*) ;;
@@ -37,17 +48,26 @@ jobs:
       - name: 建置多平台 binary
         run: |
           mkdir -p dist
-          ldflags="-s -w -X github.com/dccoding1118/job-finder/cmd/jobfinder/cli.version=${VERSION}"
-          for target in linux/amd64 linux/arm64 darwin/arm64 darwin/amd64; do
+          ldflags="-s -w -X github.com/dccoding1118/job-finder/internal/version.tag=${VERSION}"
+          for target in linux/amd64 linux/arm64 darwin/arm64 darwin/amd64 windows/amd64; do
             goos="${target%/*}"
             goarch="${target#*/}"
-            out="dist/jobfinder_${VERSION}_${goos}_${goarch}"
+            name="jobfinder_${VERSION}_${goos}_${goarch}"
+            out="dist/$name"
             mkdir -p "$out"
+            binary="$out/jobfinder"
+            [ "$goos" = windows ] && binary="$binary.exe"
             CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" \
-              go build -trimpath -ldflags "$ldflags" -o "$out/jobfinder" ./cmd/jobfinder
+              go build -trimpath -ldflags "$ldflags" -o "$binary" ./cmd/jobfinder
             cp LICENSE README.md "$out/"
-            cp -r deploy/production/systemd "$out/systemd"
-            tar -C dist -czf "${out}.tar.gz" "$(basename "$out")"
+            if [ "$goos" = linux ]; then
+              cp -r deploy/production/systemd "$out/systemd"
+            fi
+            if [ "$goos" = windows ]; then
+              (cd dist && zip -qr "${name}.zip" "$name")
+            else
+              tar -C dist -czf "${out}.tar.gz" "$name"
+            fi
             rm -rf "$out"
           done
 
@@ -71,6 +91,7 @@ jobs:
           cat SHA256SUMS
 
       - name: 建立 GitHub Release
+        if: github.event_name == 'push'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -78,3 +99,11 @@ jobs:
             --title "$VERSION" \
             --generate-notes \
             dist/*.tar.gz dist/*.zip dist/SHA256SUMS
+
+      - name: 保留 dry run 工件
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: dry-run-artifacts
+          path: dist/
+          retention-days: 3

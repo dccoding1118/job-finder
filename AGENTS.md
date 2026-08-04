@@ -111,3 +111,4 @@ MVP 以 `jobfinder run` 作為 one-shot pipeline，由 systemd user timer 每日
 - 上版前執行 `mise run fmt`、`mise run lint` 與 `mise run test`；PR 與 `main` 另由 `.github/workflows/ci.yml` 把關。
 - 標準「開發完成後上版並開 PR」流程使用 `/ship` skill。
 - 發佈版本：推 tag `v<MAJOR>.<MINOR>.<PATCH>`，由 `.github/workflows/release.yml` 產出帶版號與 checksum 的 binary 與 extension zip（見 `docs/deploy.md` §7）。版號不寫進原始碼。
+- 版號的唯一決策點是 `internal/version`：release 以 `-ldflags "-X github.com/dccoding1118/job-finder/internal/version.tag=<tag>"` 注入。**該符號路徑是字串綁定**——package 搬家或變數 `tag` 改名會讓注入靜默失效（不報錯，版號悄悄變回 `dev`），改動時必須同步 `release.yml`。

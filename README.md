@@ -1,5 +1,9 @@
 # jobfinder
 
+[![CI](https://github.com/dccoding1118/job-finder/actions/workflows/ci.yml/badge.svg)](https://github.com/dccoding1118/job-finder/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/dccoding1118/job-finder?sort=semver)](https://github.com/dccoding1118/job-finder/releases/latest)
+[![License](https://img.shields.io/badge/license-AGPL--3.0-blue)](LICENSE)
+
 匿名的 AI 求職媒合工具。持續從求職平台收集職缺，以你的去識別化 Profile 做硬條件篩選與四維評分，只把值得投的少數職缺送到你面前；你按下要求後才生成經審查的客製化求職信。投遞永遠由你手動完成。
 
 **Chrome extension 是操作入口，也是 104 與 Cake 的資料採集器**；後端是跑在你自己機器上的 Go 服務，資料留在本機 SQLite。
@@ -34,9 +38,9 @@
 
 ## 目前狀態
 
-自部署形態可用：單機、SQLite、只綁 loopback 的 API、Chrome 原生 Side Panel。來源為 Yourator（背景抓取）與 104／Cake（extension 擷取）。
+自部署形態可用：Linux 單機、SQLite、只綁 loopback 的 API、Chrome 原生 Side Panel。來源為 Yourator（背景抓取）與 104／Cake（extension 擷取）。
 
-規劃中：LLM 直串 API（目前需要 headless `claude`／`codex` CLI）、Chrome Web Store 上架、代管雲端版。階段規劃見 [docs/roadmap.md](docs/roadmap.md)。
+規劃中：LLM 直串 API（目前需要 headless `claude`／`codex` CLI）、Windows 部署、Chrome Web Store 上架、代管雲端版。階段規劃見 [docs/roadmap.md](docs/roadmap.md)。
 
 ## 快速開始
 
@@ -75,6 +79,6 @@ mise run deploy-install
 
 ## 授權與貢獻
 
-Copyright (C) 2026 dccoding1118。本專案以 [AGPL-3.0](LICENSE) 授權：你可以自由使用、修改與自行部署；若你改造後拿它對外提供網路服務，必須一併公開你的修改。
+Copyright (c) 2026 Dennis Chan。本專案以 [AGPL-3.0](LICENSE) 授權：你可以自由使用、修改與自行部署；若你改造後拿它對外提供網路服務，必須一併公開你的修改。
 
 **本專案目前不接受外部 Pull Request。** Issue 開放 bug 回報與功能建議，但不保證處理。詳見 [CONTRIBUTING.md](CONTRIBUTING.md)。

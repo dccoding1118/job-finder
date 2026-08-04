@@ -23,6 +23,8 @@ MVP 的功能規格見 [PRD](PRD.md)；本文件回答三個問題：**現在的
 
 extension 對後端只認 **endpoint ＋ auth**，兩種部署共用同一顆已上架的 extension。代管服務的帳號、計費與營運不在本 repo。
 
+**自部署的預設是後端與瀏覽器同機**，extension 直連 loopback，沒有通道問題。後端跑在遠端機器時才需自行把遠端 loopback port 轉送到本機（見 `docs/guides/runbook-extension.md`），那是特定環境的作法而非產品路徑。
+
 ## 3. 現在的 MVP 是什麼
 
 | 用途 | 說明 |
@@ -63,15 +65,17 @@ MVP 架構中為擴展預留的縫：Source adapter 與半被動解析器（加�
   - **Chrome Web Store 上架**：extension ID 因此成為已知常數，`api.extension_origin` 可內建預設值，安裝時不再需要人工替換佔位。
   - **來源能力矩陣與雙層開關**：每個來源標記 `mode`（`auto`／`semi_passive`）；「此部署是否開放該來源」為部署層設定，「使用者是否啟用」存 store 並由設定 UI 開關。
   - **一鍵安裝**：release 工件或容器，預設後端跑在使用者本機、extension 直連 loopback，無需通道設定。
+  - **Windows 自部署支援**：目前的常駐與排程綁在 systemd user unit，Windows 沒有對應物。需要以 Task Scheduler（登入時啟動 `serve`、每日觸發 `run`）取代 unit，設定與資料路徑改走 Windows 的使用者目錄，並發佈 `windows/amd64` 工件。後端與 extension 同機後，遠端通道連帶不再需要。
   - **設定面完整化**：每日上限、掃描間隔、去重門檻、LLM 路由等移入 extension 設定頁。
   - **集中式運作日誌與監控**：extension UI 分別檢視 UI／API、worker 批次、fetch 批次、求職信處理的日誌。
 - **退出標準**：一位非開發者依 README 自行完成安裝並走完閉環。
 
-### S3 — 代管雲端版
+### S3 — 代管雲端版（架構預留，暫不開工）
 
-- **目標**：不想自部署的使用者也能用；驗證願付價格。
-- **關鍵項**：帳號與 OAuth、多租戶（SQLite → PostgreSQL）、用量計量與計費、任務佇列與 per-tenant rate limit、集中抓取池（全體共用抓取，媒合各自 Profile——成本從 O(使用者) 降為 O(平台)）。
-- **前置**：S2 的 LLM 直串 API 與 extension 連線模式全數完成。
+- **目標**：不想自部署的使用者也能用。
+- **現階段只做一件事**：確保 S0–S2 的架構**不擋** S3——store 介面與 driver 分離、Runner 可換實作、來源開關已分部署層與使用者層、API 的驗證是可替換的中介層。除此之外不預建任何多租戶設施。
+- **未來的關鍵項**：帳號與 OAuth、多租戶（SQLite → PostgreSQL）、用量計量與計費、任務佇列與 per-tenant rate limit、集中抓取池（全體共用抓取，媒合各自 Profile——成本從 O(使用者) 降為 O(平台)）。
+- **前置**：S2 的 LLM 直串 API 與 extension 連線模式全數完成，且自部署版已在推廣中累積實際使用者。
 - **範圍界線**：帳號、計費、多租戶與營運策略不在本 repo；本 repo 只提供其所依賴的媒合引擎與可注入的介面。
 
 ### S4 — 擴展（選項池）
@@ -110,7 +114,7 @@ MVP 架構中為擴展預留的縫：Source adapter 與半被動解析器（加�
 | 資料庫 | SQLite | SQLite | PostgreSQL 多租戶 |
 | LLM | headless CLI（訂閱內） | CLI 或自帶 API Key | 平台代管＋用量計量 |
 | 來源 | 一全自動、兩半被動 | 同左＋雙層開關 | 同左＋集中抓取池 |
-| 部署 | VM ＋ systemd timer | release 工件／容器，一鍵安裝 | 容器多租戶＋排程服務（見 [deploy](deploy.md)） |
+| 部署 | Linux ＋ systemd user unit | Linux（systemd）與 Windows（Task Scheduler），release 工件一鍵安裝 | 容器多租戶＋排程服務（見 [deploy](deploy.md)） |
 | 登入 | 無（localhost token） | 同左 | Google OAuth |
 | UI | Chrome 原生 Side Panel | 同左，已上架 | 同左，連線模式切換 |
 
