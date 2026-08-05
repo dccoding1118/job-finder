@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/dccoding1118/job-finder/internal/profile"
@@ -61,9 +62,14 @@ func TestProfileAPISetupCreateConflictAndValidation(t *testing.T) {
 	if activationCalls != 0 {
 		t.Fatalf("Profile save triggered %d reprocessing calls", activationCalls)
 	}
-	info, err := os.Stat(filepath.Join(directory, "profile.yaml"))
-	if err != nil || info.Mode().Perm() != 0o600 {
-		t.Fatalf("profile mode=%v err=%v", info.Mode().Perm(), err)
+	// The saved Profile must be owner-only where the platform has file
+	// permissions. Windows has no chmod equivalent; there the confidentiality
+	// of the config directory rests on the ACL it inherits.
+	if runtime.GOOS != "windows" {
+		info, statErr := os.Stat(filepath.Join(directory, "profile.yaml"))
+		if statErr != nil || info.Mode().Perm() != 0o600 {
+			t.Fatalf("profile mode=%v err=%v", info.Mode().Perm(), statErr)
+		}
 	}
 
 	request = authedRequest(http.MethodPut, "/api/v1/profile", value)

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -95,9 +96,14 @@ func TestProviderMissingSaveConflictPIIAndImmutableSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	info, err := os.Stat(path)
-	if err != nil || info.Mode().Perm() != 0o600 {
-		t.Fatalf("mode=%v err=%v", info.Mode().Perm(), err)
+	// The saved Profile must be owner-only where the platform has file
+	// permissions. Windows has no chmod equivalent; there the confidentiality
+	// of the config directory rests on the ACL it inherits.
+	if runtime.GOOS != "windows" {
+		info, statErr := os.Stat(path)
+		if statErr != nil || info.Mode().Perm() != 0o600 {
+			t.Fatalf("mode=%v err=%v", info.Mode().Perm(), statErr)
+		}
 	}
 	if !result.FilterChanged || !result.ScoreChanged {
 		t.Fatalf("save result = %+v", result)
