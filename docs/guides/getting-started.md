@@ -135,8 +135,12 @@ irm https://raw.githubusercontent.com/dccoding1118/job-finder/main/scripts/boots
 ```powershell
 Expand-Archive "$name.zip" -DestinationPath . -Force
 Set-Location $name
+# 從網路下載的檔案帶有 Mark of the Web，未解除封鎖會被 SmartScreen 擋下
+Get-ChildItem -Recurse | Unblock-File
 .\jobfinder.exe install
 ```
+
+binary 未經程式碼簽署，SmartScreen 仍可能跳出「Windows 已保護您的電腦」。點「其他資訊」→「仍要執行」；或先以 `Get-FileHash` 比對 `SHA256SUMS` 確認來源無誤再執行。
 
 ### 4.3 讀懂輸出
 
@@ -321,6 +325,7 @@ jobfinder version    # 應為前一版
 | 評分一直失敗 | Agent CLI 不在服務的 PATH 上。Linux 檢查 unit 的 `Environment=PATH=` 是否含 mise shims；Windows 用 `llm.roles.<role>.<primary\|fallback>.command` 填完整執行檔路徑 |
 | Windows 上 CLI 回「不是有效的應用程式」 | npm 裝的 `claude` 是 `.cmd` shim。程式已自動改經 `%COMSPEC% /c`；仍失敗就用上一列的 `command` 指定完整路徑 |
 | `jobfinder: command not found` | bin 目錄不在 PATH。Linux 加進 shell profile；Windows 開新終端 |
+| Windows 上執行檔被擋下 | 下載的檔案帶 Mark of the Web。`Get-ChildItem -Recurse \| Unblock-File`；binary 未簽署，SmartScreen 另需點「其他資訊」→「仍要執行」 |
 | 不確定讀了哪份設定 | `jobfinder paths` |
 
 ---
