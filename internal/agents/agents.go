@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -82,8 +83,7 @@ func (r CommandRunner) Invoke(ctx context.Context, prompt string) (Reply, error)
 	if !r.PromptViaStdin {
 		args = append(args, prompt)
 	}
-	// #nosec G204 -- Command and flags are fixed runner definitions; prompt is one CLI argument.
-	c := exec.CommandContext(ctx, r.Command, args...)
+	c := agentCommand(ctx, r.Command, args)
 	c.Dir = dir
 	if r.PromptViaStdin {
 		c.Stdin = strings.NewReader(prompt)
@@ -184,10 +184,47 @@ func jsonlUsage(raw string) Usage {
 	return usage
 }
 
-func ClaudeRunner(model string, timeout time.Duration) Runner {
+// agentCommand builds the process for one Agent invocation.
+//
+// On Windows an npm-installed CLI is a .cmd shim, and CreateProcess cannot
+// execute a batch file: handed one directly the call fails with an unhelpful
+// "not a valid application" rather than anything that points at the shim. Such
+// a command is therefore run through the command interpreter. Everywhere else,
+// and for a real executable on Windows, the command is executed directly.
+func agentCommand(ctx context.Context, command string, args []string) *exec.Cmd {
+	// #nosec G204 -- Command and flags are fixed runner definitions; prompt is one CLI argument.
+	direct := func() *exec.Cmd { return exec.CommandContext(ctx, command, args...) }
+	if runtime.GOOS != "windows" {
+		return direct()
+	}
+	resolved, err := exec.LookPath(command)
+	if err != nil {
+		return direct()
+	}
+	switch strings.ToLower(filepath.Ext(resolved)) {
+	case ".cmd", ".bat":
+		interpreter := os.Getenv("COMSPEC")
+		if interpreter == "" {
+			interpreter = "cmd.exe"
+		}
+		// #nosec G204 G702 -- the interpreter is fixed and the shim path comes from PATH lookup of a configured runner.
+		return exec.CommandContext(ctx, interpreter, append([]string{"/c", resolved}, args...)...)
+	default:
+		// #nosec G204 -- resolved is the PATH lookup of a configured runner name.
+		return exec.CommandContext(ctx, resolved, args...)
+	}
+}
+
+// ClaudeRunner and CodexRunner take an optional command override so an
+// installation can name the executable outright when the plain name is not on
+// the service's PATH.
+func ClaudeRunner(command, model string, timeout time.Duration) Runner {
+	if command == "" {
+		command = "claude"
+	}
 	return CommandRunner{
 		RunnerName:     "claude",
-		Command:        "claude",
+		Command:        command,
 		RunnerModel:    model,
 		Args:           []string{"-p", "--model", model, "--output-format", "json"},
 		PromptViaStdin: true,
@@ -196,10 +233,13 @@ func ClaudeRunner(model string, timeout time.Duration) Runner {
 	}
 }
 
-func CodexRunner(model string, timeout time.Duration) Runner {
+func CodexRunner(command, model string, timeout time.Duration) Runner {
+	if command == "" {
+		command = "codex"
+	}
 	return CommandRunner{
 		RunnerName:       "codex",
-		Command:          "codex",
+		Command:          command,
 		RunnerModel:      model,
 		Args:             []string{"exec", "--model", model, "--ephemeral", "--skip-git-repo-check", "--sandbox", "read-only", "--color", "never", "--json"},
 		LastMessageFlag:  "-o",

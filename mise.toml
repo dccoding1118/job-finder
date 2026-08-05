@@ -40,13 +40,13 @@ description = "Run opt-in live E2E verification with an external source and LLMs
 run = "scripts/verify/run-live.sh"
 
 [tasks.deploy-install]
-description = "Fresh install into the XDG locations and enable the systemd user units (writes the real user environment)"
+description = "Build the checkout and install it into this user's environment via `jobfinder install` (writes the real user environment)"
 run = "scripts/deploy/install.sh"
 
 [tasks.deploy-update]
-description = "Rebuild and replace the installed binary and units, then try-restart the API service"
+description = "Rebuild the checkout and replace the installed binary and scheduling definitions via `jobfinder update`"
 run = "scripts/deploy/update.sh"
 
 [tasks.deploy-rollback]
-description = "Restore the previously installed binary and units, then try-restart the API service"
+description = "Restore the previously installed binary and scheduling definitions via `jobfinder rollback`"
 run = "scripts/deploy/rollback.sh"

@@ -113,8 +113,14 @@ func TestCommandRunnerReportsTimeoutAndNonZeroExit(t *testing.T) {
 }
 
 func TestRunnerDefinitionsPinModelsAndNonInteractiveSafetyFlags(t *testing.T) {
-	claude := ClaudeRunner("claude-sonnet-5", time.Minute).(CommandRunner)
-	codex := CodexRunner("gpt-5.6-terra", time.Minute).(CommandRunner)
+	claude := ClaudeRunner("", "claude-sonnet-5", time.Minute).(CommandRunner)
+	codex := CodexRunner("", "gpt-5.6-terra", time.Minute).(CommandRunner)
+	if claude.Command != "claude" || codex.Command != "codex" {
+		t.Fatalf("an empty override must fall back to the plain command name: %q, %q", claude.Command, codex.Command)
+	}
+	if overridden := ClaudeRunner(`C:\tools\claude.cmd`, "claude-sonnet-5", time.Minute).(CommandRunner); overridden.Command != `C:\tools\claude.cmd` {
+		t.Fatalf("command override = %q, want the configured path", overridden.Command)
+	}
 	claudeArgs := strings.Join(claude.Args, " ")
 	codexArgs := strings.Join(codex.Args, " ")
 	if !strings.Contains(claudeArgs, "--model claude-sonnet-5") || !strings.Contains(claudeArgs, "--output-format json") {

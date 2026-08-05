@@ -214,6 +214,25 @@ mise run e2e-live
 
 開發中未提交變更可直接驗收。artifact manifest 以 binary/extension/config/unit checksum 為主要追溯；Git revision 與 dirty 狀態只作輔助，不構成執行閘門。
 
+## 6.1 部署人工 gate（每平台各一輪）
+
+逐步操作見 [上手指南](guides/getting-started.md)；本節只定義判準。
+
+安裝流程寫入的是真實使用者環境，自動化 harness 一律不碰（`scripts/verify/` 只寫 `.local-dev/`）。因此每個受支援平台各有一輪人工 gate，動到 `internal/paths`、`internal/install`、排程模板或 bootstrap 腳本時重跑該平台。
+
+| 步驟 | 動作 | 標準答案（字面預期） |
+|---|---|---|
+| D1 全新安裝 | 在無既有安裝的環境執行 bootstrap 腳本（或解壓工件後跑 `jobfinder install`） | 印出的路徑與 `jobfinder paths` 一致；設定含隨機 token 且無 `CHANGE_ME`、無 `.local-dev/`；Linux 上設定為 `0600`；生效面驗證全過 |
+| D2 既有設定不覆寫 | 改動 `api.extension_origin` 後重跑安裝 | 設定內容逐字不變，安裝仍成功 |
+| D3 排程實際觸發 | 手動觸發抓取工作（Linux `systemctl --user start jobfinder-run.service`；Windows `Start-ScheduledTask -TaskPath '\jobfinder\' -TaskName 'run'`） | 抓取實際執行並寫入 `runs`；Linux 於 journald、Windows 於 `log.file` 看得到該趟記錄 |
+| D4 Side Panel 直連 | extension Options 填 `http://127.0.0.1:8686` 與設定中的 token，開啟 Side Panel | 無任何通道即可讀寫；未帶 token 的請求回 401 |
+| D5 更新確實生效 | 對新版工件執行 `jobfinder update` | 執行中 process 的執行檔為新 binary 且啟動時間晚於替換點；`jobfinder version` 為新版號 |
+| D6 回滾 | `jobfinder rollback` | 執行中 process 為前一版；資料庫未被更動；`.bad` 保留了被回滾掉的版本 |
+| D7 PATH 與診斷（Windows） | 開新終端執行 `jobfinder paths` | 不需完整路徑即可執行；印出 `%LocalAppData%\jobfinder\` 下的位置 |
+| D8 Agent CLI 可執行（Windows） | 讓一筆職缺實際走到評分 | npm 安裝的 `claude`／`codex` 可被叫起；失敗時錯誤指向 CLI 本身而非「不是有效的應用程式」 |
+
+`--skip-verify` 不得用於本 gate：未經生效面驗證的安裝不算通過。
+
 ## 7. 答案卷：報告如何對答案
 
 `mise run e2e-mock` 每趟逐案例即時 append 到 `evidence/<timestamp>-mock.md`（`tail -f` 友善、中途崩潰留部分結果）；V3 live 另出 live 報告。答案卷每條 4 欄：**案例 ID（對齊 §4）｜驗證項目｜實下的指令/動作｜判定＋觀察到的字面值｜變更/印記**，收尾補 **PASS/FAIL/SKIP 計數＋需求覆蓋 tally＋使用者故事重建**。

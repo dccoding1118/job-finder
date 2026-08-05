@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/dccoding1118/job-finder/internal/crawler"
+	"github.com/dccoding1118/job-finder/internal/paths"
 	"github.com/spf13/cobra"
 )
 
@@ -30,7 +31,7 @@ func newQueriesShowCmd() *cobra.Command {
 		}
 		return nil
 	}}
-	cmd.Flags().StringVar(&path, "config", "config.yaml", "path to config.yaml")
+	cmd.Flags().StringVar(&path, "config", paths.DefaultConfig(), "path to config.yaml")
 	return cmd
 }
 

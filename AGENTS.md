@@ -10,6 +10,7 @@
 
 **產品形態**：Chrome extension 是產品本體——它同時是唯一 UI 與受保護平台（104／Cake）的唯一資料採集器，不會被 Web UI 取代。後端是可替換的媒合引擎，同一份程式碼支撐「使用者自部署」與「代管雲端」兩種部署，extension 對後端只認 endpoint ＋ auth。目前實作到自部署形態（單機、SQLite、localhost API、Bearer token）；帳號、計費與多租戶不在本 repo。定位與階段見 `docs/roadmap.md`，架構決策見 `docs/changes/change-productization-architecture.md`。本專案採 AGPL-3.0，不接受外部 PR。
 
+- 上手與操作：`docs/guides/getting-started.md`
 - 需求與範圍：`docs/PRD.md`
 - 系統架構與開發順序：`docs/design.md`
 - 模組契約：`docs/designs/design-<module>.md`
@@ -17,7 +18,7 @@
 - 累加式整合與驗收：`docs/verify.md`
 - 開發交接：`STATUS.md`
 
-B0–B6 的核心程式已完成並通過 `mise run fmt/lint/test`：schema/store、profile、crawler（Yourator adapter 與 104／Cake 列表／內頁解析）、pipeline（排程抓取編排、常駐 worker、條件篩選、每日預算）、agents（Scorer／Drafter／Reviewer 與 `llm.roles` primary／fallback 路由）、localhost API、Chrome 原生 Side Panel 與 systemd unit。求職信按需生成（`letter_requested` 取件）、verdict 導出、cursor 清單分頁、推薦與待看清單載入更多與 104 清單就地標記均已落地。單筆職缺重新處理（`POST /api/v1/jobs/{id}/reprocess`：回到管線起點重跑篩選與評分，`filtered_out` 亦可）與處理進度讀取面（`GET /api/v1/status`：各處理狀態筆數、當日評分預算、最近 Agent 呼叫、執行期設定）已具備；自動篩選與評分可由系統頁開關（`GET`／`PUT /api/v1/settings`，存於 store `settings` 表），等待中的職缺可由「馬上處理」插隊（`POST /api/v1/jobs/{id}/process`）——閘門守的是單次 Agent 呼叫而非整趟批次，批次在每筆前讓位，因此插隊最多等一次呼叫；插隊不受開關與每日預算限制，用量照常計入。pipeline 各階段以 `log/slog` 輸出結構化執行記錄，正式部署由 `journalctl --user -u jobfinder-api` 檢視。執行模型為「排程只驅動 fetch，filter／score／letter 由 API service 內常駐 worker 非同步消化」，`runs` 只記抓取事實、判定分布於檢視時即時查詢。
+B0–B6 的核心程式已完成並通過 `mise run fmt/lint/test`：schema/store、profile、crawler（Yourator adapter 與 104／Cake 列表／內頁解析）、pipeline（排程抓取編排、常駐 worker、條件篩選、每日預算）、agents（Scorer／Drafter／Reviewer 與 `llm.roles` primary／fallback 路由）、localhost API、Chrome 原生 Side Panel 與 systemd unit。求職信按需生成（`letter_requested` 取件）、verdict 導出、cursor 清單分頁、推薦與待看清單載入更多與 104 清單就地標記均已落地。單筆職缺重新處理（`POST /api/v1/jobs/{id}/reprocess`：回到管線起點重跑篩選與評分，`filtered_out` 亦可）與處理進度讀取面（`GET /api/v1/status`：各處理狀態筆數、當日評分預算、最近 Agent 呼叫、執行期設定）已具備；自動篩選與評分可由系統頁開關（`GET`／`PUT /api/v1/settings`，存於 store `settings` 表），等待中的職缺可由「馬上處理」插隊（`POST /api/v1/jobs/{id}/process`）——閘門守的是單次 Agent 呼叫而非整趟批次，批次在每筆前讓位，因此插隊最多等一次呼叫；插隊不受開關與每日預算限制，用量照常計入。pipeline 各階段以 `log/slog` 輸出結構化執行記錄；Linux 由 journald 收集（`journalctl --user -u jobfinder-api`），Windows 由 `log.file` 的輪替檔案承接。執行模型為「排程只驅動 fetch，filter／score／letter 由 API service 內常駐 worker 非同步消化」，`runs` 只記抓取事實、判定分布於檢視時即時查詢。
 
 Cake 半被動擷取與跨來源同一職缺合併已實作：`parsecake` 解析列表（`__NEXT_DATA__` 或 DOM 收割）與內頁（DOM 收割）、capture API 依 payload 的 `source` 分派解析器。半被動來源的搜尋條件由使用者在該平台自行設定，系統不生成搜尋 URL；`jobfinder queries show` 只列印全自動來源的展開 query。Cake 是 SPA，因此 `extension/content/` 以 `https://www.cake.me/*` 單一注入，由 `cake.js` 依 URL 路由列表／內頁模式、`nav.js` 通知 SPA 換頁；內頁不讀 `__NEXT_DATA__`（Cake 內頁不帶自己的 listing 狀態），只讀渲染後 DOM。合併以純程式規則（公司／職稱正規化＋地區相容性）判定且**只比較來源未重疊的群組**——同平台的兩筆是兩個開口，不合併也不提出裁決：高信心於單一交易合併並將 alias 轉入 `merged`，灰帶登記 `job_dupe_candidates` 由使用者在系統頁裁決，`POST /api/v1/jobs/{id}/unmerge` 可還原。反向校準（Calibrator）不在 MVP 範圍，屬 roadmap S1 且入口為 Side Panel，不做 CLI 指令。
 
@@ -38,7 +39,8 @@ e2e 驗收 harness（`scripts/verify/`、`assert-positive.mjs`）已對齊非同
 | 設定與 Profile | `config.yaml` 與 `profile.yaml` 為本機檔案，均不得納入版控 |
 | 智能層 | headless CLI Runner：claude CLI 為主、codex CLI 為輔；不直接串接 LLM API |
 | API 與前端 | Go `net/http` JSON API 僅監聽 localhost；Chrome MV3 原生 Side Panel 為唯一日常操作入口 |
-| 排程 | systemd user timer 觸發一次性且冪等的 `jobfinder run` |
+| 排程 | Linux：systemd user timer；Windows：Task Scheduler。皆觸發一次性且冪等的 `jobfinder run` |
+| 部署平台 | Linux 與 Windows；路徑決策集中在 `internal/paths`，安裝語意集中在 `jobfinder install`／`update`／`rollback` |
 | 時間 | `Asia/Taipei`，時間戳採 RFC3339 |
 
 Go 不保證在裸 PATH；以 `mise run <task>` 或 `mise exec -- go <args>` 執行。
@@ -57,6 +59,9 @@ Go 不保證在裸 PATH；以 `mise run <task>` 或 `mise exec -- go <args>` 執
 | Profile GET／PUT／手動 reprocess、Job stale viewmodel、Job／Run／狀態／verdict／求職信要求／單筆重新處理／處理進度／手動 run／重複職缺裁決與各平台 capture API | `docs/designs/design-api.md` | `internal/api/` |
 | Side Panel、全頁 Profile editor、104／Cake 列表就地標記與內頁擷取、Cake SPA 模式路由、疑似重複裁決 | `docs/designs/design-extension.md` | `extension/` |
 | 搜尋條件展開（只用於全自動來源） | `docs/designs/design-crawler.md` §5 | `cmd/jobfinder/cli/queries.go` |
+| 跨平台路徑決策、`jobfinder paths` | `docs/deploy.md` §2 | `internal/paths/` |
+| 安裝／更新／回滾、排程掛載、生效面驗證 | `docs/deploy.md` §4 | `internal/install/`、`deploy/production/systemd/`、`deploy/production/windows/` |
+| 日誌出口與輪替 | `docs/deploy.md` §2 | `internal/logging/` |
 | CLI 命令樹 | 本檔 §4 與各模組的 CLI 介面 | `cmd/jobfinder/cli/` |
 
 `docs/PRD.md` 定義需求；`docs/design.md` 定義系統邊界與模組依賴；詳細設計文件定義各模組契約。`STATUS.md` 只保留未完成任務與未歸檔結論，不承載專案設計。
@@ -94,15 +99,20 @@ mise run lint         # 執行 golangci-lint
 
 ## 6. 怎麼部署
 
-MVP 以 `jobfinder run` 作為 one-shot pipeline，由 systemd user timer 每日觸發；API service 只綁定 localhost，Side Panel 透過其設定的 localhost endpoint 存取。Windows Chrome 存取遠端 GCP VM 時，以登入後背景常駐的 SSH／IAP local forward 將 `127.0.0.1:18686` 轉送到 VM `127.0.0.1:8686`；完整設定、自動重連、驗證與排障見 `docs/guides/runbook-extension.md`。
+MVP 以 `jobfinder run` 作為 one-shot pipeline，由每日排程觸發（Linux systemd user timer、Windows Task Scheduler）；API service 只綁定 localhost，Side Panel 透過其設定的 localhost endpoint 存取。預設形態是後端與瀏覽器同機；後端在遠端機器時需自行把遠端 loopback 轉送到本機 loopback，屬選配路徑，見 `docs/guides/runbook-extension.md`。
 
-正式部署的唯一入口是 `scripts/deploy/` 的三個腳本（`install.sh`／`update.sh`／`rollback.sh`，共用 `lib.sh`；亦有 `mise run deploy-install`／`deploy-update`／`deploy-rollback`）。它們寫入 XDG 三分位置與 systemd user unit，與 `scripts/verify/` 的驗收 harness 分離、**不由任何 `e2e-*` 任務呼叫**、不碰 `.local-dev/`。驗證一律打在生效面（執行中 process 的 `/proc/<pid>/exe` 與啟動時間），非安裝面。完整步驟與各腳本契約見 `docs/deploy.md` §4。
+**安裝語意集中在 binary 的 `install`／`update`／`rollback` 子命令**（`internal/install`），Linux 與 Windows 共用同一份實作，平台差異只剩排程掛載。`scripts/bootstrap/install.sh`／`install.ps1` 只負責下載工件、驗 `SHA256SUMS`、解壓並交棒；`scripts/deploy/*.sh`（`mise run deploy-*`）是開發 checkout 的 wrapper，跑完 `fmt`／`lint`／`test`／`build` 後把剛建置的 binary 交給同一組子命令。這些入口與 `scripts/verify/` 的驗收 harness 分離、**不由任何 `e2e-*` 任務呼叫**、不碰 `.local-dev/`。驗證一律打在生效面（執行中 process 的執行檔與啟動時間），非安裝面。完整步驟與契約見 `docs/deploy.md` §2–§4。
 
 ### 已知雷
 
 - systemd、CI 與其他非互動環境的 PATH 必須含 mise shims 目錄 `~/.local/share/mise/shims`，不可依賴 `mise activate` 或 `bash -lc`。
 - systemd user service 需啟用 linger，否則使用者登出後 timer 與 service 不會持續運作。
 - pipeline 必須可安全重啟：狀態即進度，已完成的 Agent 呼叫不得重複計費。
+- Windows 無 `chmod` 等價物：帶 token 的設定靠 `%LocalAppData%` 繼承的 ACL 保護，不得宣稱套了檔案權限。
+- Windows 上 npm 裝的 `claude` 是 `.cmd` shim，CreateProcess 無法直接執行；`internal/agents` 解析後改經 `%COMSPEC% /c`。
+- `Start-ScheduledTask` 對已在執行的工作是 no-op，與 systemd `enable --now` 同一個陷阱：更新必須先停、等 process 消失、再啟動。
+- Task Scheduler 丟棄工作的 stdout／stderr：Windows 的日誌出口只有 `log.file`，不是 journald。
+- 排程狀態不得靠 `schtasks` 的文字輸出判定——那是安裝語系相依的；一律走 PowerShell 的 ScheduledTasks cmdlet 取物件屬性。
 
 ## 7. 怎麼上版
 
