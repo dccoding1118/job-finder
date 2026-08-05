@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -51,13 +52,17 @@ func (r *recordingScheduler) assertEffective(_ context.Context, _ paths.Layout, 
 }
 
 // sandbox points the layout at a temporary home so the sequence tests never
-// touch the operator's real installation.
+// touch the operator's real installation. Each platform reads a different set
+// of variables, and getting this wrong does not fail loudly — it silently
+// installs into the real user profile — so both sets are redirected.
 func sandbox(t *testing.T) paths.Layout {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "config"))
 	t.Setenv("XDG_DATA_HOME", filepath.Join(home, "data"))
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("LOCALAPPDATA", filepath.Join(home, "AppData", "Local"))
 	layout, err := paths.Resolve()
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
@@ -122,8 +127,12 @@ func TestInstallProvisionsAndVerifiesInOrder(t *testing.T) {
 	if !strings.Contains(string(rendered), layout.DB) {
 		t.Fatalf("the config does not point at the resolved database path:\n%s", rendered)
 	}
-	if info, statErr := os.Stat(layout.Config); statErr != nil || info.Mode().Perm() != 0o600 {
-		t.Fatalf("config mode = %v, %v; the token-bearing file must be owner-only", info.Mode().Perm(), statErr)
+	// Windows has no chmod equivalent: the config is protected by the ACL its
+	// %LocalAppData% parent carries, which is the documented concession.
+	if runtime.GOOS != "windows" {
+		if info, statErr := os.Stat(layout.Config); statErr != nil || info.Mode().Perm() != 0o600 {
+			t.Fatalf("config mode = %v, %v; the token-bearing file must be owner-only", info.Mode().Perm(), statErr)
+		}
 	}
 	manifest, err := os.ReadFile(layout.Manifest) // #nosec G304 -- path comes from the sandboxed layout.
 	if err != nil {

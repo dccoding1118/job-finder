@@ -3,6 +3,7 @@ package install
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -186,12 +187,14 @@ func TestCopyFileReplacesAnExistingTarget(t *testing.T) {
 	if err != nil || string(contents) != "newer" {
 		t.Fatalf("destination = %q, %v", contents, err)
 	}
-	info, err := os.Stat(dst)
-	if err != nil {
-		t.Fatalf("stat: %v", err)
-	}
-	if info.Mode().Perm() != 0o755 {
-		t.Fatalf("mode = %v, want 0755", info.Mode().Perm())
+	if runtime.GOOS != "windows" {
+		info, statErr := os.Stat(dst)
+		if statErr != nil {
+			t.Fatalf("stat: %v", statErr)
+		}
+		if info.Mode().Perm() != 0o755 {
+			t.Fatalf("mode = %v, want 0755", info.Mode().Perm())
+		}
 	}
 }
 

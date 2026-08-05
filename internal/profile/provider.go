@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -335,11 +336,24 @@ func atomicWrite(path string, contents []byte) error {
 	if chmodErr := os.Chmod(path, 0o600); chmodErr != nil {
 		return chmodErr
 	}
-	dir, err := os.Open(directory) // #nosec G304 -- configured local Profile directory.
-	if err == nil {
-		err = dir.Sync()
-		_ = dir.Close()
+	return syncDirectory(directory)
+}
+
+// syncDirectory flushes the rename above so a crash cannot leave the Profile
+// missing entirely. Windows has no directory fsync — opening a directory handle
+// for sync fails outright — and NTFS commits the metadata of a replacing rename
+// on its own, so the step is skipped there rather than turned into a save that
+// always fails.
+func syncDirectory(directory string) error {
+	if runtime.GOOS == "windows" {
+		return nil
 	}
+	dir, err := os.Open(directory) // #nosec G304 -- configured local Profile directory.
+	if err != nil {
+		return err
+	}
+	err = dir.Sync()
+	_ = dir.Close()
 	return err
 }
 
