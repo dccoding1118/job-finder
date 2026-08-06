@@ -4,20 +4,27 @@
 
 ## §1 未歸檔結論
 
-（無）
+- SQLite 檔案實際為 `0644`，`docs/deploy.md` §2 宣稱資料庫檔案為 `0600`。資料庫由 `internal/store.Open` 於執行期建立（`sql.Open("sqlite", path)`），不經 `internal/install` 的 chmod 路徑，因此永遠是 driver 的 `0666 & ~umask`。資料目錄為 `0700`，實際暴露為零；要收斂的是文件與實作的落差，二選一：`store.Open` 建檔後 chmod 為 `0600`（連同 `-wal`／`-shm`），或修正文件只宣稱目錄層 owner-only。
+
+- Linux 的 `deploy/production/systemd/jobfinder-run.service` 缺 `--trigger timer`，Windows 的 `jobfinder-run.xml` 有。因此 Linux 上每日排程抓取全被記為 `manual-cli`，Side Panel 的 Run 歷程無法區分排程與人工觸發（已由 `runs` 表 id 7–9 證實）。修正處為該 unit 模板的 `ExecStart`。
+
+- private repo 下 `scripts/bootstrap/install.sh`／`install.ps1` 無法驗證：兩者以匿名 `curl`／`Invoke-WebRequest` 打 `api.github.com/releases/latest` 與 `releases/download`，private repo 一律 404；`getting-started.md` §3.1 的 `raw.githubusercontent.com` 單行安裝同理。這是設計取捨（bootstrap 服務的是公開使用者），不是缺陷，但實測只能排在轉 public 之後。
 
 ## §2 未完成任務
 
 **公開前置（依序完成後才轉 public）**
 
-- [ ] 部署人工 gate：`docs/verify.md` §6.1 的 D1–D8。Linux 的 D1（全新安裝與遷移）與 D2（既有設定不覆寫）已通過——執行中的 process 為 `~/.local/bin/jobfinder`、unit 已重新渲染、timer active。**剩餘**：Linux D3（排程實際觸發）、D5（更新）、D6（回滾）；Windows D1–D8 全部。Windows 不需等 release，可用本地交叉編譯的工件（`GOOS=windows` 依 `release.yml` 步驟組出）實測。
+- [ ] 部署人工 gate：`docs/verify.md` §6.1 的 D1–D8。Linux 的 D1、D2、D3、D5、D6 已以 release v0.1.0 工件在本機通過（checksum 相符、`jobfinder version` 印出 tag、生效面 pid 與啟動時間、`runs` 有排程觸發那趟、`jobfinder.prev` 與 release binary 逐位元相同、回滾後 DB 不變）。**剩餘**：Linux D4（Side Panel 直連，本機無 Chrome，以 `runbook-extension.md` §8 的 tunnel 形態代替）、bootstrap 腳本路徑（見 §1，須待轉 public）；Windows D1–D8 全部。Windows 端可直接取 release 的 `jobfinder_v0.1.0_windows_amd64.zip` 實測，不需另行交叉編譯。
 
 - [ ] 公開 GitHub repo。多數資安與對外可見度設定被 private＋免費方案擋住，須依下列**硬順序**在轉 public 當天一次做完（Dependabot alerts 與 automated security fixes 已於 private 階段開啟）：
   1. 本地備妥 `.github/workflows/codeql.yml`（**先別推**——private repo 的 `analyze` job 會恆紅）。
   2. `gh repo edit dccoding1118/job-finder --visibility public`（直接生效，不需 `--accept-visibility-change-consequences`，該旗標在部分 gh 版本會報 unknown flag）。
   3. 開啟 secret scanning ＋ push protection、Private vulnerability reporting（`SECURITY.md` 指向後者）。
   4. 推 codeql 分支並開 PR，讓 CI ＋ codeql 在**已 public** 的 repo 上首跑；README 補上 CodeQL badge。
-  5. 全綠合併 → 設 main 分支保護（required status checks 填 `check`、`windows`、`analyze`；solo dev 不設 required reviews，會卡死自己）→ 打首版 tag 觸發 release。
+  5. 全綠合併 → 設 main 分支保護（required status checks 填 `check`、`windows`、`analyze`；solo dev 不設 required reviews，會卡死自己）。
+  6. 轉 public 後補驗 bootstrap 腳本：`install.sh` 與 `install.ps1` 的匿名下載路徑，以及 `getting-started.md` §3.1 的 `raw.githubusercontent.com` 單行安裝（見 §1）。
+
+  首版 `v0.1.0` 已於 private 階段發出（工件與 checksum 齊備、版號注入正常），轉 public 後不需重打。
 
 **Roadmap（暫不實作，規劃見 `docs/roadmap.md`）**
 
