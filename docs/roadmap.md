@@ -64,8 +64,6 @@ MVP 架構中為擴展預留的縫：Source adapter 與半被動解析器（加�
   - **extension 後端無關化**：Options 增加連線模式（自部署 token／雲端帳號）；endpoint 改用 `optional_host_permissions`，使用者填入自己的後端網域時於 runtime 請求授權。
   - **Chrome Web Store 上架**：extension ID 因此成為已知常數，`api.extension_origin` 可內建預設值，安裝時不再需要人工替換佔位。
   - **來源能力矩陣與雙層開關**：每個來源標記 `mode`（`auto`／`semi_passive`）；「此部署是否開放該來源」為部署層設定，「使用者是否啟用」存 store 並由設定 UI 開關。
-  - **一鍵安裝**：release 工件或容器，預設後端跑在使用者本機、extension 直連 loopback，無需通道設定。
-  - **Windows 自部署支援**：目前的常駐與排程綁在 systemd user unit，Windows 沒有對應物。需要以 Task Scheduler（登入時啟動 `serve`、每日觸發 `run`）取代 unit，設定與資料路徑改走 Windows 的使用者目錄，並發佈 `windows/amd64` 工件。後端與 extension 同機後，遠端通道連帶不再需要。
   - **設定面完整化**：每日上限、掃描間隔、去重門檻、LLM 路由等移入 extension 設定頁。
   - **集中式運作日誌與監控**：extension UI 分別檢視 UI／API、worker 批次、fetch 批次、求職信處理的日誌。
 - **退出標準**：一位非開發者依 README 自行完成安裝並走完閉環。
@@ -114,7 +112,7 @@ MVP 架構中為擴展預留的縫：Source adapter 與半被動解析器（加�
 | 資料庫 | SQLite | SQLite | PostgreSQL 多租戶 |
 | LLM | headless CLI（訂閱內） | CLI 或自帶 API Key | 平台代管＋用量計量 |
 | 來源 | 一全自動、兩半被動 | 同左＋雙層開關 | 同左＋集中抓取池 |
-| 部署 | Linux ＋ systemd user unit | Linux（systemd）與 Windows（Task Scheduler），release 工件一鍵安裝 | 容器多租戶＋排程服務（見 [deploy](deploy.md)） |
+| 部署 | Linux（systemd）與 Windows（Task Scheduler），release 工件安裝 | 同左 | 容器多租戶＋排程服務（見 [deploy](deploy.md)） |
 | 登入 | 無（localhost token） | 同左 | Google OAuth |
 | UI | Chrome 原生 Side Panel | 同左，已上架 | 同左，連線模式切換 |
 

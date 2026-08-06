@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -113,8 +114,14 @@ func TestCommandRunnerReportsTimeoutAndNonZeroExit(t *testing.T) {
 }
 
 func TestRunnerDefinitionsPinModelsAndNonInteractiveSafetyFlags(t *testing.T) {
-	claude := ClaudeRunner("claude-sonnet-5", time.Minute).(CommandRunner)
-	codex := CodexRunner("gpt-5.6-terra", time.Minute).(CommandRunner)
+	claude := ClaudeRunner("", "claude-sonnet-5", time.Minute).(CommandRunner)
+	codex := CodexRunner("", "gpt-5.6-terra", time.Minute).(CommandRunner)
+	if claude.Command != "claude" || codex.Command != "codex" {
+		t.Fatalf("an empty override must fall back to the plain command name: %q, %q", claude.Command, codex.Command)
+	}
+	if overridden := ClaudeRunner(`C:\tools\claude.cmd`, "claude-sonnet-5", time.Minute).(CommandRunner); overridden.Command != `C:\tools\claude.cmd` {
+		t.Fatalf("command override = %q, want the configured path", overridden.Command)
+	}
 	claudeArgs := strings.Join(claude.Args, " ")
 	codexArgs := strings.Join(codex.Args, " ")
 	if !strings.Contains(claudeArgs, "--model claude-sonnet-5") || !strings.Contains(claudeArgs, "--output-format json") {
@@ -176,8 +183,15 @@ func TestExtractObjectIgnoresTranscriptNoiseAndRepeatedAnswers(t *testing.T) {
 	}
 }
 
+// writeTestExecutable materialises a POSIX shell script for the runner tests.
+// The runner's I/O contract is platform independent, but this fixture is not:
+// Windows cannot execute a shebang script, so the tests that need one are
+// skipped there. The Windows-specific execution path has its own test below.
 func writeTestExecutable(t *testing.T, contents string) string {
 	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("the runner fixture is a POSIX shell script; see TestAgentCommandRunsAWindowsShim")
+	}
 	path := filepath.Join(t.TempDir(), "runner")
 	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
 		t.Fatal(err)
@@ -220,5 +234,30 @@ func TestResultEnvelopeWithoutUsageStillParses(t *testing.T) {
 	}
 	if reply.Usage != (Usage{}) {
 		t.Fatalf("missing usage must read as zero: %+v", reply.Usage)
+	}
+}
+
+// On Windows an npm-installed CLI is a .cmd shim, and CreateProcess cannot run a
+// batch file directly. This is the one place where the difference is real, so it
+// is asserted on the platform where it applies rather than reasoned about.
+func TestAgentCommandRunsAWindowsShim(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("the .cmd shim path only exists on Windows")
+	}
+	dir := t.TempDir()
+	shim := filepath.Join(dir, "faker.cmd")
+	if err := os.WriteFile(shim, []byte("@echo off\r\necho {\"subtype\":\"success\",\"is_error\":false,\"result\":\"shim ok\"}\r\n"), 0o600); err != nil {
+		t.Fatalf("write shim: %v", err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	// Resolved by bare name, exactly as a configured runner would be.
+	runner := CommandRunner{RunnerName: "test", Command: "faker", ResultEnvelope: true, Timeout: 30 * time.Second}
+	reply, err := runner.Invoke(context.Background(), "prompt")
+	if err != nil {
+		t.Fatalf("invoking a .cmd shim failed: %v", err)
+	}
+	if !strings.Contains(reply.Text, "shim ok") {
+		t.Fatalf("reply = %q, want the shim's output", reply.Text)
 	}
 }

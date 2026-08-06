@@ -4,20 +4,16 @@ import (
 	"fmt"
 	"path/filepath"
 
+	"github.com/dccoding1118/job-finder/internal/paths"
 	"github.com/dccoding1118/job-finder/internal/profile"
 	"github.com/spf13/cobra"
-)
-
-const (
-	defaultProfilePath  = ".local-dev/profile.yaml"
-	defaultDenylistPath = ".local-dev/pii-denylist.txt"
 )
 
 func newProfileCmd() *cobra.Command {
 	var profilePath, denylistPath string
 	cmd := &cobra.Command{Use: "profile", Short: "Validate and inspect the anonymous profile"}
-	cmd.PersistentFlags().StringVar(&profilePath, "profile", defaultProfilePath, "path to profile.yaml")
-	cmd.PersistentFlags().StringVar(&denylistPath, "denylist", defaultDenylistPath, "path to pii-denylist.txt")
+	cmd.PersistentFlags().StringVar(&profilePath, "profile", paths.DefaultProfile(), "path to profile.yaml")
+	cmd.PersistentFlags().StringVar(&denylistPath, "denylist", paths.DefaultDenylist(), "path to pii-denylist.txt")
 	cmd.AddCommand(
 		&cobra.Command{Use: "lint", Short: "Validate profile structure and scan for PII", RunE: func(cmd *cobra.Command, _ []string) error {
 			_, contents, err := profile.Load(profilePath)

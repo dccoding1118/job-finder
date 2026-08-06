@@ -6,6 +6,7 @@ import (
 	"os/exec"
 
 	"github.com/dccoding1118/job-finder/internal/api"
+	"github.com/dccoding1118/job-finder/internal/paths"
 	"github.com/dccoding1118/job-finder/internal/pipeline"
 	"github.com/dccoding1118/job-finder/internal/store"
 	"github.com/spf13/cobra"
@@ -70,6 +71,6 @@ func newServeCmd() *cobra.Command {
 		}()
 		return server.ListenAndServe()
 	}}
-	cmd.Flags().StringVar(&path, "config", "config.yaml", "path to config.yaml")
+	cmd.Flags().StringVar(&path, "config", paths.DefaultConfig(), "path to config.yaml")
 	return cmd
 }

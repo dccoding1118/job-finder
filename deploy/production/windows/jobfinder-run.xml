@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-16"?>
+<!--
+  jobfinder daily fetch.
+
+  The counterpart of jobfinder-run.service plus jobfinder-run.timer: one
+  idempotent fetch at 08:30 local time. Placeholders in double braces are
+  substituted by `jobfinder install`.
+
+  A missed occurrence is not made up: like Persistent=false on the systemd
+  timer, a machine that was off at 08:30 waits for the next day rather than
+  firing a fetch the moment it wakes.
+-->
+<Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo>
+    <Description>jobfinder scheduled fetch</Description>
+    <URI>\jobfinder\run</URI>
+  </RegistrationInfo>
+  <Triggers>
+    <CalendarTrigger>
+      <StartBoundary>2026-01-01T08:30:00</StartBoundary>
+      <Enabled>true</Enabled>
+      <ScheduleByDay>
+        <DaysInterval>1</DaysInterval>
+      </ScheduleByDay>
+    </CalendarTrigger>
+  </Triggers>
+  <Principals>
+    <Principal id="Author">
+      <UserId>{{USER}}</UserId>
+      <LogonType>InteractiveToken</LogonType>
+      <RunLevel>LeastPrivilege</RunLevel>
+    </Principal>
+  </Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <AllowHardTerminate>true</AllowHardTerminate>
+    <StartWhenAvailable>false</StartWhenAvailable>
+    <RunOnlyIfNetworkAvailable>true</RunOnlyIfNetworkAvailable>
+    <IdleSettings>
+      <StopOnIdleEnd>false</StopOnIdleEnd>
+      <RestartOnIdle>false</RestartOnIdle>
+    </IdleSettings>
+    <AllowStartOnDemand>true</AllowStartOnDemand>
+    <Enabled>true</Enabled>
+    <Hidden>false</Hidden>
+    <RunOnlyIfIdle>false</RunOnlyIfIdle>
+    <!-- A full fetch walks every job detail page under polite request delays and
+         runs for several minutes. Thirty minutes is generous, and it still bounds
+         a wedged source so a stalled fetch cannot hold the schedule open. -->
+    <ExecutionTimeLimit>PT30M</ExecutionTimeLimit>
+    <Priority>7</Priority>
+  </Settings>
+  <Actions Context="Author">
+    <Exec>
+      <Command>{{BINARY}}</Command>
+      <Arguments>run --config "{{CONFIG}}" --trigger timer</Arguments>
+      <WorkingDirectory>{{DATA_DIR}}</WorkingDirectory>
+    </Exec>
+  </Actions>
+</Task>

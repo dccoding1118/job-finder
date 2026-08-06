@@ -1,6 +1,17 @@
-# Runbook — Windows extension 與 GCP API 常駐通道
+# Runbook — 遠端後端：Windows extension 與 GCP API 常駐通道
+
+## 0. 這份手冊要不要看
+
+| 形態 | 做法 |
+|---|---|
+| **本機部署（預設）** | 後端與 Chrome 同機。依 [README](../../README.md) 安裝，extension Options 直接填 `http://127.0.0.1:8686`。**不需要本手冊。** |
+| **遠端後端（選配）** | 後端跑在另一台機器（例如 GCP VM）。extension 的 `host_permissions` 只有 `http://127.0.0.1/*` 與 `http://[::1]/*`，遠端位置無法直接填入，必須靠通道把遠端偽裝成本機 loopback——本手冊即此路徑。 |
+
+不得以「把 service 改綁 `0.0.0.0`」取代通道。真正的遠端／雲端 endpoint 需要 `optional_host_permissions` 的 runtime 授權，屬 [roadmap](../roadmap.md) 的 S2 項目。
 
 本手冊說明如何讓 Windows Chrome extension 經由背景常駐的 SSH local forward，連到 GCP VM 上只監聽 loopback 的 job-finder API。通道由 Windows Task Scheduler 在使用者登入時啟動，斷線後自動重建，不需要保留 PowerShell、Command Prompt 或 SSH 視窗。
+
+通道的常駐檔案放在 `%LOCALAPPDATA%\jobfinder-tunnel\`，與 Windows 本機安裝根目錄 `%LOCALAPPDATA%\jobfinder\` 分開——兩者是互斥的形態，目錄也不共用。
 
 Extension 的載入與 Chrome compatibility gate 也使用同一套設定。設計契約見 [design-extension](../designs/design-extension.md) 與 [design-api](../designs/design-api.md)，正式部署基線見 [deploy](../deploy.md)。
 
@@ -35,7 +46,7 @@ Windows 使用專用 local port `18686`，避免與 VM API port `8686` 同號，
 | Extension endpoint | `http://127.0.0.1:18686` |
 | Windows local forward | `127.0.0.1:18686` |
 | VM API target | `127.0.0.1:8686` |
-| Windows 常駐目錄 | `%LOCALAPPDATA%\jobfinder\` |
+| Windows 通道常駐目錄 | `%LOCALAPPDATA%\jobfinder-tunnel\` |
 | Windows 排程工作名稱 | `Jobfinder-Api-Tunnel` |
 | VM 設定檔 | `~/.config/jobfinder/config.yaml` |
 
@@ -214,9 +225,9 @@ Remove-Variable JobfinderToken
 New-Item `
   -ItemType Directory `
   -Force `
-  -Path "$env:LOCALAPPDATA\jobfinder" | Out-Null
+  -Path "$env:LOCALAPPDATA\jobfinder-tunnel" | Out-Null
 
-notepad "$env:LOCALAPPDATA\jobfinder\jobfinder-tunnel.ps1"
+notepad "$env:LOCALAPPDATA\jobfinder-tunnel\jobfinder-tunnel.ps1"
 ```
 
 將以下內容貼入檔案，替換前三個佔位值後儲存。此檔不得包含 `api.token`、Profile、JD 或其他 PII。
@@ -230,7 +241,7 @@ $RemotePort = 8686
 $RetrySeconds = 10
 
 $ErrorActionPreference = 'Continue'
-$RuntimeDir = Join-Path $env:LOCALAPPDATA 'jobfinder'
+$RuntimeDir = Join-Path $env:LOCALAPPDATA 'jobfinder-tunnel'
 $LogPath = Join-Path $RuntimeDir 'tunnel.log'
 $Gcloud = (Get-Command gcloud.cmd -ErrorAction Stop).Source
 
@@ -274,7 +285,7 @@ powershell.exe `
   -NoLogo `
   -NoProfile `
   -ExecutionPolicy Bypass `
-  -File "$env:LOCALAPPDATA\jobfinder\jobfinder-tunnel.ps1"
+  -File "$env:LOCALAPPDATA\jobfinder-tunnel\jobfinder-tunnel.ps1"
 ```
 
 另開 PowerShell，以 §4.5 的 `curl.exe` 驗證 `200`。然後在 wrapper 視窗按 `Ctrl+C`，確認 local listener 消失。
@@ -283,7 +294,7 @@ powershell.exe `
 
 ```powershell
 Get-Content `
-  "$env:LOCALAPPDATA\jobfinder\tunnel.log" `
+  "$env:LOCALAPPDATA\jobfinder-tunnel\tunnel.log" `
   -Tail 50
 ```
 
@@ -332,7 +343,7 @@ Get-Content `
 新增引數填入單一行：
 
 ```text
--NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "C:\Users\<WINDOWS_USER>\AppData\Local\jobfinder\jobfinder-tunnel.ps1"
+-NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "C:\Users\<WINDOWS_USER>\AppData\Local\jobfinder-tunnel\jobfinder-tunnel.ps1"
 ```
 
 使用絕對路徑，不使用 `%LOCALAPPDATA%`、`~` 或相對路徑，避免 Task Scheduler 的環境展開差異。
@@ -443,7 +454,7 @@ Get-NetTCPConnection `
   -ErrorAction SilentlyContinue
 
 Get-Content `
-  "$env:LOCALAPPDATA\jobfinder\tunnel.log" `
+  "$env:LOCALAPPDATA\jobfinder-tunnel\tunnel.log" `
   -Tail 50
 ```
 
@@ -460,7 +471,7 @@ Start-ScheduledTask -TaskName 'Jobfinder-Api-Tunnel'
 ### 9.3 更新 VM、project 或 zone
 
 1. `Stop-ScheduledTask -TaskName 'Jobfinder-Api-Tunnel'`。
-2. 編輯 `%LOCALAPPDATA%\jobfinder\jobfinder-tunnel.ps1` 頂端常數。
+2. 編輯 `%LOCALAPPDATA%\jobfinder-tunnel\jobfinder-tunnel.ps1` 頂端常數。
 3. 在前景重新執行 §4.3 與 §4.5。
 4. 啟動排程並完成 §6.6 驗證。
 
@@ -470,7 +481,7 @@ Tunnel log 只應記時間、gcloud／SSH 診斷與 exit code，不得寫入 API
 
 ```powershell
 Stop-ScheduledTask -TaskName 'Jobfinder-Api-Tunnel'
-Clear-Content "$env:LOCALAPPDATA\jobfinder\tunnel.log"
+Clear-Content "$env:LOCALAPPDATA\jobfinder-tunnel\tunnel.log"
 Start-ScheduledTask -TaskName 'Jobfinder-Api-Tunnel'
 ```
 
@@ -589,7 +600,7 @@ Stop-ScheduledTask -TaskName 'Jobfinder-Api-Tunnel' -ErrorAction SilentlyContinu
 Unregister-ScheduledTask -TaskName 'Jobfinder-Api-Tunnel' -Confirm:$false
 ```
 
-確認 `127.0.0.1:18686` 已無 listener，再由使用者自行刪除 `%LOCALAPPDATA%\jobfinder\`。移除 Windows tunnel 不會刪除 VM 上的 job-finder API、SQLite、設定或 systemd units。
+確認 `127.0.0.1:18686` 已無 listener，再由使用者自行刪除 `%LOCALAPPDATA%\jobfinder-tunnel\`。移除 Windows tunnel 不會刪除 VM 上的 job-finder API、SQLite、設定或 systemd units。
 
 ## 12. 官方參考
 

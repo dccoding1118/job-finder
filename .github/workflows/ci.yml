@@ -41,3 +41,39 @@ jobs:
 
       - name: extension manifest 可解析
         run: node --input-type=module -e "import('node:fs').then(fs => JSON.parse(fs.readFileSync('extension/manifest.json','utf8')))"
+
+  # Windows 是受支援的部署平台，路徑決策與安裝流程的錯誤不得只在 release 才暴露。
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: build
+        run: go build ./...
+
+      - name: test
+        run: go test ./...
+
+      # 宣告的 UTF-16 是給 Task Scheduler 的（它收到的是字串，記憶體中即 UTF-16），
+      # 不是描述 repo 內的位元組；結構檢查因此先去掉宣告再解析。
+      - name: 排程模板可解析
+        shell: pwsh
+        run: |
+          Get-ChildItem deploy/production/windows/*.xml | ForEach-Object {
+            $body = (Get-Content -Raw -LiteralPath $_.FullName) -replace '^<\?xml[^>]*\?>', ''
+            [xml]$body | Out-Null
+            Write-Host "$($_.Name) 可解析"
+          }
+
+      - name: bootstrap 腳本語法
+        shell: pwsh
+        run: |
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path scripts/bootstrap/install.ps1), [ref]$null, [ref]$errors) | Out-Null
+          if ($errors) { $errors | ForEach-Object { Write-Error $_ }; exit 1 }

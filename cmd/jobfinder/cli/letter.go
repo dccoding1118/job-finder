@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 
+	"github.com/dccoding1118/job-finder/internal/paths"
 	"github.com/spf13/cobra"
 )
 
@@ -32,7 +33,7 @@ func newLetterRequestCmd() *cobra.Command {
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "requested: %d\n", jobID)
 		return nil
 	}}
-	cmd.Flags().StringVar(&path, "config", "config.yaml", "path to config.yaml")
+	cmd.Flags().StringVar(&path, "config", paths.DefaultConfig(), "path to config.yaml")
 	cmd.Flags().Int64Var(&jobID, "job", 0, "job id to request a letter for")
 	return cmd
 }

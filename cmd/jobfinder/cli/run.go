@@ -10,6 +10,7 @@ import (
 
 	"github.com/dccoding1118/job-finder/internal/agents"
 	"github.com/dccoding1118/job-finder/internal/crawler"
+	"github.com/dccoding1118/job-finder/internal/paths"
 	"github.com/dccoding1118/job-finder/internal/profile"
 	"github.com/dccoding1118/job-finder/internal/store"
 	"github.com/spf13/cobra"
@@ -59,6 +60,14 @@ type fileConfig struct {
 		Timeout         string     `yaml:"timeout"`
 		Roles           roleRoutes `yaml:"roles"`
 	} `yaml:"llm"`
+	Log struct {
+		// File is the rotating log sink. Empty means stderr only, which is what
+		// Linux wants: journald already collects it. Windows Task Scheduler
+		// discards a task's output, so the installer sets this there.
+		File      string `yaml:"file"`
+		MaxSizeMB int    `yaml:"max_size_mb"`
+		Keep      int    `yaml:"keep"`
+	} `yaml:"log"`
 	Worker struct {
 		ScanInterval string `yaml:"scan_interval"`
 		// Paused stops the resident worker from consuming any stage. Collection
@@ -78,6 +87,11 @@ type (
 	roleEndpoint struct {
 		Agent string `yaml:"agent"`
 		Model string `yaml:"model"`
+		// Command overrides the executable the runner invokes. It exists for
+		// installations where the CLI is not on the service's PATH under its
+		// plain name — a full path settles it without the deployment having to
+		// reshape PATH for a scheduler.
+		Command string `yaml:"command"`
 	}
 	roleRoute struct {
 		Primary  roleEndpoint `yaml:"primary"`
@@ -117,7 +131,7 @@ func newRunCmd() *cobra.Command {
 		}
 		return runFetch(cmd, rt, trigger)
 	}}
-	c.Flags().StringVar(&path, "config", "config.yaml", "path to config.yaml")
+	c.Flags().StringVar(&path, "config", paths.DefaultConfig(), "path to config.yaml")
 	c.Flags().StringVar(&stage, "stage", "", "fetch, or drive one worker stage by hand: filter, score, or letter")
 	c.Flags().IntVar(&limit, "limit", 30, "maximum jobs for a hand-driven filter, score, or letter stage")
 	c.Flags().StringVar(&trigger, "trigger", store.RunTriggerManualCLI, "run trigger: timer, manual-cli, or manual-extension")
@@ -183,9 +197,9 @@ func routedAgents(routes roleRoutes, timeout time.Duration) (agents.Filter, agen
 		}
 		switch endpoint.Agent {
 		case "claude":
-			return agents.ClaudeRunner(endpoint.Model, timeout), nil
+			return agents.ClaudeRunner(endpoint.Command, endpoint.Model, timeout), nil
 		case "codex":
-			return agents.CodexRunner(endpoint.Model, timeout), nil
+			return agents.CodexRunner(endpoint.Command, endpoint.Model, timeout), nil
 		default:
 			return nil, fmt.Errorf("config: llm.roles endpoint agent must be claude or codex")
 		}

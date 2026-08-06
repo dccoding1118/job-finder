@@ -71,6 +71,15 @@ worker:
   # automatic-processing switch — that one lives in the database, keeps the
   # worker resident, and leaves single-job processing available.
   paused: false
+log:
+  # Structured records always go to stderr. On Linux systemd collects them and
+  # `journalctl --user -u jobfinder-api` is the reader, so this stays empty.
+  # Windows Task Scheduler discards a task's output, so `jobfinder install`
+  # fills this in there — without it a scheduled fetch that failed leaves no
+  # trace at all. The file rotates by size and keeps a few generations.
+  file: ""
+  max_size_mb: 8
+  keep: 4
 api:
   addr: 127.0.0.1:8686
   token: CHANGE_ME

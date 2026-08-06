@@ -60,8 +60,20 @@ jobs:
             CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" \
               go build -trimpath -ldflags "$ldflags" -o "$binary" ./cmd/jobfinder
             cp LICENSE README.md "$out/"
+            # 安裝語意在 binary 的 install 子命令內，工件只需帶齊它讀的素材：
+            # 設定範本、該平台的排程模板，以及只負責下載與驗 checksum 的 bootstrap。
+            mkdir -p "$out/configs"
+            cp configs/config.example.yaml configs/profile.example.yaml "$out/configs/"
+            # 排程模板與 bootstrap 只隨有部署形態的平台出貨：darwin 是 binary 的
+            # 建置目標，不是受支援的部署平台。
             if [ "$goos" = linux ]; then
               cp -r deploy/production/systemd "$out/systemd"
+              cp scripts/bootstrap/install.sh "$out/install.sh"
+              chmod +x "$out/install.sh"
+            fi
+            if [ "$goos" = windows ]; then
+              cp -r deploy/production/windows "$out/windows"
+              cp scripts/bootstrap/install.ps1 "$out/install.ps1"
             fi
             if [ "$goos" = windows ]; then
               (cd dist && zip -qr "${name}.zip" "$name")

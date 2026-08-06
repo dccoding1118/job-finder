@@ -2,11 +2,13 @@ package cli
 
 import (
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"time"
 
 	"github.com/dccoding1118/job-finder/internal/crawler"
+	"github.com/dccoding1118/job-finder/internal/logging"
 	"github.com/dccoding1118/job-finder/internal/pipeline"
 	"github.com/dccoding1118/job-finder/internal/profile"
 	"github.com/dccoding1118/job-finder/internal/store"
@@ -21,6 +23,7 @@ type runtime struct {
 	provider     *profile.Provider
 	scanInterval time.Duration
 	workerPaused bool
+	logSink      io.Closer
 }
 
 func loadRuntime(path string) (*runtime, error) {
@@ -29,6 +32,13 @@ func loadRuntime(path string) (*runtime, error) {
 		return nil, fmt.Errorf("read config: %w", err)
 	}
 	cfg, err := parseFileConfig(data)
+	if err != nil {
+		return nil, err
+	}
+	// The log sink is installed before anything else can produce a record, so a
+	// failure in the rest of the setup is reported wherever this deployment
+	// reads its logs rather than only on a stderr nobody collects.
+	logSink, err := logging.Setup(cfg.Log.File, cfg.Log.MaxSizeMB, cfg.Log.Keep)
 	if err != nil {
 		return nil, err
 	}
@@ -82,10 +92,15 @@ func loadRuntime(path string) (*runtime, error) {
 		_ = db.Close()
 		return nil, err
 	}
-	return &runtime{cfg: cfg, store: db, pipeline: p, provider: provider, scanInterval: scanInterval, workerPaused: cfg.Worker.Paused}, nil
+	return &runtime{cfg: cfg, store: db, pipeline: p, provider: provider, scanInterval: scanInterval, workerPaused: cfg.Worker.Paused, logSink: logSink}, nil
 }
 
-func (r *runtime) close() { _ = r.store.Close() }
+func (r *runtime) close() {
+	_ = r.store.Close()
+	if r.logSink != nil {
+		_ = r.logSink.Close()
+	}
+}
 
 // fetchSource builds the Yourator adapter and the search spec derived from the
 // Profile directions.

@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-16"?>
+<!--
+  jobfinder localhost API and resident pipeline worker.
+
+  The counterpart of jobfinder-api.service: started at logon, restarted on
+  failure, and running for as long as the user is logged in. Placeholders in
+  double braces are substituted by `jobfinder install`.
+
+  Task Scheduler discards a task's stdout and stderr, so log.file in config.yaml
+  is the only place these records land on Windows; the installer sets it.
+-->
+<Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo>
+    <Description>jobfinder localhost API and resident pipeline worker</Description>
+    <URI>\jobfinder\api</URI>
+  </RegistrationInfo>
+  <Triggers>
+    <LogonTrigger>
+      <Enabled>true</Enabled>
+      <UserId>{{USER}}</UserId>
+    </LogonTrigger>
+  </Triggers>
+  <Principals>
+    <Principal id="Author">
+      <UserId>{{USER}}</UserId>
+      <LogonType>InteractiveToken</LogonType>
+      <RunLevel>LeastPrivilege</RunLevel>
+    </Principal>
+  </Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <AllowHardTerminate>true</AllowHardTerminate>
+    <StartWhenAvailable>true</StartWhenAvailable>
+    <RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>
+    <IdleSettings>
+      <StopOnIdleEnd>false</StopOnIdleEnd>
+      <RestartOnIdle>false</RestartOnIdle>
+    </IdleSettings>
+    <AllowStartOnDemand>true</AllowStartOnDemand>
+    <Enabled>true</Enabled>
+    <Hidden>false</Hidden>
+    <RunOnlyIfIdle>false</RunOnlyIfIdle>
+    <!-- The API is a long-running service, not a job with an end: an execution
+         time limit would kill it mid-day. -->
+    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
+    <RestartOnFailure>
+      <Interval>PT1M</Interval>
+      <Count>3</Count>
+    </RestartOnFailure>
+    <Priority>7</Priority>
+  </Settings>
+  <Actions Context="Author">
+    <Exec>
+      <Command>{{BINARY}}</Command>
+      <Arguments>serve --config "{{CONFIG}}"</Arguments>
+      <WorkingDirectory>{{DATA_DIR}}</WorkingDirectory>
+    </Exec>
+  </Actions>
+</Task>
