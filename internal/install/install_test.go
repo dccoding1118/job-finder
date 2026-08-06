@@ -1,6 +1,7 @@
 package install
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -11,17 +12,40 @@ import (
 )
 
 func linuxLayout(root string) paths.Layout {
+	binary := filepath.Join(root, "bin", "jobfinder")
 	return paths.Layout{
 		OS:        "unix",
 		ConfigDir: filepath.Join(root, "config"),
 		DataDir:   filepath.Join(root, "data"),
+		LibDir:    filepath.Join(root, "lib"),
 		Config:    filepath.Join(root, "config", "config.yaml"),
 		Profile:   filepath.Join(root, "config", "profile.yaml"),
 		Denylist:  filepath.Join(root, "config", "pii-denylist.txt"),
 		DB:        filepath.Join(root, "data", "jobs.db"),
 		LogFile:   filepath.Join(root, "data", "logs", "jobfinder.log"),
-		Binary:    filepath.Join(root, "bin", "jobfinder"),
+		Binary:    binary,
+		Previous:  filepath.Join(root, "lib", "jobfinder.prev"),
+		Bad:       filepath.Join(root, "lib", "jobfinder.bad"),
+		// One executable, so both names are the same file — the invariant every
+		// non-Windows platform relies on.
+		ServiceBinary:   binary,
+		ServicePrevious: filepath.Join(root, "lib", "jobfinder.prev"),
+		ServiceBad:      filepath.Join(root, "lib", "jobfinder.bad"),
 	}
+}
+
+// windowsShapedLayout is the two-executable layout, built by hand so the Windows
+// install path is exercised wherever the tests run rather than only on Windows.
+func windowsShapedLayout(root string) paths.Layout {
+	layout := linuxLayout(root)
+	layout.OS = "windows"
+	layout.Binary = filepath.Join(root, "bin", "jobfinder.exe")
+	layout.Previous = filepath.Join(root, "lib", "jobfinder.exe.prev")
+	layout.Bad = filepath.Join(root, "lib", "jobfinder.exe.bad")
+	layout.ServiceBinary = filepath.Join(root, "bin", "jobfinderw.exe")
+	layout.ServicePrevious = filepath.Join(root, "lib", "jobfinderw.exe.prev")
+	layout.ServiceBad = filepath.Join(root, "lib", "jobfinderw.exe.bad")
+	return layout
 }
 
 const exampleConfig = `db:
@@ -141,11 +165,10 @@ func TestRenderUnitReplacesEveryJobfinderOwnedPath(t *testing.T) {
 }
 
 func TestRenderTaskSubstitutesAndEscapes(t *testing.T) {
-	layout := linuxLayout(`C:\Users\a b`)
-	layout.OS = "windows"
+	layout := windowsShapedLayout(`C:\Users\a b`)
 	t.Setenv("USERNAME", "user&name")
 	t.Setenv("USERDOMAIN", "")
-	rendered := renderTask("<Command>{{BINARY}}</Command><Arguments>run --config \"{{CONFIG}}\"</Arguments>"+
+	rendered := renderTask("<Command>{{SERVICE_BINARY}}</Command><Arguments>run --config \"{{CONFIG}}\"</Arguments>"+
 		"<WorkingDirectory>{{DATA_DIR}}</WorkingDirectory><UserId>{{USER}}</UserId>", layout)
 	if strings.Contains(rendered, "{{") {
 		t.Fatalf("a placeholder survived rendering:\n%s", rendered)
@@ -153,8 +176,36 @@ func TestRenderTaskSubstitutesAndEscapes(t *testing.T) {
 	if !strings.Contains(rendered, "<UserId>user&amp;name</UserId>") {
 		t.Fatalf("the user name was not XML-escaped:\n%s", rendered)
 	}
-	if !strings.Contains(rendered, "<Command>"+layout.Binary+"</Command>") {
-		t.Fatalf("the binary path was not substituted:\n%s", rendered)
+	if !strings.Contains(rendered, "<Command>"+layout.ServiceBinary+"</Command>") {
+		t.Fatalf("the service binary path was not substituted:\n%s", rendered)
+	}
+}
+
+// A scheduled task must run the console-free build. Substituting the CLI binary
+// there is the mistake this guards: it would work, and it would put a console
+// window on the user's desktop for as long as the service is up.
+func TestWindowsTaskTemplatesCommandTheServiceBinary(t *testing.T) {
+	for _, name := range []string{"jobfinder-api.xml", "jobfinder-run.xml"} {
+		contents, err := os.ReadFile(filepath.Join("..", "..", "deploy", "production", "windows", name)) // #nosec G304 -- reads the repository's own shipped templates.
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		if !strings.Contains(string(contents), "<Command>{{SERVICE_BINARY}}</Command>") {
+			t.Fatalf("%s does not command the service binary", name)
+		}
+	}
+}
+
+// The daily fetch has to be attributable to the schedule. Without the flag the
+// run lands in the database as a hand-driven one and the Run history cannot tell
+// an unattended fetch from an operator's.
+func TestSystemdFetchUnitMarksTheTimerTrigger(t *testing.T) {
+	contents, err := os.ReadFile(filepath.Join("..", "..", "deploy", "production", "systemd", "jobfinder-run.service"))
+	if err != nil {
+		t.Fatalf("read unit: %v", err)
+	}
+	if !strings.Contains(string(contents), "--trigger timer") {
+		t.Fatal("the fetch unit must pass --trigger timer, as the Windows task does")
 	}
 }
 
@@ -209,7 +260,7 @@ func TestPlaceBinaryRefusesToInstallOverItself(t *testing.T) {
 	if err := os.WriteFile(layout.Binary, []byte("binary"), 0o755); err != nil { // #nosec G306 -- test fixture stands in for an executable.
 		t.Fatalf("write: %v", err)
 	}
-	err := placeBinary(layout, layout.Binary, os.Stderr)
+	err := placeBinary(layout.Binary, layout.Binary, layout.Previous, os.Stderr)
 	if err == nil || !strings.Contains(err.Error(), "over itself") {
 		t.Fatalf("err = %v, want a refusal to install over itself", err)
 	}
@@ -232,7 +283,7 @@ func TestPlaceBinaryKeepsThePreviousCopyForRollback(t *testing.T) {
 	if err := os.WriteFile(source, []byte("new"), 0o755); err != nil { // #nosec G306 -- test fixture stands in for an executable.
 		t.Fatalf("write: %v", err)
 	}
-	if err := placeBinary(layout, source, os.Stderr); err != nil {
+	if err := placeBinary(source, layout.Binary, layout.Previous, os.Stderr); err != nil {
 		t.Fatalf("place: %v", err)
 	}
 	if contents, err := os.ReadFile(layout.Binary); err != nil || string(contents) != "new" {
@@ -240,6 +291,59 @@ func TestPlaceBinaryKeepsThePreviousCopyForRollback(t *testing.T) {
 	}
 	if contents, err := os.ReadFile(layout.Previous); err != nil || string(contents) != "old" {
 		t.Fatalf("previous = %q, %v; rollback would have nowhere to go", contents, err)
+	}
+}
+
+// A platform that runs a different executable than the user types must install
+// both from the same artifact: two builds of different vintages would give the
+// user a `jobfinder version` that does not describe what is actually serving.
+func TestPlaceBinariesInstallsTheServiceCopyFromTheArtifact(t *testing.T) {
+	dir := t.TempDir()
+	layout := windowsShapedLayout(dir)
+	assets := t.TempDir()
+	for name, body := range map[string]string{"jobfinder.exe": "cli", "jobfinderw.exe": "service"} {
+		if err := os.WriteFile(filepath.Join(assets, name), []byte(body), 0o755); err != nil { // #nosec G306 -- test fixture stands in for an executable.
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	if err := placeBinaries(layout, filepath.Join(assets, "jobfinder.exe"), assets, io.Discard); err != nil {
+		t.Fatalf("place: %v", err)
+	}
+	for path, want := range map[string]string{layout.Binary: "cli", layout.ServiceBinary: "service"} {
+		if contents, err := os.ReadFile(path); err != nil || string(contents) != want { // #nosec G304 -- path is inside the test's temporary directory.
+			t.Fatalf("%s = %q, %v; want %q", path, contents, err, want)
+		}
+	}
+}
+
+// The artifact must be self-consistent. An artifact missing the service binary
+// would otherwise install a CLI whose scheduled tasks point at a file that is
+// not there, and the failure would surface as a task that will not start.
+func TestPlaceBinariesRejectsAnArtifactMissingTheServiceCopy(t *testing.T) {
+	dir := t.TempDir()
+	assets := t.TempDir()
+	source := filepath.Join(assets, "jobfinder.exe")
+	if err := os.WriteFile(source, []byte("cli"), 0o755); err != nil { // #nosec G306 -- test fixture stands in for an executable.
+		t.Fatalf("write: %v", err)
+	}
+	err := placeBinaries(windowsShapedLayout(dir), source, assets, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "jobfinderw.exe") {
+		t.Fatalf("err = %v, want the missing service binary named", err)
+	}
+}
+
+// Rollback moves every executable or none. Restoring one of a pair would leave
+// the CLI and the running service on different versions.
+func TestRollbackSetCoversEveryInstalledExecutable(t *testing.T) {
+	if got := rollbackSet(linuxLayout("/opt/jf")); len(got) != 1 {
+		t.Fatalf("unix rollback set has %d entries, want 1", len(got))
+	}
+	windows := rollbackSet(windowsShapedLayout(`C:\jf`))
+	if len(windows) != 2 {
+		t.Fatalf("windows rollback set has %d entries, want 2", len(windows))
+	}
+	if windows[1].current == windows[0].current || windows[1].previous == windows[0].previous {
+		t.Fatal("the two executables must roll back through separate copies")
 	}
 }
 

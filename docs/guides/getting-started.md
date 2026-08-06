@@ -154,6 +154,10 @@ added C:\Users\you\AppData\Local\jobfinder\bin to the user PATH; open a new term
 
 `API task effective` 是讀 `Win32_Process` 的 `ExecutablePath` 與 `CreationDate` 得到的，等價於 Linux 讀 `/proc/<pid>/exe`。
 
+**Windows 裝的是兩支執行檔**：你輸入的 `jobfinder.exe`，以及排程實際執行的 `jobfinderw.exe`。後者是同一份程式的 GUI subsystem 建置，所以常駐服務不會在桌面上留一個主控台視窗、每日抓取也不會閃一次。兩支永遠同版，`update` 與 `rollback` 一起換。
+
+代價是 `jobfinderw.exe` 沒有 stderr：**要在前景看服務起不來的原因，用 `jobfinder.exe serve --config <config>`**，不要用 `jobfinderw.exe`。
+
 ### 4.4 確認落點
 
 ```powershell
@@ -225,11 +229,14 @@ systemctl --user restart jobfinder-api.service
 
 ```powershell
 # Windows
-$cfg = Join-Path $env:LOCALAPPDATA 'jobfinder\config\config.yaml'
-(Get-Content $cfg) -replace '^  extension_origin: .*', `
-  '  extension_origin: chrome-extension://oddnhajjhmgogefocnljofeahniodiei' | Set-Content $cfg
+$cfg  = Join-Path $env:LOCALAPPDATA 'jobfinder\config\config.yaml'
+$text = [System.IO.File]::ReadAllText($cfg, [System.Text.Encoding]::UTF8) -replace `
+  '(?m)^  extension_origin: .*', '  extension_origin: chrome-extension://oddnhajjhmgogefocnljofeahniodiei'
+[System.IO.File]::WriteAllText($cfg, $text, (New-Object System.Text.UTF8Encoding($false)))
 Restart-ScheduledTask -TaskPath '\jobfinder\' -TaskName 'api'
 ```
+
+**設定檔是 UTF-8，改它一定要指定編碼。** Windows PowerShell 5.1 的 `Set-Content` 預設寫系統 ANSI code page（正體中文機器是 CP950），`>` 與 `Out-File` 預設寫 UTF-16；`config.yaml` 的註解含非 ASCII 字元，走這些預設會把檔案寫成不合法的 UTF-8，之後 `serve` 在解析設定時就失敗——而那個階段日誌還沒掛上，Windows 上看不到任何錯誤，只會看到排程工作啟動後立刻回到「就緒」。上面的 .NET 寫法明確指定無 BOM 的 UTF-8。`Set-Content -Encoding UTF8` 在 5.1 會**加上 BOM**，一樣別用。手改就用記事本（現行 Windows 的記事本預設存無 BOM 的 UTF-8）。
 
 ### 6.3 取得 token 並填入 Options
 
@@ -325,6 +332,8 @@ jobfinder version    # 應為前一版
 | 評分一直失敗 | Agent CLI 不在服務的 PATH 上。Linux 檢查 unit 的 `Environment=PATH=` 是否含 mise shims；Windows 用 `llm.roles.<role>.<primary\|fallback>.command` 填完整執行檔路徑 |
 | Windows 上 CLI 回「不是有效的應用程式」 | npm 裝的 `claude` 是 `.cmd` shim。程式已自動改經 `%COMSPEC% /c`；仍失敗就用上一列的 `command` 指定完整路徑 |
 | `jobfinder: command not found` | bin 目錄不在 PATH。Linux 加進 shell profile；Windows 開新終端 |
+| Windows 排程「啟動」後立刻回到「就緒」 | 服務起來就退了。依序查：`(Get-ScheduledTaskInfo -TaskPath '\jobfinder\' -TaskName 'api').LastTaskResult`；`log.file` 有沒有這次的紀錄；然後用 `jobfinder.exe serve --config <config>` 在前景跑，錯誤會直接印出來。常見原因是 API port 被別的程式占用（VS Code Port Forward 是慣犯），或設定檔被非 UTF-8 的寫入弄壞（見 §6.2） |
+| API port 被占用 | `Get-NetTCPConnection -LocalAddress 127.0.0.1 -LocalPort 8686 -State Listen \| ForEach-Object { Get-Process -Id $_.OwningProcess }`，找出占用者再處置；不要改用別的埠繞過 |
 | Windows 上執行檔被擋下 | 下載的檔案帶 Mark of the Web。`Get-ChildItem -Recurse \| Unblock-File`；binary 未簽署，SmartScreen 另需點「其他資訊」→「仍要執行」 |
 | 不確定讀了哪份設定 | `jobfinder paths` |
 
@@ -340,7 +349,7 @@ jobfinder version    # 應為前一版
 | 2. 演練 | `gh workflow run release.yml` → `gh run download --name dry-run-artifacts`，檢查工件內容（Linux 應含 `configs/`、`systemd/`、`install.sh`；Windows 應含 `configs/`、`windows/`、`install.ps1`） |
 | 3. 發版 | `git tag v<MAJOR>.<MINOR>.<PATCH>` → `git push origin <tag>` |
 | 4. 驗版號 | 下載工件執行 `jobfinder version`，**必須印出 tag**。印出 `dev` 代表 ldflags 注入失效，這版不能發 |
-| 5. 驗安裝 | 依 [verify §6.1](../verify.md) 的 D1–D8，Linux 與 Windows 各跑一輪 |
+| 5. 驗安裝 | 依 [verify §6.1](../verify.md) 的 D1–D9，Linux 與 Windows 各跑一輪 |
 
 發錯了：`gh release delete <tag> --cleanup-tag`，修好後重推同一個 tag。已被下載過的 tag 不要重用，直接跳下一個 patch 版號。
 

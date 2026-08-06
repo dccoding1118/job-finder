@@ -77,6 +77,38 @@ func TestResolveWindowsFallsBackToProfile(t *testing.T) {
 	}
 }
 
+// Only Windows needs a second executable. Everywhere else the two names must
+// resolve to the same file, because that equality is what lets the installer,
+// the templates and the effect-surface checks name the service binary
+// unconditionally without changing what any other platform does.
+func TestServiceBinaryIsSeparateOnlyOnWindows(t *testing.T) {
+	for _, goos := range []string{"linux", "darwin"} {
+		layout, err := resolve(goos, "/home/u", env(nil))
+		if err != nil {
+			t.Fatalf("resolve %s: %v", goos, err)
+		}
+		if layout.SeparateServiceBinary() {
+			t.Fatalf("%s: service binary = %q, want the same file as %q", goos, layout.ServiceBinary, layout.Binary)
+		}
+		if layout.ServicePrevious != layout.Previous || layout.ServiceBad != layout.Bad {
+			t.Fatalf("%s: the rollback copies must coincide too", goos)
+		}
+	}
+	windows, err := resolve("windows", `C:\Users\u`, env(nil))
+	if err != nil {
+		t.Fatalf("resolve windows: %v", err)
+	}
+	if !windows.SeparateServiceBinary() {
+		t.Fatal("Windows must install a separate console-free service binary")
+	}
+	if want := filepath.Join(filepath.Dir(windows.Binary), "jobfinderw.exe"); windows.ServiceBinary != want {
+		t.Fatalf("service binary = %q, want %q", windows.ServiceBinary, want)
+	}
+	if !strings.HasSuffix(windows.ServicePrevious, "jobfinderw.exe.prev") {
+		t.Fatalf("service previous = %q, want its own rollback copy", windows.ServicePrevious)
+	}
+}
+
 func TestResolveRejectsEmptyHome(t *testing.T) {
 	if _, err := resolve("linux", "", env(nil)); err == nil {
 		t.Fatal("want an error when the home directory is empty")

@@ -8,6 +8,11 @@
 
   Task Scheduler discards a task's stdout and stderr, so log.file in config.yaml
   is the only place these records land on Windows; the installer sets it.
+
+  The command is the GUI-subsystem build of the same program. A task started in
+  the user's own session runs on their desktop, and a console-subsystem
+  executable there is given a console window that would then sit in front of
+  them for as long as the service is up.
 -->
 <Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo>
@@ -53,7 +58,7 @@
   </Settings>
   <Actions Context="Author">
     <Exec>
-      <Command>{{BINARY}}</Command>
+      <Command>{{SERVICE_BINARY}}</Command>
       <Arguments>serve --config "{{CONFIG}}"</Arguments>
       <WorkingDirectory>{{DATA_DIR}}</WorkingDirectory>
     </Exec>

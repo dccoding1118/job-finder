@@ -36,4 +36,10 @@ printf '\033[1m==>\033[0m preflight: format, lint%s\n' "$([[ "${skip_tests}" == 
 BUILT="${PROJECT_ROOT}/bin/jobfinder"
 [[ -x "${BUILT}" ]] || { printf 'built binary missing at %s\n' "${BUILT}" >&2; exit 1; }
 
+# Windows installs a second, GUI-subsystem build for the scheduled tasks to run,
+# so a checkout deploy has to produce it too — the release artifact carries both.
+if [[ "$(cd "${PROJECT_ROOT}" && go env GOOS)" == windows ]]; then
+  (cd "${PROJECT_ROOT}" && go build -ldflags "-H=windowsgui" -o bin/jobfinderw.exe ./cmd/jobfinder)
+fi
+
 exec "${BUILT}" "${ACTION}" --assets "${PROJECT_ROOT}" "$@"

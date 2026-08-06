@@ -108,7 +108,7 @@ func Install(ctx context.Context, opts Options) error {
 	if err := lintProfile(layout); err != nil {
 		return err
 	}
-	if err := placeBinary(layout, opts.Source, opts.Out); err != nil {
+	if err := placeBinaries(layout, opts.Source, opts.AssetDir, opts.Out); err != nil {
 		return err
 	}
 	if err := sched.mount(ctx, layout, opts.AssetDir, opts.Out); err != nil {
@@ -151,7 +151,7 @@ func Update(ctx context.Context, opts Options) error {
 	if err := sched.preflight(ctx); err != nil {
 		return err
 	}
-	if err := placeBinary(layout, opts.Source, opts.Out); err != nil {
+	if err := placeBinaries(layout, opts.Source, opts.AssetDir, opts.Out); err != nil {
 		return err
 	}
 	if err := sched.mount(ctx, layout, opts.AssetDir, opts.Out); err != nil {
@@ -183,23 +183,31 @@ func Rollback(ctx context.Context, opts Options) error {
 	if err != nil {
 		return err
 	}
-	if _, err := os.Stat(layout.Previous); err != nil {
-		return fmt.Errorf("install: no previous binary at %s; nothing to roll back to", layout.Previous)
+	// Every executable moves together, so all of them are checked before any of
+	// them is touched. Rolling back only one of a pair would leave the binary the
+	// user types and the one the scheduler runs on different versions, which is a
+	// worse state than the one being rolled back from.
+	for _, binary := range rollbackSet(layout) {
+		if _, err := os.Stat(binary.previous); err != nil {
+			return fmt.Errorf("install: no previous binary at %s; nothing to roll back to", binary.previous)
+		}
 	}
 	sched := opts.mechanism(layout.OS)
 	report(opts.Out, "rollback")
 	if err := sched.preflight(ctx); err != nil {
 		return err
 	}
-	// The current binary is kept aside so a forward roll is still possible after
-	// a rollback that turns out to have been the wrong call.
-	if err := copyFile(layout.Binary, layout.Bad, 0o755); err != nil && !os.IsNotExist(err) {
-		return err
+	for _, binary := range rollbackSet(layout) {
+		// The current binary is kept aside so a forward roll is still possible
+		// after a rollback that turns out to have been the wrong call.
+		if err := copyFile(binary.current, binary.bad, 0o755); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		if err := copyFile(binary.previous, binary.current, 0o755); err != nil {
+			return err
+		}
+		report(opts.Out, "restored %s from %s", binary.current, binary.previous)
 	}
-	if err := copyFile(layout.Previous, layout.Binary, 0o755); err != nil {
-		return err
-	}
-	report(opts.Out, "restored %s from %s", layout.Binary, layout.Previous)
 	if err := sched.restoreDefinitions(ctx, layout, opts.Out); err != nil {
 		return err
 	}
@@ -266,24 +274,58 @@ func lintProfile(layout paths.Layout) error {
 	return nil
 }
 
-// placeBinary copies the installation medium to the resident location, keeping
-// the outgoing copy for rollback. Copying rather than renaming is what lets the
+// rollbackTarget is one executable and the two copies rollback moves between:
+// the version kept by the last install or update, and where the version being
+// rolled back from is parked so a forward roll is still possible.
+type rollbackTarget struct{ current, previous, bad string }
+
+// rollbackSet is every executable an install placed on this platform, in the
+// order they are restored.
+func rollbackSet(layout paths.Layout) []rollbackTarget {
+	set := []rollbackTarget{{layout.Binary, layout.Previous, layout.Bad}}
+	if layout.SeparateServiceBinary() {
+		set = append(set, rollbackTarget{layout.ServiceBinary, layout.ServicePrevious, layout.ServiceBad})
+	}
+	return set
+}
+
+// placeBinaries puts every executable this platform needs into its resident
+// location. The installation medium is the one the user ran, so it supplies the
+// binary they type; a platform that also needs a separate service binary takes
+// that one out of the same artifact, because the two must always be the same
+// build.
+func placeBinaries(layout paths.Layout, source, assetDir string, out io.Writer) error {
+	if err := placeBinary(source, layout.Binary, layout.Previous, out); err != nil {
+		return err
+	}
+	if !layout.SeparateServiceBinary() {
+		return nil
+	}
+	serviceSource, err := binaryAsset(assetDir, filepath.Base(layout.ServiceBinary))
+	if err != nil {
+		return err
+	}
+	return placeBinary(serviceSource, layout.ServiceBinary, layout.ServicePrevious, out)
+}
+
+// placeBinary copies one executable to its resident location, keeping the
+// outgoing copy for rollback. Copying rather than renaming is what lets the
 // user delete the download directory afterwards.
-func placeBinary(layout paths.Layout, source string, out io.Writer) error {
-	if same, err := sameFile(source, layout.Binary); err != nil {
+func placeBinary(source, target, previous string, out io.Writer) error {
+	if same, err := sameFile(source, target); err != nil {
 		return err
 	} else if same {
 		return fmt.Errorf("install: refusing to install %s over itself; run the unpacked artifact, not the installed copy", source)
 	}
-	if _, err := os.Stat(layout.Binary); err == nil {
-		if err := copyFile(layout.Binary, layout.Previous, 0o755); err != nil {
+	if _, err := os.Stat(target); err == nil {
+		if err := copyFile(target, previous, 0o755); err != nil {
 			return err
 		}
 	}
-	if err := copyFile(source, layout.Binary, 0o755); err != nil {
+	if err := copyFile(source, target, 0o755); err != nil {
 		return err
 	}
-	report(out, "installed %s", layout.Binary)
+	report(out, "installed %s", target)
 	return nil
 }
 

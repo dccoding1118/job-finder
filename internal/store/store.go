@@ -10,7 +10,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -289,7 +291,27 @@ func Open(path string) (*Store, error) {
 		}
 		return nil, err
 	}
+	restrict(path)
 	return store, nil
+}
+
+// restrict tightens the database and its write-ahead sidecars to the owner on
+// platforms that have file modes. The driver creates them at the process umask,
+// which it has no reason to know is wrong here; the containing directory is
+// already owner-only, so this only closes the gap between that and the files
+// themselves. It is best-effort by design: a database that opens but whose mode
+// cannot be changed is still a working database, and failing the open would be
+// the larger harm.
+func restrict(path string) {
+	if runtime.GOOS == "windows" {
+		return
+	}
+	for _, suffix := range []string{"", "-wal", "-shm"} {
+		if _, err := os.Stat(path + suffix); err != nil {
+			continue
+		}
+		_ = os.Chmod(path+suffix, 0o600)
+	}
 }
 
 // New configures and migrates an existing database handle.

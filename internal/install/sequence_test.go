@@ -78,6 +78,14 @@ func artifact(t *testing.T, body string) string {
 	if err := os.WriteFile(filepath.Join(dir, "jobfinder"), []byte(body), 0o755); err != nil { // #nosec G306 -- test fixture stands in for an executable.
 		t.Fatalf("write executable: %v", err)
 	}
+	// A real Windows artifact carries the console-free service binary beside the
+	// CLI, and the installer takes it from there; a fixture without it would not
+	// stand in for one when these tests run on that platform.
+	if runtime.GOOS == "windows" {
+		if err := os.WriteFile(filepath.Join(dir, "jobfinderw.exe"), []byte(body), 0o755); err != nil { // #nosec G306 -- test fixture stands in for an executable.
+			t.Fatalf("write service executable: %v", err)
+		}
+	}
 	if err := os.MkdirAll(filepath.Join(dir, "configs"), 0o750); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}

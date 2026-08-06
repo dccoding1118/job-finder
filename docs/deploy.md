@@ -19,6 +19,7 @@
 | 角色 | Linux／macOS（XDG） | Windows |
 |---|---|---|
 | 常駐 binary | `~/.local/bin/jobfinder` | `%LocalAppData%\jobfinder\bin\jobfinder.exe` |
+| 排程執行的 binary | 同上 | `%LocalAppData%\jobfinder\bin\jobfinderw.exe` |
 | 設定 | `~/.config/jobfinder/config.yaml` | `%LocalAppData%\jobfinder\config\config.yaml` |
 | Profile／denylist | `~/.config/jobfinder/profile.yaml`、`pii-denylist.txt` | `%LocalAppData%\jobfinder\config\` 下同名檔案 |
 | SQLite 與 lock | `~/.local/share/jobfinder/jobs.db` | `%LocalAppData%\jobfinder\data\jobs.db` |
@@ -29,11 +30,15 @@
 
 XDG 側尊重 `XDG_CONFIG_HOME` 與 `XDG_DATA_HOME`；Windows 側以 `%LOCALAPPDATA%` 為根，未設時退回 `%USERPROFILE%\AppData\Local`。
 
+**Windows 安裝兩支執行檔**：使用者輸入的 `jobfinder.exe` 是 console subsystem，輸出走終端機；排程執行的 `jobfinderw.exe` 是同一份原始碼的 GUI subsystem 建置。Task Scheduler 在使用者自己的 session 裡啟動 console 程式會配一個主控台視窗，常駐服務不能在桌面上留一個視窗，一次性抓取也不該每天閃一次。兩者必須同版：安裝流程從同一份工件取出，回滾也一起移動。其他平台沒有 subsystem 這回事，兩個角色是同一個檔案。診斷用途上這個差異有實際後果：**`jobfinderw.exe` 沒有 stderr 可寫，要在前景看錯誤訊息一律用 `jobfinder.exe serve`**。
+
 `config.yaml` 的 `db.path`、`profile.path`、`profile.denylist` 必須指向上表位置，由安裝流程渲染為絕對路徑；`api.addr` 固定為 loopback 位址。設定檔不得記錄 CLI 憑證或任何 PII；`api.token` 與 `api.extension_origin` 只存於實際設定檔，不進版控。
 
-**權限模型**：Linux 上設定、Profile、denylist、資料庫與備份目錄皆為 owner-only（檔案 `0600`、目錄 `0700`）。Windows 無等價的 `chmod`：整棵樹位於使用者的 `%LocalAppData%`，保護來自該目錄繼承的 ACL（非系統管理員的其他使用者無法讀取），安裝流程不再額外套用權限。這是明載的退讓，不是遺漏——在 Windows 上宣稱套了 `chmod 600` 才是錯的。
+**權限模型**：Linux 上設定、Profile、denylist 由安裝流程寫成 `0600`，設定、資料、備份、日誌與回滾目錄為 `0700`。**目錄才是權限邊界**：SQLite 及其 `-wal`／`-shm` 由 driver 於執行期建立，用的是行程 umask，程式在建立後補上 `0600` 作為縱深防禦，但這層不像目錄那樣有保證。Windows 無等價的 `chmod`：整棵樹位於使用者的 `%LocalAppData%`，保護來自該目錄繼承的 ACL（非系統管理員的其他使用者無法讀取），安裝流程不套用權限。這是明載的退讓，不是遺漏——在 Windows 上宣稱套了 `chmod 600` 才是錯的。
 
-**日誌**：結構化記錄一律寫 stderr。Linux 由 journald 收集，`log.file` 預設留空；Windows Task Scheduler 會丟棄工作的輸出，安裝流程因此在該平台填入 `log.file`，否則失敗的排程抓取不會留下任何痕跡。檔案依大小輪替（`log.max_size_mb`，預設 8MB）並保留固定份數（`log.keep`，預設 4，含現行檔）。Linux 亦可自行填入 `log.file` 取得同樣的檔案輸出。
+**日誌**：結構化記錄同時寫檔案與 stderr，**檔案優先**。Linux 由 journald 收集 stderr，`log.file` 預設留空；Windows Task Scheduler 會丟棄工作的輸出，且 `jobfinderw.exe` 根本沒有主控台可寫，安裝流程因此在該平台填入 `log.file`。順序不可對調：多重寫入遇到第一個失敗的 writer 就停止，把沒有主控台的 stderr 排在前面會讓每一筆記錄在進到唯一的檔案 sink 之前就被吞掉。檔案依大小輪替（`log.max_size_mb`，預設 8MB）並保留固定份數（`log.keep`，預設 4，含現行檔）。Linux 亦可自行填入 `log.file` 取得同樣的檔案輸出。
+
+**啟動失敗的錯誤**另有一條路徑：命令失敗的訊息本身走 stderr，有人收集就夠了（journald、終端機都算）。Windows 兩者皆無，因此該類錯誤會額外寫進 `log.file`；設定檔還沒解析成功、日誌尚未掛上時，則直接補一行到該平台的預設日誌位置。
 
 ## 3. 常駐與排程
 
@@ -43,7 +48,7 @@ XDG 側尊重 `XDG_CONFIG_HOME` 與 `XDG_DATA_HOME`；Windows 側以 `%LOCALAPPD
 |---|---|---|
 | 長駐 API | `jobfinder-api.service`：`Type=simple`、`Restart=on-failure`、`WantedBy=default.target` | 工作 `\jobfinder\api`：登入時觸發、`RestartOnFailure` 三次、`ExecutionTimeLimit=PT0S` |
 | 每日抓取 | `jobfinder-run.service`（`Type=oneshot`、`TimeoutStartSec=1800`）＋ `jobfinder-run.timer`（`OnCalendar=*-*-* 08:30:00 Asia/Taipei`、`Persistent=false`） | 工作 `\jobfinder\run`：每日 08:30、`StartWhenAvailable=false`、`ExecutionTimeLimit=PT30M` |
-| 啟動命令 | `<binary> serve --config <config>`／`<binary> run --config <config>` | 同左（`--trigger timer`） |
+| 啟動命令 | `<binary> serve --config <config>`／`<binary> run --config <config> --trigger timer` | 同左，binary 為 `jobfinderw.exe` |
 | 錯過的排程 | 不補跑（`Persistent=false`） | 不補跑（`StartWhenAvailable=false`） |
 | 手動觸發抓取 | `systemctl --user start jobfinder-run.service` | `Start-ScheduledTask -TaskPath '\jobfinder\' -TaskName 'run'` |
 | 日常診斷 | `journalctl --user -u jobfinder-api.service` | `log.file`（見 §2） |
@@ -53,6 +58,10 @@ API 服務停止時處理即停止，僅抓取仍會依排程進行。抓取只�
 **Linux 特有**：所有 unit 的 `Environment=PATH=` 必須是完整白名單，至少包含 `~/.local/bin`、`~/.local/share/mise/shims`、`/usr/local/bin`、`/usr/bin`、`/bin`，使 headless `claude`／`codex` 與其相依可被執行；不得依賴 interactive shell 的 `mise activate` 或 `bash -lc`。服務以登入使用者執行，須先啟用 linger，確保登出後服務與 timer 持續可用。
 
 **Windows 特有**：安裝時把 `%LocalAppData%\jobfinder\bin` 寫入使用者 PATH（登入時已存在的終端須重開才生效）。Agent CLI 若以 npm 安裝，`claude` 實際是 `.cmd` shim，CreateProcess 無法直接執行；`internal/agents` 因此在 Windows 上先做 PATH 解析，遇 `.cmd`／`.bat` 改經 `%COMSPEC% /c` 執行。CLI 不在服務 PATH 上時，可在 `llm.roles.<role>.<primary|fallback>.command` 直接填完整執行檔路徑。
+
+Agent 子行程一律帶 `CREATE_NO_WINDOW` 啟動。服務本身沒有主控台，Windows 會替每個 console 子行程另配一個並顯示出來——而 `.cmd` shim 經 `cmd.exe` 執行正是這種子行程，不壓下去的話每次篩選、評分與求職信生成都會彈一個視窗。
+
+**兩平台共有的常駐互斥**：常駐 worker 與手動 `run --stage` 由同一把鎖分隔，鎖是**核心持有於開啟中的檔案 handle**，不是「鎖檔存在與否」。行程無論怎麼結束核心都會釋放，這對 Windows 是必要條件——Task Scheduler 停止工作與關機都是直接終止行程，靠程式自行清理的鎖會在每次停止後殘留，使服務再也無法啟動。殘留的鎖檔本身不主張任何東西。
 
 Agent 稽核資料保留在 SQLite 的 `agent_calls`。
 
@@ -66,19 +75,21 @@ Agent 稽核資料保留在 SQLite 的 `agent_calls`。
 | 手動下載工件 | 自行比對 `SHA256SUMS`，解壓後直接執行 `jobfinder install` |
 | 開發 checkout | `scripts/deploy/*.sh`（`mise run deploy-*`）：跑 `fmt`／`lint`／`test`／`build`，再把剛建置的 binary 交給同一組子命令，並以 checkout 為 `--assets` |
 
-解壓出的執行檔是**安裝媒介**，不是安裝本身：它把自己複製到 §2 的常駐位置，排程執行的是那份副本，安裝完下載目錄即可刪除。安裝流程會拒絕「拿常駐副本安裝到自己身上」。
+解壓出的執行檔是**安裝媒介**，不是安裝本身：它把自己複製到 §2 的常駐位置，排程執行的是那份副本，安裝完下載目錄即可刪除。安裝流程會拒絕「拿常駐副本安裝到自己身上」。Windows 另從同一份工件取出 `jobfinderw.exe` 一併放置；工件缺少它時安裝直接失敗，不會裝出一個排程指向不存在檔案的組合。
 
 | 子命令 | 動作 | 生效面驗證 |
 |---|---|---|
 | `install` | 建立 §2 目錄 → 渲染設定並生成隨機 token（既有者不覆寫）→ 種入範例 Profile 與空 denylist（既有者不覆寫）→ `profile lint` 閘門 → 放置 binary → 掛載排程 → 註冊 PATH → 啟動並驗證 | 見下段 |
 | `update` | 保留現行 binary 至 `jobfinder.prev` → 替換 binary 與排程定義 → 重啟 API → 驗證 | 同上，且啟動時間須晚於替換點 |
-| `rollback` | 現行 binary 存為 `.bad`（保留前滾可能）→ 由 `jobfinder.prev` 與 stash 的排程定義還原 → 重啟 API → 驗證；SQLite **不自動更動**，僅在確認毀損時由備份目錄手動還原 | 同上 |
+| `rollback` | 現行 binary 存為 `.bad`（保留前滾可能）→ 由 `.prev` 與 stash 的排程定義還原 → 重啟 API → 驗證；SQLite **不自動更動**，僅在確認毀損時由備份目錄手動還原 | 同上 |
+
+`update` 與 `rollback` 對該平台的**全部**執行檔一起動作。Windows 只還原其中一支會讓使用者輸入的 binary 與實際在跑的服務落在不同版本，比原本要回滾的狀態更糟，因此回滾前先確認每一支都有對應的 `.prev`，缺一即拒絕。
 
 **所有驗證打在生效面（執行中的 process），而非安裝面**：「檔案複製了」與「服務 active」都可能同時為真而執行中的仍是舊 process。
 
 | 驗證 | Linux | Windows |
 |---|---|---|
-| 執行中的就是剛裝的 binary | API service `MainPID` 的 `/proc/<pid>/exe` | `Win32_Process` 的 `ExecutablePath` |
+| 執行中的就是剛裝的 binary | API service `MainPID` 的 `/proc/<pid>/exe` | `jobfinderw.exe` 的 `Win32_Process` `ExecutablePath` |
 | 確實重啟過 | `ExecMainStartTimestamp` 晚於替換點 | process `CreationDate` 晚於替換點 |
 | 排程已武裝 | one-shot unit 可載入、timer active 且有 `NextElapseUSecRealtime` | 抓取工作有 `NextRunTime` |
 | API 只在 loopback | `api.addr` 必須是 loopback 位址（服務就綁這個位址，沒有例外） | 同左 |
@@ -133,7 +144,7 @@ release 工件：
 | 工件 | 內容 |
 |---|---|
 | `jobfinder_<tag>_<os>_<arch>.tar.gz` | 靜態 binary（`CGO_ENABLED=0`、`-trimpath`，版號經 `-ldflags` 注入 `internal/version.tag`）＋ `LICENSE`、`README.md`、`configs/`。Linux 另附 `systemd/` unit 模板與 `install.sh`。平台為 `linux/amd64`、`linux/arm64`、`darwin/arm64`、`darwin/amd64`；darwin 只有 binary 與 `configs/`（非部署平台） |
-| `jobfinder_<tag>_windows_amd64.zip` | 同上，`jobfinder.exe`，另附 `windows/` Task Scheduler 模板與 `install.ps1` |
+| `jobfinder_<tag>_windows_amd64.zip` | 同上，`jobfinder.exe` 與排程執行用的 `jobfinderw.exe`（同源、`-H=windowsgui`），另附 `windows/` Task Scheduler 模板與 `install.ps1` |
 | `jobfinder-extension_<tag>.zip` | extension 目錄，`manifest.json` 的 `version` 於打包時改寫為 tag 去掉 `v` 的語意版號 |
 | `SHA256SUMS` | 上述所有工件的 SHA256 |
 

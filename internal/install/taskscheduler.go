@@ -88,7 +88,7 @@ func renderTask(template string, layout paths.Layout) string {
 		user = domain + `\` + user
 	}
 	return strings.NewReplacer(
-		"{{BINARY}}", xmlEscape(layout.Binary),
+		"{{SERVICE_BINARY}}", xmlEscape(layout.ServiceBinary),
 		"{{CONFIG}}", xmlEscape(layout.Config),
 		"{{DATA_DIR}}", xmlEscape(layout.DataDir),
 		"{{USER}}", xmlEscape(user),
@@ -214,10 +214,13 @@ func (t taskScheduler) assertEffective(ctx context.Context, layout paths.Layout,
 	// Win32_Process carries the executable path and the start time, which is the
 	// Windows equivalent of reading /proc/<pid>/exe: the point is to prove that
 	// the process in memory is the binary just placed, not that a file was copied.
-	line, err := powershell(ctx, "$p = Get-CimInstance Win32_Process -Filter \"Name='jobfinder.exe'\" | "+
+	// The task runs the service binary, so that — not the binary the user types —
+	// is both what the process is looked up by and what it must turn out to be.
+	line, err := powershell(ctx, fmt.Sprintf("$p = Get-CimInstance Win32_Process -Filter \"Name='%s'\" | "+
 		"Where-Object { $_.CommandLine -like '*serve*' } | Select-Object -First 1; "+
 		"if ($null -eq $p) { throw 'no serve process' }; "+
-		"'{0}|{1}|{2}' -f $p.ProcessId, $p.ExecutablePath, $p.CreationDate.ToUniversalTime().ToString('o')")
+		"'{0}|{1}|{2}' -f $p.ProcessId, $p.ExecutablePath, $p.CreationDate.ToUniversalTime().ToString('o')",
+		filepath.Base(layout.ServiceBinary)))
 	if err != nil {
 		return fmt.Errorf("install: locate the running serve process: %w", err)
 	}
@@ -226,15 +229,15 @@ func (t taskScheduler) assertEffective(ctx context.Context, layout paths.Layout,
 		return fmt.Errorf("install: unexpected process description %q", line)
 	}
 	pid, executable, created := fields[0], fields[1], fields[2]
-	if !strings.EqualFold(filepath.Clean(executable), filepath.Clean(layout.Binary)) {
-		return fmt.Errorf("install: the running process (pid %s) executes %q, want %q — a stale process is still live", pid, executable, layout.Binary)
+	if !strings.EqualFold(filepath.Clean(executable), filepath.Clean(layout.ServiceBinary)) {
+		return fmt.Errorf("install: the running process (pid %s) executes %q, want %q — a stale process is still live", pid, executable, layout.ServiceBinary)
 	}
 	if started, parseErr := time.Parse(time.RFC3339Nano, created); parseErr == nil {
 		if started.Before(marker.Add(-2 * time.Second)) {
 			return fmt.Errorf("install: the %s task did not restart (process started %s, before the replacement)", apiTask, created)
 		}
 	}
-	report(out, "API task effective: pid %s running %s", pid, layout.Binary)
+	report(out, "API task effective: pid %s running %s", pid, layout.ServiceBinary)
 
 	next, err := powershell(ctx, fmt.Sprintf(
 		"(Get-ScheduledTaskInfo -TaskPath '%s' -TaskName '%s' -ErrorAction Stop).NextRunTime.ToString('o')", taskFolder, runTask,

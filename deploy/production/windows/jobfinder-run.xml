@@ -9,6 +9,9 @@
   A missed occurrence is not made up: like Persistent=false on the systemd
   timer, a machine that was off at 08:30 waits for the next day rather than
   firing a fetch the moment it wakes.
+
+  The command is the GUI-subsystem build for the same reason the API task uses
+  it: this one would otherwise flash a console window on the desktop once a day.
 -->
 <Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo>
@@ -54,7 +57,7 @@
   </Settings>
   <Actions Context="Author">
     <Exec>
-      <Command>{{BINARY}}</Command>
+      <Command>{{SERVICE_BINARY}}</Command>
       <Arguments>run --config "{{CONFIG}}" --trigger timer</Arguments>
       <WorkingDirectory>{{DATA_DIR}}</WorkingDirectory>
     </Exec>

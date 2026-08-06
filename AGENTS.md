@@ -101,7 +101,7 @@ mise run lint         # 執行 golangci-lint
 
 MVP 以 `jobfinder run` 作為 one-shot pipeline，由每日排程觸發（Linux systemd user timer、Windows Task Scheduler）；API service 只綁定 localhost，Side Panel 透過其設定的 localhost endpoint 存取。預設形態是後端與瀏覽器同機；後端在遠端機器時需自行把遠端 loopback 轉送到本機 loopback，屬選配路徑，見 `docs/guides/runbook-extension.md`。
 
-**安裝語意集中在 binary 的 `install`／`update`／`rollback` 子命令**（`internal/install`），Linux 與 Windows 共用同一份實作，平台差異只剩排程掛載。`scripts/bootstrap/install.sh`／`install.ps1` 只負責下載工件、驗 `SHA256SUMS`、解壓並交棒；`scripts/deploy/*.sh`（`mise run deploy-*`）是開發 checkout 的 wrapper，跑完 `fmt`／`lint`／`test`／`build` 後把剛建置的 binary 交給同一組子命令。這些入口與 `scripts/verify/` 的驗收 harness 分離、**不由任何 `e2e-*` 任務呼叫**、不碰 `.local-dev/`。驗證一律打在生效面（執行中 process 的執行檔與啟動時間），非安裝面。完整步驟與契約見 `docs/deploy.md` §2–§4。
+**安裝語意集中在 binary 的 `install`／`update`／`rollback` 子命令**（`internal/install`），Linux 與 Windows 共用同一份實作，平台差異只剩排程掛載與執行檔數量：Windows 另裝一支 GUI subsystem 的 `jobfinderw.exe` 給排程執行（否則常駐服務會在桌面留一個主控台視窗），兩支同版、一起更新與回滾。`scripts/bootstrap/install.sh`／`install.ps1` 只負責下載工件、驗 `SHA256SUMS`、解壓並交棒；`scripts/deploy/*.sh`（`mise run deploy-*`）是開發 checkout 的 wrapper，跑完 `fmt`／`lint`／`test`／`build` 後把剛建置的 binary 交給同一組子命令。這些入口與 `scripts/verify/` 的驗收 harness 分離、**不由任何 `e2e-*` 任務呼叫**、不碰 `.local-dev/`。驗證一律打在生效面（執行中 process 的執行檔與啟動時間），非安裝面。完整步驟與契約見 `docs/deploy.md` §2–§4。
 
 ### 已知雷
 
@@ -112,6 +112,11 @@ MVP 以 `jobfinder run` 作為 one-shot pipeline，由每日排程觸發（Linux
 - Windows 上 npm 裝的 `claude` 是 `.cmd` shim，CreateProcess 無法直接執行；`internal/agents` 解析後改經 `%COMSPEC% /c`。
 - `Start-ScheduledTask` 對已在執行的工作是 no-op，與 systemd `enable --now` 同一個陷阱：更新必須先停、等 process 消失、再啟動。
 - Task Scheduler 丟棄工作的 stdout／stderr：Windows 的日誌出口只有 `log.file`，不是 journald。
+- 排程執行的 `jobfinderw.exe` 是 GUI subsystem，**完全沒有 stderr**。日誌的多重寫入必須把檔案排在 stderr 前面（`io.MultiWriter` 遇第一個錯誤即停止），啟動失敗的錯誤另有一條寫進 `log.file` 的路徑。前景診斷一律用 console 的 `jobfinder.exe serve`。
+- 服務沒有主控台，Windows 會替每個 console 子行程另配一個並顯示；Agent 子行程一律帶 `CREATE_NO_WINDOW`。
+- worker 互斥鎖必須是核心持有於檔案 handle 的鎖，不是「鎖檔存在與否」：Task Scheduler 停止工作與關機都直接終止行程，靠自行清理的鎖會永久殘留，服務再也起不來。
+- Windows PowerShell 5.1 的 `Set-Content`／`>`／`Out-File` 預設不是 UTF-8（分別是 ANSI code page 與 UTF-16）。改 `config.yaml` 一律用 `[System.IO.File]::WriteAllText(..., UTF8Encoding($false))`；寫壞的設定會讓 `serve` 在掛上日誌前就失敗，Windows 上看不到任何錯誤。
+- extension Options 接受的 host 必須與 `manifest.json` 的 `host_permissions` 一致（`127.0.0.1`、`[::1]`）。多接受一個 `localhost` 會存得進去卻在 fetch 被擋，症狀是「存好了但離線」；IPv6 從 URL 解析出來帶方括號。
 - 排程狀態不得靠 `schtasks` 的文字輸出判定——那是安裝語系相依的；一律走 PowerShell 的 ScheduledTasks cmdlet 取物件屬性。
 
 ## 7. 怎麼上版

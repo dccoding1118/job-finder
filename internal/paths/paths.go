@@ -36,14 +36,30 @@ type Layout struct {
 	DB       string
 	LogFile  string
 
-	// Binary is where the resident copy of jobfinder lives — the one the
-	// scheduler executes. It is never the artifact the user unpacked and ran the
-	// installer from.
+	// Binary is where the resident copy of jobfinder lives — the one the user
+	// types. It is never the artifact the user unpacked and ran the installer
+	// from.
 	Binary   string
 	Previous string
 	Bad      string
+
+	// ServiceBinary is the copy the scheduler executes. On Windows it is a
+	// second, GUI-subsystem build of the same program: a console-subsystem
+	// executable started by Task Scheduler in the user's own session is given a
+	// console window, and a resident service must not put one on the desktop.
+	// Everywhere else there is nothing to hide and it is the same file as Binary,
+	// so every caller can name it unconditionally.
+	ServiceBinary   string
+	ServicePrevious string
+	ServiceBad      string
+
 	Manifest string
 }
+
+// SeparateServiceBinary reports whether the scheduler runs a different
+// executable from the one the user types, which is what decides whether an
+// install has one binary to place and roll back or two.
+func (l Layout) SeparateServiceBinary() bool { return l.ServiceBinary != l.Binary }
 
 // Resolve returns the layout for the running platform.
 func Resolve() (Layout, error) {
@@ -86,7 +102,7 @@ func xdgLayout(home string, getenv func(string) string) Layout {
 		BinDir:    filepath.Join(home, ".local", "bin"),
 		UnitDir:   filepath.Join(configHome, "systemd", "user"),
 	}
-	return fill(layout, "jobfinder")
+	return fill(layout, "jobfinder", "jobfinder")
 }
 
 // windowsLayout keeps everything under one per-user root below %LocalAppData%.
@@ -106,12 +122,14 @@ func windowsLayout(home string, getenv func(string) string) Layout {
 		LibDir:    filepath.Join(root, "lib"),
 		BinDir:    filepath.Join(root, "bin"),
 	}
-	return fill(layout, "jobfinder.exe")
+	return fill(layout, "jobfinder.exe", "jobfinderw.exe")
 }
 
 // fill derives every file location from the already-decided directories, so the
-// two platform functions differ only in where those directories sit.
-func fill(layout Layout, binaryName string) Layout {
+// two platform functions differ only in where those directories sit. Passing the
+// same name twice is what makes ServiceBinary equal Binary on a platform that
+// needs only one executable.
+func fill(layout Layout, binaryName, serviceBinaryName string) Layout {
 	layout.LogDir = filepath.Join(layout.DataDir, "logs")
 	layout.BackupDir = filepath.Join(layout.DataDir, "backups")
 	layout.Config = filepath.Join(layout.ConfigDir, "config.yaml")
@@ -122,6 +140,9 @@ func fill(layout Layout, binaryName string) Layout {
 	layout.Binary = filepath.Join(layout.BinDir, binaryName)
 	layout.Previous = filepath.Join(layout.LibDir, binaryName+".prev")
 	layout.Bad = filepath.Join(layout.LibDir, binaryName+".bad")
+	layout.ServiceBinary = filepath.Join(layout.BinDir, serviceBinaryName)
+	layout.ServicePrevious = filepath.Join(layout.LibDir, serviceBinaryName+".prev")
+	layout.ServiceBad = filepath.Join(layout.LibDir, serviceBinaryName+".bad")
 	layout.Manifest = filepath.Join(layout.LibDir, "manifest.txt")
 	return layout
 }
@@ -140,6 +161,9 @@ func (l Layout) Rows() [][2]string {
 		{"binary", l.Binary},
 		{"backups", l.BackupDir},
 		{"rollback", l.LibDir},
+	}
+	if l.SeparateServiceBinary() {
+		rows = append(rows, [2]string{"service binary", l.ServiceBinary})
 	}
 	if l.UnitDir != "" {
 		rows = append(rows, [2]string{"systemd units", l.UnitDir})
