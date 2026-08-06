@@ -34,6 +34,21 @@ func asset(assetDir, kind string) (string, error) {
 	return "", fmt.Errorf("install: %s templates not found under %s; run the installer from the unpacked artifact or pass --assets", kind, assetDir)
 }
 
+// binaryAsset finds an executable the artifact ships alongside the one being
+// run. A release artifact keeps them side by side at the top level; a
+// development checkout puts what it builds in bin/. The lookup is by file
+// rather than by directory because both candidates exist in a checkout and only
+// one of them holds the binary.
+func binaryAsset(assetDir, name string) (string, error) {
+	for _, candidate := range []string{".", "bin"} {
+		path := filepath.Join(assetDir, candidate, name)
+		if info, err := os.Stat(path); err == nil && !info.IsDir() {
+			return path, nil
+		}
+	}
+	return "", fmt.Errorf("install: %s not found under %s; this platform installs it alongside the binary you ran, so the artifact must contain both", name, assetDir)
+}
+
 // provisionConfig renders config.yaml on a first install and leaves an existing
 // one strictly alone — the token and the extension origin in it are the user's,
 // and an install must never invalidate a working extension connection.

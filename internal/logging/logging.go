@@ -13,7 +13,12 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
+	"sync/atomic"
+	"time"
+
+	"github.com/dccoding1118/job-finder/internal/paths"
 )
 
 // Defaults bound the log directory to a few tens of megabytes, which is far
@@ -24,9 +29,13 @@ const (
 	DefaultKeep      = 4
 )
 
-// Setup makes stderr the primary sink and adds a rotating file when path is
-// non-empty. The returned Closer flushes and releases the file; callers that
-// pass an empty path get a no-op.
+// fileSink records whether Setup installed a file sink, which is what decides
+// where ReportFatal can still put an error once the process is on its way out.
+var fileSink atomic.Bool
+
+// Setup writes to stderr and, when path is non-empty, to a rotating file as
+// well. The returned Closer flushes and releases the file; callers that pass an
+// empty path get a no-op.
 func Setup(path string, maxSizeMB, keep int) (io.Closer, error) {
 	if path == "" {
 		slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, nil)))
@@ -42,8 +51,69 @@ func Setup(path string, maxSizeMB, keep int) (io.Closer, error) {
 	if err != nil {
 		return nil, err
 	}
-	slog.SetDefault(slog.New(slog.NewTextHandler(io.MultiWriter(os.Stderr, file), nil)))
+	// The file comes first and stderr is explicitly best-effort. io.MultiWriter
+	// stops at the first writer that returns an error, and the Windows service
+	// binary is a GUI-subsystem executable with no console at all: leaving stderr
+	// in front would let its failing write discard every record before the file —
+	// the only sink that platform has — was ever offered one.
+	slog.SetDefault(slog.New(slog.NewTextHandler(io.MultiWriter(file, optional{os.Stderr}), nil)))
+	fileSink.Store(true)
 	return file, nil
+}
+
+// optional is a sink that is allowed to be absent: a write that fails is
+// dropped rather than reported, so it cannot stop the writers behind it.
+type optional struct{ w io.Writer }
+
+func (o optional) Write(p []byte) (int, error) {
+	_, _ = o.w.Write(p)
+	return len(p), nil
+}
+
+// ReportFatal records an error that is ending the process.
+//
+// A failed command is reported on stderr, which is enough wherever something
+// collects it — journald does, and so does a terminal. Windows has neither for
+// the resident service: Task Scheduler discards a task's output, and the
+// service binary has no console to write to in the first place. Without this,
+// a service that cannot start leaves no trace anywhere at all, which is the
+// hardest possible failure to diagnose.
+func ReportFatal(err error) {
+	if err == nil {
+		return
+	}
+	if fileSink.Load() {
+		slog.Error("exiting", "error", err.Error())
+		return
+	}
+	// No file sink yet means the failure happened before the configuration was
+	// parsed. Away from Windows stderr is collected and nothing more is wanted;
+	// on Windows the platform's default log location is the only place left.
+	if runtime.GOOS != "windows" {
+		return
+	}
+	appendFallback(err)
+}
+
+// appendFallback writes one line to the location the installer configures for
+// this platform, resolved from the same decision point the rest of the program
+// uses. Every step is best-effort: this runs while the process is already
+// failing, and a failure to record the failure must not replace it.
+func appendFallback(err error) {
+	layout, resolveErr := paths.Resolve()
+	if resolveErr != nil || layout.LogFile == "" {
+		return
+	}
+	if mkdirErr := os.MkdirAll(filepath.Dir(layout.LogFile), 0o700); mkdirErr != nil {
+		return
+	}
+	file, openErr := os.OpenFile(layout.LogFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600) // #nosec G304 -- path comes from the resolved layout.
+	if openErr != nil {
+		return
+	}
+	defer func() { _ = file.Close() }()
+	_, _ = fmt.Fprintf(file, "time=%s level=ERROR msg=exiting error=%q\n",
+		time.Now().Format(time.RFC3339), err.Error())
 }
 
 // rotator writes to one file and renames it aside once it passes the size

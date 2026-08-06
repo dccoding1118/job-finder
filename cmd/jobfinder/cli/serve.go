@@ -51,10 +51,11 @@ func newServeCmd() *cobra.Command {
 		// scoring work up by itself, so the user's own single-job requests still run
 		// here, serialized against nothing else.
 		if !rt.workerPaused {
-			if err := lockWorker(rt.cfg.DB.Path); err != nil {
-				return err
+			lock, lockErr := lockWorker(rt.cfg.DB.Path)
+			if lockErr != nil {
+				return lockErr
 			}
-			defer unlockWorker(rt.cfg.DB.Path)
+			defer lock.release()
 			// The switch is carried by the worker's own copy of the pipeline, not by
 			// the shared value: `run --stage` is a batch the user is driving by hand
 			// and must do what they asked whatever the automatic brake says.

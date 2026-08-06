@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/dccoding1118/job-finder/cmd/jobfinder/cli"
+	"github.com/dccoding1118/job-finder/internal/logging"
 )
 
 func main() {
@@ -24,6 +25,9 @@ func main() {
 
 	if err := cli.Execute(ctx); err != nil {
 		_, _ = fmt.Fprintln(os.Stderr, err)
+		// stderr alone is not a record on every platform this ships to; see
+		// logging.ReportFatal.
+		logging.ReportFatal(err)
 		var exitErr *cli.ExitError
 		if errors.As(err, &exitErr) {
 			os.Exit(exitErr.Code)

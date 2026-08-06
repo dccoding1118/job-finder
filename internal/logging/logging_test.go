@@ -1,6 +1,8 @@
 package logging
 
 import (
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,6 +18,31 @@ func TestSetupWithoutPathIsANoOp(t *testing.T) {
 		t.Fatalf("close: %v", err)
 	}
 }
+
+// io.MultiWriter stops at the first writer that fails. The Windows service
+// binary has no console, so a stderr placed in front of the file would swallow
+// every record before the only sink that platform has ever saw one.
+func TestFileSinkSurvivesAnUnwritableConsole(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "jobfinder.log")
+	closer, err := Setup(path, 1, 2)
+	if err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	defer func() { _ = closer.Close() }()
+
+	broken := io.MultiWriter(closer.(io.Writer), optional{failingWriter{}})
+	if _, writeErr := broken.Write([]byte("record\n")); writeErr != nil {
+		t.Fatalf("a failing console must not fail the write: %v", writeErr)
+	}
+	contents, readErr := os.ReadFile(path) // #nosec G304 -- path is inside the test's temporary directory.
+	if readErr != nil || !strings.Contains(string(contents), "record") {
+		t.Fatalf("file sink = %q, %v; the record never reached the file", contents, readErr)
+	}
+}
+
+type failingWriter struct{}
+
+func (failingWriter) Write([]byte) (int, error) { return 0, errors.New("no console") }
 
 func TestRotatorKeepsAFixedNumberOfGenerations(t *testing.T) {
 	dir := t.TempDir()

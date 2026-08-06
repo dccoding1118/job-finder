@@ -3,8 +3,6 @@ package cli
 import (
 	"bytes"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -168,10 +166,11 @@ func runFetch(cmd *cobra.Command, rt *runtime, trigger string) error {
 // runStage is the debugging entry for a second process. It holds the worker
 // lock, so it exits at once while the API server's worker is resident.
 func runStage(cmd *cobra.Command, rt *runtime, stage string, limit int) error {
-	if err := lockWorker(rt.cfg.DB.Path); err != nil {
+	lock, err := lockWorker(rt.cfg.DB.Path)
+	if err != nil {
 		return err
 	}
-	defer unlockWorker(rt.cfg.DB.Path)
+	defer lock.release()
 	switch stage {
 	case "filter":
 		stats, err := rt.pipeline.FilterJobsWithStats(cmd.Context(), limit)
@@ -242,21 +241,6 @@ func routedAgents(routes roleRoutes, timeout time.Duration) (agents.Filter, agen
 // lockWorker keeps stage consumption to one process. The resident worker holds
 // it for as long as the API server runs, which is what makes a hand-driven
 // stage exit instead of competing with it.
-func lockWorker(dbPath string) error {
-	// #nosec G304 -- the lock is derived solely from the explicit local SQLite path.
-	f, err := os.OpenFile(workerLockPath(dbPath), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
-	if err != nil {
-		if os.IsExist(err) {
-			return fmt.Errorf("another process is consuming the pipeline stages")
-		}
-		return fmt.Errorf("create worker lock: %w", err)
-	}
-	return f.Close()
-}
-
-func unlockWorker(dbPath string) { _ = os.Remove(workerLockPath(dbPath)) }
-
-func workerLockPath(dbPath string) string { return filepath.Clean(dbPath) + ".worker.lock" }
 func errorSummary(err error) string {
 	if err == nil {
 		return ""

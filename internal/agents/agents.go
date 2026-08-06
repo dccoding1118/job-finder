@@ -184,14 +184,22 @@ func jsonlUsage(raw string) Usage {
 	return usage
 }
 
-// agentCommand builds the process for one Agent invocation.
+// agentCommand builds the process for one Agent invocation, resolving the
+// executable and then applying the platform's window policy to it.
+func agentCommand(ctx context.Context, command string, args []string) *exec.Cmd {
+	cmd := resolveAgentCommand(ctx, command, args)
+	hideConsole(cmd)
+	return cmd
+}
+
+// resolveAgentCommand decides what to execute.
 //
 // On Windows an npm-installed CLI is a .cmd shim, and CreateProcess cannot
 // execute a batch file: handed one directly the call fails with an unhelpful
 // "not a valid application" rather than anything that points at the shim. Such
 // a command is therefore run through the command interpreter. Everywhere else,
 // and for a real executable on Windows, the command is executed directly.
-func agentCommand(ctx context.Context, command string, args []string) *exec.Cmd {
+func resolveAgentCommand(ctx context.Context, command string, args []string) *exec.Cmd {
 	// #nosec G204 -- Command and flags are fixed runner definitions; prompt is one CLI argument.
 	direct := func() *exec.Cmd { return exec.CommandContext(ctx, command, args...) }
 	if runtime.GOOS != "windows" {

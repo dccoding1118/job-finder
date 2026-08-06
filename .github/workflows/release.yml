@@ -59,6 +59,15 @@ jobs:
             [ "$goos" = windows ] && binary="$binary.exe"
             CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" \
               go build -trimpath -ldflags "$ldflags" -o "$binary" ./cmd/jobfinder
+            # Windows ships a second, GUI-subsystem build of the same source for
+            # the scheduled tasks to run. A console-subsystem executable started
+            # by Task Scheduler in the user's own session is given a console
+            # window; the CLI keeps its console because that is where its output
+            # goes, so the two subsystems need two files.
+            if [ "$goos" = windows ]; then
+              CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" \
+                go build -trimpath -ldflags "$ldflags -H=windowsgui" -o "$out/jobfinderw.exe" ./cmd/jobfinder
+            fi
             cp LICENSE README.md "$out/"
             # 安裝語意在 binary 的 install 子命令內，工件只需帶齊它讀的素材：
             # 設定範本、該平台的排程模板，以及只負責下載與驗 checksum 的 bootstrap。
