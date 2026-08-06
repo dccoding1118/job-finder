@@ -59,11 +59,14 @@ jobs:
       - name: test
         run: go test ./...
 
+      # 宣告的 UTF-16 是給 Task Scheduler 的（它收到的是字串，記憶體中即 UTF-16），
+      # 不是描述 repo 內的位元組；結構檢查因此先去掉宣告再解析。
       - name: 排程模板可解析
         shell: pwsh
         run: |
           Get-ChildItem deploy/production/windows/*.xml | ForEach-Object {
-            [xml](Get-Content -Raw -LiteralPath $_.FullName) | Out-Null
+            $body = (Get-Content -Raw -LiteralPath $_.FullName) -replace '^<\?xml[^>]*\?>', ''
+            [xml]$body | Out-Null
             Write-Host "$($_.Name) 可解析"
           }
 

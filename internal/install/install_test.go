@@ -242,3 +242,44 @@ func TestPlaceBinaryKeepsThePreviousCopyForRollback(t *testing.T) {
 		t.Fatalf("previous = %q, %v; rollback would have nowhere to go", contents, err)
 	}
 }
+
+// Task Scheduler receives the task definition as a string, which is UTF-16 in
+// memory, and rejects the entire document as malformed if the encoding
+// declaration claims anything else. The declaration therefore is not a
+// description of the bytes in the repository — it is part of the contract with
+// the API, and "correcting" it to match the file on disk breaks installation on
+// every Windows machine.
+func TestWindowsTaskTemplatesDeclareUTF16(t *testing.T) {
+	templates, err := filepath.Glob(filepath.Join("..", "..", "deploy", "production", "windows", "*.xml"))
+	if err != nil || len(templates) == 0 {
+		t.Fatalf("no task templates found: %v", err)
+	}
+	for _, template := range templates {
+		contents, readErr := os.ReadFile(template) // #nosec G304 -- reads the repository's own templates.
+		if readErr != nil {
+			t.Fatalf("read %s: %v", template, readErr)
+		}
+		first, _, _ := strings.Cut(string(contents), "\n")
+		if !strings.Contains(first, `encoding="UTF-16"`) {
+			t.Fatalf("%s declares %q, want encoding=\"UTF-16\"", filepath.Base(template), strings.TrimSpace(first))
+		}
+	}
+}
+
+func TestUTF16LEEncodesWithAByteOrderMark(t *testing.T) {
+	encoded := utf16LE("<?xml?>")
+	if len(encoded) != 2+len("<?xml?>")*2 {
+		t.Fatalf("length = %d, want a BOM plus two bytes per unit", len(encoded))
+	}
+	if encoded[0] != 0xFF || encoded[1] != 0xFE {
+		t.Fatalf("prefix = %#v, want a little-endian byte order mark", encoded[:2])
+	}
+	if encoded[2] != '<' || encoded[3] != 0x00 {
+		t.Fatalf("first unit = %#v, want '<' little endian", encoded[2:4])
+	}
+	// Content outside the basic plane must survive as a surrogate pair rather
+	// than being truncated to a single unit.
+	if got := len(utf16LE("\U0001F600")) - 2; got != 4 {
+		t.Fatalf("astral character encoded to %d bytes, want 4", got)
+	}
+}

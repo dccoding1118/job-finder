@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode/utf16"
 
 	"github.com/dccoding1118/job-finder/internal/paths"
 )
@@ -56,6 +57,8 @@ func (taskScheduler) mount(ctx context.Context, layout paths.Layout, assetDir st
 	for _, task := range windowsTasks {
 		// Export the outgoing definition before replacing it, so rollback has the
 		// same material the systemd path keeps in units.prev.
+		// Export-ScheduledTask emits a UTF-16-declaring document; it is stashed as
+		// text and re-encoded by registerTask on the way back in.
 		if exported, err := powershell(ctx, fmt.Sprintf(
 			"Export-ScheduledTask -TaskPath '%s' -TaskName '%s'", taskFolder, task.name,
 		)); err == nil && exported != "" {
@@ -96,23 +99,42 @@ func xmlEscape(value string) string {
 	return strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;", `"`, "&quot;").Replace(value)
 }
 
-// registerTask writes the rendered XML to a temporary file and registers it.
-// Register-ScheduledTask reads the XML as one argument, and a path with spaces
-// in it is far easier to pass safely than a multi-line document.
+// registerTask stages the rendered XML and registers it.
+//
+// The document is written as UTF-16LE with a byte order mark and read back with
+// an explicitly named encoding. Both halves matter. Task Scheduler receives the
+// XML as a string, which is UTF-16 in memory, and rejects the whole document as
+// malformed if the encoding declaration claims anything else — so the
+// declaration says UTF-16 and the bytes on disk agree with it. Reading with an
+// explicit encoding keeps Windows PowerShell's default (the machine's ANSI code
+// page) out of the path, where any non-ASCII content would arrive mangled.
 func registerTask(ctx context.Context, layout paths.Layout, name, xml string) error {
 	file := filepath.Join(layout.LibDir, "task-"+name+".xml")
-	if err := os.WriteFile(file, []byte(xml), 0o600); err != nil { // #nosec G703 -- path comes from the resolved layout.
+	if err := os.WriteFile(file, utf16LE(xml), 0o600); err != nil { // #nosec G703 -- path comes from the resolved layout.
 		return fmt.Errorf("install: stage task %s: %w", name, err)
 	}
 	defer func() { _ = os.Remove(file) }()
 	_, err := powershell(ctx, fmt.Sprintf(
-		"Register-ScheduledTask -Xml (Get-Content -Raw -LiteralPath '%s') -TaskPath '%s' -TaskName '%s' -Force | Out-Null",
+		"Register-ScheduledTask -Xml ([System.IO.File]::ReadAllText('%s', [System.Text.Encoding]::Unicode)) "+
+			"-TaskPath '%s' -TaskName '%s' -Force | Out-Null",
 		file, taskFolder, name,
 	))
 	if err != nil {
 		return fmt.Errorf("install: register scheduled task %s: %w", name, err)
 	}
 	return nil
+}
+
+// utf16LE encodes a document as UTF-16 little endian with a byte order mark,
+// which is the form Task Scheduler's own Export-ScheduledTask produces.
+func utf16LE(text string) []byte {
+	units := utf16.Encode([]rune(text))
+	out := make([]byte, 0, 2+len(units)*2)
+	out = append(out, 0xFF, 0xFE) // byte order mark
+	for _, unit := range units {
+		out = append(out, byte(unit&0xFF), byte(unit>>8)) //nolint:gosec // masked to a byte; utf16.Encode yields 16-bit units.
+	}
+	return out
 }
 
 func (taskScheduler) restoreDefinitions(ctx context.Context, layout paths.Layout, out io.Writer) error {
@@ -234,8 +256,12 @@ func (taskScheduler) hints(layout paths.Layout) []string {
 
 // powershell runs one statement non-interactively. -NoProfile keeps a user's
 // profile script from changing what the installer sees, and stopping on error
-// turns a silently-ignored cmdlet failure into a failed install.
+// turns a silently-ignored cmdlet failure into a failed install. Output is
+// forced to UTF-8 because everything read back — task state, exported
+// definitions, process paths — is decoded as UTF-8 on this side, and the
+// console would otherwise emit the machine's ANSI code page.
 func powershell(ctx context.Context, script string) (string, error) {
 	return run(ctx, "powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
-		"-Command", "$ErrorActionPreference='Stop'; "+script)
+		"-Command", "$ErrorActionPreference='Stop'; "+
+			"[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; "+script)
 }
