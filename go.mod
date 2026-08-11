@@ -1,10 +1,10 @@
 module github.com/dccoding1118/job-finder
 
-go 1.23.0
+go 1.25.0
 
 require (
 	github.com/spf13/cobra v1.9.1
-	golang.org/x/sys v0.30.0
+	golang.org/x/sys v0.47.0
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.36.0
 )
