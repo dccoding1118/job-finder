@@ -1,6 +1,6 @@
 # STATUS — job-finder（MVP 開發）
 
-> 最後更新：2026-08-06。規劃文件見 `docs/PRD.md`、`docs/design.md`、`docs/roadmap.md`、`docs/deploy.md`、`docs/designs/`。
+> 最後更新：2026-08-19。規劃文件見 `docs/PRD.md`、`docs/design.md`、`docs/roadmap.md`、`docs/deploy.md`、`docs/designs/`。
 
 ## §1 未歸檔結論
 
@@ -10,11 +10,20 @@
 
 **公開前置（依序完成後才轉 public）**
 
-- [ ] 部署人工 gate：`docs/verify.md` §6.1 的 D1–D9。Linux 全數通過（D1／D2／D3／D5／D6 以 release v0.1.0 工件實測；D4 以 `runbook-extension.md` §8 的 tunnel 形態通過，Windows Chrome 經 IAP 通道連本機 API）。**剩餘**：Windows D1–D9 全部、bootstrap 腳本路徑（見 §1，須待轉 public）。
+- [ ] 部署人工 gate：`docs/verify.md` §6.1 的 D1–D9。
 
-  Windows gate 須待下一版 release：`v0.1.0` 的工件不含排程執行用的 `jobfinderw.exe`，無法驗現行契約。
+  | 平台 | 通過 | 剩餘 |
+  |---|---|---|
+  | Linux | D1／D2／D3／D5／D6（release v0.1.0 工件實測）、D4（`runbook-extension.md` §8 的 tunnel 形態，Windows Chrome 經 IAP 通道連本機 API） | 無 |
+  | Windows | D1／D2／D3／D4／D7／D8（release v0.1.1 工件實測，含 extension v0.1.1 實裝與重裝） | D5／D6／D9 |
 
-- [ ] 這台 Linux 機器目前跑的是含上述修正的 dev 建置（`mise run deploy-update`），不是 release。PR 合併後打 `v0.1.1` 並以 release 工件重裝，才回到「跑的是正式版」的狀態。
+  Windows D5／D6 需要前後兩個都含 `jobfinderw.exe` 的版本，`v0.1.0` 的工件沒有那支執行檔，發出 `v0.1.2` 後才驗得動。D5／D6／D9 由使用者決定延後到有對應情境時再驗。
+
+  bootstrap 腳本路徑仍待驗（見 §1，須待轉 public）。
+
+- [ ] 這台 Linux 機器目前跑的是 dev 建置（`mise run deploy-update`），不是 release。以 `v0.1.1` 之後的 release 工件重裝，才回到「跑的是正式版」的狀態。
+
+- [ ] 抓取階段沒有任何可觀測性：`internal/crawler` 與 `pipeline.Fetch` 全程不寫日誌，且整批爬完才一次寫入 SQLite，一趟十分鐘以上的作業對使用者只有「排程工作仍在執行中」一個訊號，分不出正常與卡死。至少要在每個查詢、每頁、每 N 筆內頁記一行。與下方「API 請求層 log」屬同一類但更具體。
 
 - [ ] 公開 GitHub repo。多數資安與對外可見度設定被 private＋免費方案擋住，須依下列**硬順序**在轉 public 當天一次做完（Dependabot alerts 與 automated security fixes 已於 private 階段開啟）：
   1. 本地備妥 `.github/workflows/codeql.yml`（**先別推**——private repo 的 `analyze` job 會恆紅）。
