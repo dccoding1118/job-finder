@@ -154,7 +154,7 @@ for round in 1..N:
 
 **任一輪的 Drafter 或 Reviewer 呼叫失敗**（Primary、Primary、Fallback 三個 runner 後仍失敗）即終止該次生成，不重試、不跑後續輪次，該筆轉 `letter_failed` 等使用者再次要求。runner 層已有三次嘗試，外加自動重試只會在服務中斷期間持續消耗每日額度。呼叫失敗與 guard 失敗是不同性質：前者拿不到產出，後者拿到了但這一版不合格，因此後者可由下一輪修正。
 
-終態與 `letters.status` 的對應見 [design-schema](design-schema.md) §2.3。
+產不出可用信件的一次生成（呼叫失敗，或最後一輪未過 guard）不寫入 Letter，該筆停在 `letter_failed` 等使用者再次要求；終態與 `letters.status` 的對應見 [design-schema](design-schema.md) §2.3。
 
 `guard()` 程式防線（R5.4）：
 

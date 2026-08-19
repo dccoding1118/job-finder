@@ -234,8 +234,8 @@ func TestLetterFailedCallEndsTheJobAndUnblocksTheQueue(t *testing.T) {
 	if failed.Job.ProcessState != "letter_failed" {
 		t.Fatalf("failed job state = %q", failed.Job.ProcessState)
 	}
-	if failed.Letter == nil || failed.Letter.Status != "failed" || failed.Letter.Content != "" {
-		t.Fatalf("failed letter = %+v", failed.Letter)
+	if failed.Letter != nil {
+		t.Fatalf("a failed run recorded a letter: %+v", failed.Letter)
 	}
 	ready, _, err := db.GetJobDetail(ctx, ids[1])
 	if err != nil {

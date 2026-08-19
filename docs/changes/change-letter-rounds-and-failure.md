@@ -21,7 +21,7 @@
 | D2 | drafter 每輪收到**到目前為止的全部歷程**：各版草稿與其對應的 review 意見，依序排列。 |
 | D3 | 任一輪的 draft 或 review 在 Primary、Primary、Fallback 三個 runner 後仍失敗，該筆立即 `letter_failed`，不重試、不跑後續輪次。 |
 | D4 | `letters.status` 增設 `finalized`：跑滿輪數產出的最終版，未經最後一次審查。`process_state` 仍為 `letter_ready`。 |
-| D5 | 失敗一律寫入 `letters` 列，`content` 為空字串，`review_log` 記各輪意見與失敗原因；不再以落款佔位符填充成一封假信。 |
+| D5 | 產不出可用信件的一次生成不寫入 `letters` 列：狀態記為 `letter_failed`，原因由 Error log 與 `agent_calls` 承載。`letters` 只保存真正產出的信件。 |
 | D6 | `reviewPrompt` 補上輸出規格（`issues` 為字串陣列）與佔位符語意（刻意保留的最終形態，要求填入真實個資屬錯誤意見）。 |
 | D7 | `parseReview` 對 `issues` 放寬解析容忍度：元素為字串照收，為物件則取其文字欄位攤平為一句。契約不變，只是不因模型單一欄位失守而作廢整輪。 |
 
@@ -36,8 +36,7 @@ guard 失敗不屬 D3。guard 是呼叫成功後的程式檢查，失敗表示�
 | drafter 輸入 | Profile ＋ Job ＋ 上一輪 issues | 加上各版草稿與各版意見的完整歷程 |
 | 呼叫失敗 | 停留 `letter_requested`，worker 下次重試 | 立即 `letter_failed`，等使用者再次要求 |
 | `letters.status` | `approved` / `failed` | `approved` / `finalized` / `failed` |
-| 失敗時的 `content` | `[你的姓名]\n[你的聯絡方式]` | 空字串 |
-| 失敗時的 `letters` 列 | 呼叫失敗不寫、審核不過寫 | 一律寫 |
+| 失敗時的 `letters` 列 | 呼叫失敗不寫；審核不過寫一列，`content` 填 `[你的姓名]\n[你的聯絡方式]` | 一律不寫 |
 
 ## 4. 落點（canonical 最新狀態）
 
@@ -50,7 +49,7 @@ guard 失敗不屬 D3。guard 是呼叫成功後的程式檢查，失敗表示�
 | `docs/designs/design-pipeline.md` | §5 | 設定表加入 `llm.max_letter_rounds` |
 | | §6 | 錯誤處理表為 letter 階段的 Agent 呼叫失敗加例外列 |
 | | §8 | 測試項補呼叫失敗即 `letter_failed` |
-| `docs/designs/design-schema.md` | §2.3 | `letters.status` 列舉加 `finalized`；`content` 允許空 |
+| `docs/designs/design-schema.md` | §2.3 | `letters.status` 列舉改為 `approved`／`finalized`；產不出信件者不寫列 |
 | | §3 | 狀態轉換表補「呼叫失敗」與「跑滿輪數」兩條轉入理由 |
 | `docs/designs/design-api.md` | letter viewmodel | `finalized` 視同可讀取的信件 |
 | `docs/designs/design-extension.md` | 求職信卡片 | `finalized` 顯示信件並標示未經最後審查；`letter_failed` 文案涵蓋呼叫失敗 |
@@ -70,6 +69,8 @@ guard 失敗不屬 D3。guard 是呼叫成功後的程式檢查，失敗表示�
 
 ## 6. 已知殘留限制
 
+- `letters` 只保存產出過的信件，因此 `status` 為 `failed` 的列只可能來自本次變更之前的資料。讀取端照常顯示，寫入端不再產生。
+
 - `max_letter_rounds` 設為 1 時只有一次 draft、沒有任何 review，`letters.runner_review` 為空。這是設定者自願放棄審查，不視為錯誤。
-- letter 階段的呼叫失敗不再讓該階段回報錯誤：該筆已寫入結果並離開取件狀態，錯誤原因由 Error log、`letters` 列與 `agent_calls` 三處記錄。維持回報錯誤會讓 CLI 與 worker 把已處置的業務結果誤報為執行失敗。
+- letter 階段的呼叫失敗不再讓該階段回報錯誤：該筆已離開取件狀態，錯誤原因由 Error log 與 `agent_calls` 記錄。維持回報錯誤會讓 CLI 與 worker 把已處置的業務結果誤報為執行失敗。
 - 呼叫失敗即終止的代價是暫時性故障（LLM 服務中斷、額度耗盡）也會判 `letter_failed`，需要使用者再按一次。取捨理由是 runner 層已有 Primary、Primary、Fallback 三次，再加自動重試只會在故障期間持續燒額度。

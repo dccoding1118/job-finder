@@ -61,7 +61,7 @@ mock 一趟用固定合成測資；下表即「標準答案」，逐值由 `asse
 | ext_id | 標題 | 公司 | 薪資 | remote | 篩選 | 四維／total | reason | process 終態 | letter | API verdict／letter_state |
 |---|---|---|---|---|---|---|---|---|---|---|
 | 1000 | Verification intern platform engineer | Example Learning | 60000–70000 | onsite | 命中 `exclude_title_keywords` 與 `salary_floor` | —（null） | — | `filtered_out` | null | `unfit`／— |
-| 1001 | Verification failure remote platform engineer | Example Platform | 100000–120000 | remote | pass | 80 | 合成重試情境 | `letter_failed` | failed／rounds=1／內容為空（reviewer 回不合法輸出，全部 runner 耗盡） | `recommended`／`failed` |
+| 1001 | Verification failure remote platform engineer | Example Platform | 100000–120000 | remote | pass | 80 | 合成重試情境 | `letter_failed` | null（reviewer 回不合法輸出，全部 runner 耗盡，不產出信件） | `recommended`／`failed` |
 | 1002 | Verification ready hybrid backend engineer | Example Services | 110000–130000 | hybrid | pass | 90/90/90/90 → 90 | 合成核准情境 | `letter_ready` | approved／rounds=1／apply pending→applied | `recommended`／`ready` |
 | 1003 | Verification low score cloud engineer | Example Operations | 90000–100000 | onsite | pass | 60/60/60/60 → 60 | 合成低分情境 | `scored` | null | `not_recommended`／— |
 | 1004 | Verification unknown salary platform engineer | Example Ventures | 未揭露（NULL） | onsite | `salary_floor` 與一條必要條件皆判 `unknown`，JD 完整故彙總為 pass | 70/70/70/70 → 70 | 合成資訊不足情境 | `scored` | null | `not_recommended`／— |
@@ -117,7 +117,7 @@ Cake 列表以 `__NEXT_DATA__` 與 DOM 收割兩種素材各擷取一次；內�
 | S7 | 驗證來源欄位正規化 | 5 筆逐欄＝§3.2 共同欄位＋各自 title/company/salary/remote/content_hash | V2·R2 | ✅ |
 | S8 | 驗證硬規則彙總分流與逐條判定 | `#1000` filter_hits=`[exclude_title_keywords, salary_floor]`→`filtered_out`（結構化即淘汰、該筆零 Agent 呼叫）；`#1004` 的 `salary_floor` 與一條必要條件皆判 `unknown`，但 JD 完整故彙總為 `pass`→`queued`，`filter_hits` 為空；其餘 3 筆全 `pass` 進評分；通過結構化條件的 4 筆各恰一次 `role=filter` 呼叫，`filter_results` 逐條含必備／加分標記且未滿足的加分條件不影響彙總 | V2·R3 | ✅ |
 | S9 | 驗證評分四維與分流，且 letter 零 Agent | `#1002`=90×4、`#1001`=80、`#1004`=70×4、`#1003`=60×4，reason 各＝§3.2；`#1002/#1001` shortlisted、`#1003/#1004` scored；letter=null、drafter/reviewer 呼叫=0；filter=4、scorer=4 | V2·R4 | ✅ |
-| S10 | 要求生成後驗證信件與 Agent 稽核 | 對 2 筆 shortlisted `letter request`→`requested:<id>`；`--stage letter`＝`lettered:2`；`#1002` approved/rounds=1/apply=pending、`#1001` 首輪耗盡全部 reviewer runner 記為 failed/rounds=1 且信件內容為空；轉換含 `shortlisted→letter_requested`；calls filter=4/scorer=4/drafter=2/reviewer=4（3 次 ok=false）；runner=checked-in fake | V2·R5 | ✅ |
+| S10 | 要求生成後驗證信件與 Agent 稽核 | 對 2 筆 shortlisted `letter request`→`requested:<id>`；`--stage letter`＝`lettered:2`；`#1002` approved/rounds=1/apply=pending、`#1001` 首輪耗盡全部 reviewer runner，letter 為 null；轉換含 `shortlisted→letter_requested`；calls filter=4/scorer=4/drafter=2/reviewer=4（3 次 ok=false）；runner=checked-in fake | V2·R5 | ✅ |
 | S11 | 重跑抓取與階段冪等 | 重跑 `fetched:5/new:0`；`--stage filter`＝`filtered_out:0／queued:0`、`--stage score`＝`scored:0`；Job=5、Score=4、Letter=2、Agent calls=16 均未增 | V2·R7 | ✅ |
 | S12 | 安全 SQLite snapshot 與 Run stats | snapshot 只含契約欄位與 hash（JD 只留 `description_sha256`／長度，JD 與 Agent payload 的 PII 只留計數）；首次 `run` 的 `runs.Stats`＝`{fetched:5,new:5,queries:3,errors:0}`、冪等重跑那筆 `new:0`，皆無 filter/score/letter 統計 | V1/V2·R8 | ✅ |
 | S54 | JD 與稽核 payload 的 PII 遮罩 | `jobs.description` 全表 `pii_matches=0` 且恰 1 筆（`#1004`）帶 `[EMAIL]`／`[PHONE]` 佔位；`agent_calls` 全表 `pii_matches=0`，其 filter 與 scorer 共 2 筆 payload 帶佔位且 token 用量完整保留（`masked==masked_with_usage`），呼叫未被整筆作廢 | V2·R8 | ✅ |

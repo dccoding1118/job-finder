@@ -132,12 +132,11 @@ if (mode === "live-snapshot") {
   if (phase === "complete") {
     assert.equal(scored.length, 1);
     assert.equal(lettered.length, 1);
-    assert.ok(["approved", "failed"].includes(lettered[0].letter.status));
+    assert.ok(["approved", "finalized"].includes(lettered[0].letter.status));
     assert.ok(data.agent_calls.some(({ role, ok }) => role === "scorer" && ok));
     assert.ok(data.agent_calls.some(({ role, ok }) => role === "drafter" && ok));
-    // A draft that fails the anti-hallucination guard never reaches the reviewer,
-    // so "failed" is a legal terminal state without a reviewer call; only an
-    // approved letter proves the reviewer ran.
+    // A finalized letter is the last round's version, kept without a final review,
+    // so only an approved letter proves the reviewer ran.
     if (lettered[0].letter.status === "approved") {
       assert.ok(data.agent_calls.some(({ role, ok }) => role === "reviewer" && ok));
     }
@@ -287,22 +286,17 @@ if (mode === "snapshot") {
     ]);
   } else {
     assert.deepEqual([jobs[1002].apply_state, jobs[1002].letter.status, jobs[1002].letter.rounds], ["pending", "approved", 1]);
-    // #1001 exhausts every reviewer runner on its first round. The letter is
-    // recorded with no content so the job can leave `letter_requested`, and the
-    // user decides whether to ask for another attempt.
-    assert.deepEqual([jobs[1001].apply_state, jobs[1001].letter.status, jobs[1001].letter.rounds], [null, "failed", 1]);
-    assert.equal(jobs[1001].letter.runner_review, "");
-    assert.equal(jobs[1001].letter.has_name_placeholder, false);
-    assert.equal(jobs[1001].letter.has_contact_placeholder, false);
+    // #1001 exhausts every reviewer runner on its first round. It produced no
+    // usable letter, so it records none: the state and the audited calls carry the
+    // outcome, and the user decides whether to ask for another attempt.
+    assert.equal(jobs[1001].letter, null);
+    assert.equal(jobs[1001].apply_state, null);
+    assert.equal(jobs[1002].letter.runner_draft, "claude");
     assert.equal(jobs[1002].letter.runner_review, "codex");
     assert.equal(jobs[1002].letter.has_name_placeholder, true);
     assert.equal(jobs[1002].letter.has_contact_placeholder, true);
-    for (const id of [1001, 1002]) {
-      assert.equal(jobs[id].letter.runner_draft, "claude");
-      assert.equal(jobs[id].letter.score_revision, jobs[id].score_revision);
-      assert.equal(jobs[id].letter.filter_revision, jobs[id].filter_revision);
-    }
-    assert.equal(jobs[1001].letter.review_entries, 1);
+    assert.equal(jobs[1002].letter.score_revision, jobs[1002].score_revision);
+    assert.equal(jobs[1002].letter.filter_revision, jobs[1002].filter_revision);
     assert.equal(jobs[1002].letter.review_entries, 1);
     assertAgentCalls(data.agent_calls, [
       { role: "drafter", runner: "claude", ok: true, count: 2 },
@@ -397,9 +391,7 @@ if (mode === "api-detail") {
     assert.equal(data.process_state, "letter_failed");
     assert.deepEqual([data.verdict, data.letter_state], ["recommended", "failed"]);
     assert.equal(data.score.total, 80);
-    assert.equal(data.letter.status, "failed");
-    assert.equal(data.letter.rounds, 1);
-    assert.equal(data.letter.content, "");
+    assert.equal(data.letter, null);
   }
   process.exit(0);
 }

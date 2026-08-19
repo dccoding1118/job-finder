@@ -281,11 +281,14 @@ func (p Pipeline) LetterWithStats(ctx context.Context, limit int) (StageStats, e
 			// calls all record.
 			p.logger().Error("letter failed", "stage", "letter", "job_id", jobID, "duration_ms", time.Since(startedAt).Milliseconds(), "error", e)
 		}
-		if err := p.Store.SaveLetter(ctx, store.LetterInput{JobID: job.ID, Content: result.Content, Status: result.Status, ReviewLog: result.ReviewLog, Rounds: result.Rounds, RunnerDraft: result.DraftRunner, RunnerReview: result.ReviewRunner, FilterRevision: snapshot.Revisions.Filter, ScoreRevision: snapshot.Revisions.Score}); err != nil {
-			return stats, err
-		}
+		// A run that produced no usable letter records no Letter at all: the state
+		// says it failed, the audited calls say why, and an empty row would only be
+		// a letter that is not one.
 		state := "letter_failed"
 		if result.Status == "approved" || result.Status == "finalized" {
+			if err := p.Store.SaveLetter(ctx, store.LetterInput{JobID: job.ID, Content: result.Content, Status: result.Status, ReviewLog: result.ReviewLog, Rounds: result.Rounds, RunnerDraft: result.DraftRunner, RunnerReview: result.ReviewRunner, FilterRevision: snapshot.Revisions.Filter, ScoreRevision: snapshot.Revisions.Score}); err != nil {
+				return stats, err
+			}
 			state = "letter_ready"
 			stats.LettersOK++
 		} else {
