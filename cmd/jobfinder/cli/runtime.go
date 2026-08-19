@@ -77,6 +77,10 @@ func loadRuntime(path string) (*runtime, error) {
 		MaxFilterPerDay: cfg.LLM.MaxFilterPerDay, MaxScorePerDay: cfg.LLM.MaxScorePerDay,
 		MaxLetterPerDay: cfg.LLM.MaxLetterPerDay, MaxLetterLength: cfg.LLM.MaxLetterLength,
 		MaxLetterRounds: cfg.LLM.MaxLetterRounds, MinInterval: interval,
+		// Every copy of this value made later — the API's and the resident worker's
+		// — reports into this one record, so what the process has in flight is
+		// visible whichever of them is running it.
+		Activity: &pipeline.Activity{},
 	}
 	if cfg.Scoring.Threshold == nil {
 		p.Threshold = 75

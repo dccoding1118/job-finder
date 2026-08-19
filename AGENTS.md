@@ -151,6 +151,8 @@ Go 不保證在裸 PATH；以 `mise run <task>` 或 `mise exec -- go <args>` 執
 | Scorer 的 `reason` 由 prompt 要求 40~60 字、驗證容忍到 100 字，兩者不得相等 | 相等會讓略微超出就整筆重跑，白付 token |
 | 單筆插隊的閘門守的是**單次 Agent 呼叫**而非整趟批次；插隊不受自動處理開關與每日預算限制，用量照常計入 | 守整趟批次會讓插隊等到整批跑完，失去插隊的意義 |
 | 瀏覽輔助來源的搜尋條件由使用者在該網站自行設定，系統不生成搜尋 URL；`jobfinder queries show` 只列印批次比對來源的展開 query | 代為組裝搜尋連結等同跨過該網站的人機驗證邊界 |
+| 抓取一律邊抓邊寫：來源逐批交付，pipeline 收到即入庫並更新 `runs` 的心跳。`TouchRun` 對已收尾的輪次是 no-op | 整批回傳會讓十分鐘的抓取在資料庫上完全靜止，正常與卡死無從分辨，中途中止則全批作廢；遲到的回報若能改寫已收尾的輪次，歷史統計會被覆寫 |
+| 進行中的 Agent 工作只存行程記憶體（`pipeline.Activity`），不落 DB | 落 DB 會在每次異常結束後留下永遠清不掉的假進行中，比沒有這個訊號更糟 |
 | Cake 是 SPA：`extension/content/` 對 `https://www.cake.me/*` 單一注入，由腳本內自行路由；職缺頁只讀渲染後 DOM，不讀 `__NEXT_DATA__` | MV3 content script 只對文件載入求值，soft navigation 後活著的是舊頁腳本且無錯誤，功能靜默失效 |
 
 判定共六類：`unfit`／`pending_detail`（待看）／`pending_screen`（篩選中，`new`）／`pending_score`（評分中，`queued`）／`not_recommended`／`recommended`。判定名稱說的是系統正在做什麼，不是狀態名；由 API viewmodel 從 `process_state` ＋現行 score 導出，不存 DB 欄位。

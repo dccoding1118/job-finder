@@ -67,7 +67,7 @@ Job viewmodel 另回四組 revision：`current_filter_revision`／`current_score
 | `POST /api/v1/jobs/{id}/apply` | `apply_state`、選填 `note` | 更新後 Job 狀態與新 StatusEvent | 非法轉換或不存在 4xx |
 | `GET /api/v1/queue` | 選填 `limit`、`cursor` | `discovered` Job page，含原始連結 | 非法分頁 400 |
 | `POST /api/v1/runs` | 無 | `{ "status": "started" }` 或 `{ "status": "already_running" }` | 啟動失敗 500 |
-| `GET /api/v1/runs` | 選填 `limit`、`cursor` | Run page，依開始時間新到舊；每輪含抓取事實與該輪職缺的現行判定分布 | 非法分頁 400 |
+| `GET /api/v1/runs` | 選填 `limit`、`cursor` | Run page，依開始時間新到舊；每輪含執行狀態、抓取事實與該輪職缺的現行判定分布 | 非法分頁 400 |
 | `POST /api/v1/capture/list` | `source` ＋列表 items | 每筆的 job ID、`verdict`、總分（無則 null）、`filter_hits`（無則 null）與是否本次新建 | payload 不合法 400；ingest 失敗 500 |
 | `POST /api/v1/capture/job` | `source` ＋內頁素材 | 該筆的 job ID、`verdict`、現行四維分數與 reason（無則 null）、`filter_hits`（無則 null）、是否為快取結果 | payload 不合法 400；ingest 失敗 500 |
 | `GET /api/v1/profile` | 無 | `status`、結構化 `profile`（含程式物化的 `derived`）、兩個 revision、摘要、issues、重新處理預估；header 帶 ETag | 認證或檔案 I/O 失敗 |
@@ -79,7 +79,7 @@ Job viewmodel 另回四組 revision：`current_filter_revision`／`current_score
 | `POST /api/v1/duplicates/{id}/merge` | 候選 ID | 合併兩群組並回更新後的 canonical Job；候選轉 `merged` | 候選不存在 404；已裁決 409 |
 | `POST /api/v1/duplicates/{id}/ignore` | 候選 ID | 候選轉 `ignored`，回 `{ "status": "ignored" }` | 同上 |
 | `POST /api/v1/jobs/{id}/unmerge` | Job ID | alias 還原為合併前狀態與獨立群組，回更新後 Job | 非 `merged` 狀態 409；不存在 404 |
-| `GET /api/v1/status` | 無 | 各 `process_state` 的職缺筆數、當日篩選與評分預算餘額、最近 20 筆 Agent 呼叫摘要、每日 token 用量、`settings`（欄位同 `GET /api/v1/settings`） | 讀取失敗 500；非 GET 405 |
+| `GET /api/v1/status` | 無 | 各 `process_state` 的職缺筆數、本服務進行中的工作、當日篩選與評分預算餘額、最近 20 筆 Agent 呼叫摘要、每日 token 用量、`settings`（欄位同 `GET /api/v1/settings`） | 讀取失敗 500；非 GET 405 |
 
 清單 endpoint 預設每頁 20 筆，`limit` 可設為 1–100。`next_cursor` 是 API 產生的不透明字串；有後續資料時回傳字串，末頁回 `null`。client 只能原樣帶回 `cursor`，不得解析或自行產生；非法 `limit` 或 `cursor` 回 `400 invalid_request`。Job cursor 沿用當次篩選與分數排序，篩選條件變更時必須從第一頁重新查詢。
 
@@ -98,9 +98,13 @@ Job viewmodel 另回四組 revision：`current_filter_revision`／`current_score
 
 `GET /api/v1/status` 是處理進度的唯一讀取面：回 `jobs`（各 `process_state` 筆數，`new` 與 `queued` 即常駐 worker 的待消化量）、`filter_budget` 與 `score_budget`（各含 `remaining`、`limited`）、`agent_calls`（最近 20 筆的 `role`、`runner`、`model`、`ok`、`duration_ms`、`job_id`、`created_at` 與該次的 `input_tokens`、`output_tokens`、`cache_read_tokens`、`cache_write_tokens`、`reasoning_tokens`、`cost_usd`）、`agent_usage_daily` 與 `settings`（欄位同 `GET /api/v1/settings`）。`agent_usage_daily` 是近 14 天的用量彙總，每列為一組「台北日界 × runner × model」，含 `date`、`runner`、`model`、`calls` 與上述六個用量欄位的加總，依日期新到舊排序；成功與失敗的呼叫都計入，因為驗證未過的回應同樣燒掉了 token。用量與費用一律是 runner 自報值，API 不自行換算價格，故不自報的 runner 其 `cost_usd` 為 0。`ok` 表示「runner 有回應且回應通過契約驗證」，與評分高低無關——低分或不推薦仍是成功呼叫。成功呼叫不附任何 Agent 輸出；未通過的呼叫附 `failure_kind` 與截斷至 400 字元的 `detail`。`failure_kind` 由 agents 模組分類：`runner_error`（CLI 自報錯誤，含額度、認證與逾時，優先於內容驗證）、`empty_output`、`no_json`、`invalid_json`、`reason_too_long`、`score_out_of_range`、`invalid_condition`、`invalid_content`。此 route 不含 Profile 內容、JD、薪資與信件內容。
 
+`in_flight` 是本服務程序此刻正在跑的 Agent 工作，每筆含 `stage`、`elapsed_ms`、`started_at` 與（涵蓋單一職缺時）`job_id`。它回答 `agent_calls` 無法回答的問題：稽核列只在呼叫結束後才存在，呼叫進行中的數分鐘裡整份 status 沒有任何欄位會變。空閒時回空陣列而非省略欄位，讓讀取端能區分「沒有工作在跑」與「這個版本說不出來」。它只涵蓋本程序：抓取跑在另一個程序，進度改由 `GET /api/v1/runs` 的執行狀態呈現。
+
 `POST /api/v1/runs` 觸發一次**抓取**（fetch），建立 request context 以外的背景工作，trigger 記為 `manual-extension`；server shutdown 時停止未完成工作。filter／score／letter 不由此觸發——那三階段由常駐 worker 持續消化，無需手動啟動（見 [design-pipeline](design-pipeline.md) §2.2）。
 
 `GET /api/v1/runs` 的每輪回應含兩部分：`runs.stats` 的抓取事實（`fetched`／`new`／`queries`／`errors`），以及該輪職缺的**現行**判定分布（推薦／不推薦／評分中／不適合筆數），後者由 viewmodel 經 `SummarizeRunJobs(runID)` 即時查詢導出，不是抓取當下的快照（PRD R8.1）。因此展開一輪舊 run 看到的是那批職缺此刻的進度。
+
+每輪另含 `heartbeat_at` 與導出的 `state`：`done`（已收尾且無錯誤）、`failed`（已收尾且帶錯誤）、`running`（未收尾且心跳在五分鐘內）、`stalled`（未收尾且心跳沉默或不存在）。`state` 不存 DB，由 viewmodel 依讀取當下的時間導出。五分鐘的依據是單次來源請求的最差耗時——設定延遲加 30 秒逾時加兩次重試約一分半——門檻必須明顯高於它，否則健康的抓取會被報成中斷。心跳為 NULL 的舊資料一律導出 `stalled`：那些輪次屬於早已結束的程序。
 
 兩個 capture endpoint 的 payload 必帶 `source`（`104` / `cake`），據以選用解析器；未知或缺 `source` 回 `400 invalid_request`，不猜測平台。素材欄位依來源與頁面型態而異：
 

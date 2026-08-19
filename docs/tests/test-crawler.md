@@ -31,6 +31,8 @@
 | CT-02 | 以三個 direction query、地區與頁數執行 `Fetch` | 每個 direction 的 keywords 組成一次搜尋；不同 direction 不混入同一 request；最多三組 |
 | CT-03 | `SearchSpec` 的 queries、direction、keywords、地區或 `MaxPages` 為空或非法 | 在送出請求前回傳欄位錯誤；不產生 HTTP 請求 |
 | CT-04 | 設定自訂 UA、Referer 或平台必要 header | 每個請求均帶正確 header；未設定時使用安全的預設值 |
+| CT-05 | 執行 `Fetch` 並收集交付的批次 | 每筆解析出的職缺各成一個批次，另有每頁結束的不帶職缺批次；累積結果等同該 spec 應抓到的全部職缺 |
+| CT-06 | `emit` 在第一個批次回錯 | `Fetch` 立即回傳該錯誤；後續列表頁與內頁不再送出請求 |
 
 ### 3.2 Yourator 回應映射與分頁
 

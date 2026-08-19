@@ -2,7 +2,9 @@ package api
 
 import (
 	"net/http"
+	"time"
 
+	"github.com/dccoding1118/job-finder/internal/pipeline"
 	"github.com/dccoding1118/job-finder/internal/store"
 )
 
@@ -132,11 +134,60 @@ func jobView(detail store.JobDetail, active activeRevisions) map[string]any {
 // runView pairs the fetch facts a run recorded with the current verdicts of the
 // jobs it discovered. The distribution is queried now, not snapshotted then:
 // the worker keeps scoring those jobs long after the run finished.
-func runView(run store.Run, states map[string]int) map[string]any {
+// runStaleAfter is how long a run may go without reporting progress before it
+// is presented as stalled rather than as running. A single source request can
+// take a minute and a half on its own — the configured delay, a 30 second
+// timeout and two retries — so the window has to clear that comfortably or a
+// healthy fetch would be reported as dead.
+const runStaleAfter = 5 * time.Minute
+
+// runState names what a reader needs to know about a run and cannot see from
+// its counts: a finished run and a fetch whose process was killed both stop
+// writing, and only the heartbeat separates them.
+const (
+	runStateRunning = "running"
+	runStateStalled = "stalled"
+	runStateDone    = "done"
+	runStateFailed  = "failed"
+)
+
+func runView(run store.Run, states map[string]int, now time.Time) map[string]any {
 	return map[string]any{
-		"id": run.ID, "started_at": run.StartedAt, "finished_at": run.FinishedAt, "trigger": run.Trigger,
+		"id": run.ID, "started_at": run.StartedAt, "finished_at": run.FinishedAt, "heartbeat_at": run.HeartbeatAt,
+		"state": runState(run, now), "trigger": run.Trigger,
 		"stats": run.Stats, "error": run.Error, "verdicts": verdictCounts(states),
 	}
+}
+
+// runState derives a run's state. A run recorded before heartbeats existed has
+// none, and an unfinished one of those is reported as stalled rather than as
+// running: it belongs to a process that ended long ago.
+func runState(run store.Run, now time.Time) string {
+	if run.FinishedAt != nil {
+		if run.Error != nil {
+			return runStateFailed
+		}
+		return runStateDone
+	}
+	if run.HeartbeatAt != nil && now.Sub(*run.HeartbeatAt) < runStaleAfter {
+		return runStateRunning
+	}
+	return runStateStalled
+}
+
+// inFlightViews reports the work a process is running right now with how long
+// each unit has been running, which is the one thing an audited call cannot
+// say: it is only written once the call is over.
+func inFlightViews(units []pipeline.Unit, now time.Time) []map[string]any {
+	views := make([]map[string]any, 0, len(units))
+	for _, unit := range units {
+		view := map[string]any{"stage": unit.Stage, "started_at": unit.StartedAt, "elapsed_ms": now.Sub(unit.StartedAt).Milliseconds()}
+		if unit.JobID > 0 {
+			view["job_id"] = unit.JobID
+		}
+		views = append(views, view)
+	}
+	return views
 }
 
 func verdictCounts(states map[string]int) map[string]int {

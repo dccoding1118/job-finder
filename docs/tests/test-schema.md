@@ -91,6 +91,8 @@
 |---|---|---|
 | ST-50 | `StartRun` 後 `FinishRun` | 同一 Run 具有 started/finished 時間、合法 trigger、抓取事實 stats JSON（fetched／new／queries／errors）與可選 error 摘要 |
 | ST-51 | 使用不合法 trigger 或無效 stats JSON 建立/結束 Run | 被拒絕，資料庫無部分紀錄 |
+| ST-51A | `StartRun` 後 `TouchRun` 帶入累計數 | Run 仍未收尾；stats 更新為累計數；`heartbeat_at` 移到 touch 當下的時刻（`StartRun` 已寫入初始心跳） |
+| ST-51B | 對已 `FinishRun` 的 Run 呼叫 `TouchRun` | 不報錯且完全不改寫：`finished_at` 與收尾時的 stats 保持原樣 |
 | ST-52 | `UpsertJob` 新建職缺並帶入 runID | 寫入 `discovered_by_run_id`；同一職缺後續 upsert（含 partial 補全文）不更動該欄位 |
 | ST-53 | `UpsertJob` 以 NULL runID 新建職缺（capture 入庫） | `discovered_by_run_id` 為 NULL |
 | ST-54 | `SummarizeRunJobs(runID)` | 依 `discovered_by_run_id` 回傳該輪職缺的現行判定分布；不含其他輪次與 capture 入庫的職缺 |

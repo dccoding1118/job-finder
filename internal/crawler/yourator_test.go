@@ -54,7 +54,7 @@ func TestYouratorGroupsDirectionQueriesAndDeduplicatesDetails(t *testing.T) {
 	server := httptest.NewServer(mux)
 	defer server.Close()
 
-	jobs, err := (Yourator{BaseURL: server.URL, CheckRobots: true}).Fetch(context.Background(), threeQuerySpec())
+	jobs, err := collect(t, Yourator{BaseURL: server.URL, CheckRobots: true}, threeQuerySpec())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +88,7 @@ func TestYouratorKeepsPageWhenListItemsAreUnusable(t *testing.T) {
 	server := httptest.NewServer(mux)
 	defer server.Close()
 
-	jobs, err := (Yourator{BaseURL: server.URL}).Fetch(context.Background(), oneQuerySpec())
+	jobs, err := collect(t, Yourator{BaseURL: server.URL}, oneQuerySpec())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -180,7 +180,7 @@ func TestYouratorRetriesAndUsesInjectedDelay(t *testing.T) {
 		RandomFloat: func() float64 { return .5 },
 		Sleep:       func(_ context.Context, delay time.Duration) error { delays = append(delays, delay); return nil },
 	}
-	jobs, err := y.Fetch(context.Background(), SearchSpec{Queries: []SearchQuery{{Direction: "P1", Keywords: []string{"cloud"}}}, MaxPages: 1})
+	jobs, err := collect(t, y, SearchSpec{Queries: []SearchQuery{{Direction: "P1", Keywords: []string{"cloud"}}}, MaxPages: 1})
 	if err != nil || len(jobs) != 0 || attempts != 2 {
 		t.Fatalf("jobs/attempts/error = %d/%d/%v", len(jobs), attempts, err)
 	}
@@ -197,7 +197,7 @@ func TestYouratorStopsForRobotsAndChallenge(t *testing.T) {
 		_, _ = w.Write([]byte("User-agent: *\nDisallow: /api/\n"))
 	}))
 	defer robotsServer.Close()
-	if _, err := (Yourator{BaseURL: robotsServer.URL, CheckRobots: true}).Fetch(context.Background(), oneQuerySpec()); err == nil || !strings.Contains(err.Error(), "disallows") || requests != 1 {
+	if _, err := collect(t, Yourator{BaseURL: robotsServer.URL, CheckRobots: true}, oneQuerySpec()); err == nil || !strings.Contains(err.Error(), "disallows") || requests != 1 {
 		t.Fatalf("robots error/requests = %v/%d", err, requests)
 	}
 
@@ -206,7 +206,7 @@ func TestYouratorStopsForRobotsAndChallenge(t *testing.T) {
 		_, _ = w.Write([]byte("<title>Verify you are human</title>"))
 	}))
 	defer challengeServer.Close()
-	if _, err := (Yourator{BaseURL: challengeServer.URL}).Fetch(context.Background(), oneQuerySpec()); err == nil || !strings.Contains(err.Error(), "verification challenge") {
+	if _, err := collect(t, Yourator{BaseURL: challengeServer.URL}, oneQuerySpec()); err == nil || !strings.Contains(err.Error(), "verification challenge") {
 		t.Fatalf("challenge error = %v", err)
 	}
 }
@@ -223,7 +223,7 @@ func TestYouratorBoundsStalledRequestWithClientTimeout(t *testing.T) {
 
 	y := Yourator{BaseURL: server.URL, Client: &http.Client{Timeout: 100 * time.Millisecond}}
 	start := time.Now()
-	_, err := y.Fetch(context.Background(), oneQuerySpec())
+	_, err := collect(t, y, oneQuerySpec())
 	elapsed := time.Since(start)
 	if err == nil || !strings.Contains(err.Error(), "request Yourator") {
 		t.Fatalf("stalled fetch error = %v", err)
@@ -254,4 +254,17 @@ func threeQuerySpec() SearchSpec {
 		{Direction: "P2", Keywords: []string{"backend", "Go"}},
 		{Direction: "P3", Keywords: []string{"Kubernetes", "reliability"}},
 	}, MaxPages: 1}
+}
+
+// collect drains a streaming fetch into a slice, which is what the assertions
+// here are written against: they check what a spec harvests, not how it is
+// handed over.
+func collect(t *testing.T, y Yourator, spec SearchSpec) ([]RawJob, error) {
+	t.Helper()
+	jobs := []RawJob{}
+	err := y.Fetch(context.Background(), spec, func(batch Batch) error {
+		jobs = append(jobs, batch.Jobs...)
+		return nil
+	})
+	return jobs, err
 }

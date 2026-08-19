@@ -35,6 +35,7 @@ type fakeProcessor struct {
 	// processedNow receives every job the API pushed through immediately. It is a
 	// channel because that work runs in the background, outside the response.
 	processedNow chan int64
+	inFlight     []pipeline.Unit
 }
 
 func (f *fakeProcessor) IngestList(context.Context, []crawler.RawJob) ([]pipeline.IngestResult, error) {
@@ -68,6 +69,8 @@ func (f *fakeProcessor) ProcessJobNow(_ context.Context, id int64) error {
 func (f *fakeProcessor) FilterBudgetRemaining(context.Context) (int, bool, error) {
 	return f.filterRemain, f.filterLimited, nil
 }
+
+func (f *fakeProcessor) InFlight() []pipeline.Unit { return f.inFlight }
 
 func (f *fakeProcessor) ScoreBudgetRemaining(context.Context) (int, bool, error) {
 	return f.scoreRemain, f.scoreLimited, nil

@@ -17,12 +17,16 @@
 
 ```
 jobfinder run [--source NAME]
-  1. StartRun(trigger)
-  2. 逐全自動 source（Yourator）抓取 → store.UpsertJob（記 discovered_by_run_id）
-     → store.LinkOrSuggestDuplicate（跨來源分群，見 §3.5）
+  1. StartRun(trigger)                      // 一併寫入初始心跳
+  2. 逐全自動 source（Yourator）串流抓取，每交付一批：
+       store.UpsertJob（記 discovered_by_run_id）
+       → store.LinkOrSuggestDuplicate（跨來源分群，見 §3.5）
+       → Progress(累計數) → store.TouchRun（更新 stats 與心跳）
      source 級錯誤記 stats.errors 續行
   3. FinishRun(stats)
 ```
+
+**邊抓邊寫**：來源交付一批就寫入一批，`Progress` 隨即帶著累計數回報。抓取跑在自己的程序（排程或 API 觸發），服務程序的記憶體看不到它，`runs` 的心跳是它唯一能對外說話的管道。`Progress` 回錯即中止該趟抓取——記錄不下去的批次，後面的也不必再抓。
 
 `run` 只做 fetch，抓完即退出，不等待任何 LLM 階段。Run stats 只記**抓取事實**：`fetched`（本輪取得筆數）、`new`（本輪新建筆數）、`queries`（實際展開的搜尋條件）、`errors`。相同來源內容重跑時 `new` 為零。
 
@@ -244,6 +248,8 @@ activation 本身只做狀態切換與重新入隊，不呼叫 LLM；重篩的 F
 
 worker 與各階段以 `log/slog` 輸出結構化記錄至 stderr，由 systemd 收進 journald（`journalctl --user -u jobfinder-api`）。每筆 Agent 呼叫另有 `agent_calls` 稽核列，經 [design-api](design-api.md) 的 `GET /api/v1/status` 對外呈現。
 
+**進行中的工作**：`agent_calls`、職缺狀態與 run 統計都是工作**結束後**才寫，單次 Agent 呼叫要跑數十秒到數分鐘，那段時間三者全部靜止。`Activity` 補上這一層：Agent 支撐的每個工作單位（filter、score、letter）在呼叫前後各記一次，`InFlight()` 回報階段、職缺與起始時刻，由 `GET /api/v1/status` 揭露。它存在行程記憶體、不落 DB——進行中只對執行中的程序為真，落 DB 會在每次異常結束後留下永遠清不掉的假進行中。抓取不走這條：它在別的程序，走 `runs` 的心跳。
+
 | 事件 | 級別 | 欄位 |
 |---|---|---|
 | 取得一批待處理職缺 | Info | `stage`、`jobs`、`budget_remaining`、`budget_limited` |
@@ -259,6 +265,7 @@ worker 與各階段以 `log/slog` 輸出結構化記錄至 stderr，由 systemd 
 | filter 階段完成一批 | Info | `stage`、`processed`、`filtered_out`、`queued` |
 | worker 單次消化 | Info | `filtered`、`scored`、`lettered` |
 | 每日預算用盡而略過取件 | Debug | `stage`、`reason`、`max_per_day` |
+| 抓取交付一批並寫入 | Info | `run_id`、`direction`、`page`、`fetched`、`new` |
 
 log 不得含 JD、Profile、薪資、求職信內容或 Agent 原始輸入輸出；只記識別子、狀態與計量。無待處理件的空轉不產生記錄。
 
@@ -286,6 +293,8 @@ repo 內提供 `configs/config.example.yaml`；實際 `config.yaml` 含本機 to
 
 - 全流程整合：Yourator-compatible loopback fixture 經 production adapter 完成 fetch，加上 artifact 內 fake Runner 由 worker 消化至終態，精確斷言來源 request、正規化欄位、各狀態筆數與 run stats。
 - fetch 邊界：`run` 只產生 `new`／`discovered` 職缺即退出，斷言不呼叫 Scorer、不寫入判定統計。
+- fetch 邊抓邊寫：每次 `Progress` 回報時已寫入的職缺數與回報的累計數一致；`Progress` 回錯時抓取在該批停止。
+- 進行中記錄：`Activity` 依起始時刻由舊至新回報，結束後移除，重複結束無副作用，nil 值不記錄也不 panic。
 - worker：待處理件出現後於掃描間隔內被取件；三個入口（fetch、CLI、capture）寫入的職缺走同一消化路徑。
 - 冪等：於 score 階段中斷後重啟 worker，斷言不重複呼叫已完成項。
 - 每日預算：超出 `max_score_per_day` 後停止取件、職缺停留 `queued` 且不記 errors；跨台北日界後恢復；計數由 `agent_calls` 導出，重啟不歸零。

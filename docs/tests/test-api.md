@@ -112,4 +112,6 @@ extension 的實機互動不由 API L1 取代，最終以 [verify](../verify.md)
 | AT-71 | 對信件階段 Job 或不存在的 Job POST reprocess | 分別回 409 `reprocess_not_allowed` 與 404；狀態不變 |
 | AT-71B | 對 `filtered_out` Job POST reprocess | 回 200 與 verdict `pending_screen`；`filter_hits` 與 `filter_result` 皆清空 |
 | AT-72 | GET status | 回各處理狀態筆數（含 `new` 與 `queued`）、篩選與評分預算餘額與最近 Agent 呼叫（含 `role=filter`）；失敗呼叫附失敗類別與截斷回應、成功呼叫不附任何一者（低分仍是成功）；非 GET 回 405 |
+| AT-87 | GET runs 的執行狀態 | 已收尾且無錯誤回 `done`、已收尾且帶錯誤回 `failed`、未收尾且心跳在門檻內回 `running`、心跳逾期或不存在回 `stalled`；`heartbeat_at` 一併回傳 |
+| AT-88 | GET status 的 `in_flight` | 有工作在跑時每筆含 `stage`、`job_id`、`started_at` 與不小於實際已耗時的 `elapsed_ms`；閒置時為空陣列而非缺欄位 |
 | AT-86 | GET status 的用量欄位 | 每筆 Agent 呼叫附 `model` 與六個用量欄位；另回 `agent_usage_daily`，每列含 `date`、`runner`、`model`、`calls` 與六個用量欄位加總，依日期新到舊；無任何呼叫時為空陣列而非缺欄位 |

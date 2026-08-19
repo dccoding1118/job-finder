@@ -2,13 +2,16 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
 	"github.com/dccoding1118/job-finder/internal/agents"
 	"github.com/dccoding1118/job-finder/internal/crawler"
 	"github.com/dccoding1118/job-finder/internal/paths"
+	"github.com/dccoding1118/job-finder/internal/pipeline"
 	"github.com/dccoding1118/job-finder/internal/profile"
 	"github.com/dccoding1118/job-finder/internal/store"
 	"github.com/spf13/cobra"
@@ -153,6 +156,15 @@ func runFetch(cmd *cobra.Command, rt *runtime, trigger string) error {
 	stats["queries"] = len(spec.Queries)
 	var runErr error
 	defer func() { _ = rt.store.FinishRun(cmd.Context(), runID, stats, errorSummary(runErr)) }()
+	// The run row is the only progress signal a fetch has: it runs in its own
+	// process, so nothing in the service's memory can report on it. Writing the
+	// counts and the heartbeat as each batch lands is what lets the Side Panel
+	// separate a fetch still working from one whose process is gone.
+	rt.pipeline.Progress = func(ctx context.Context, batch crawler.Batch, progress pipeline.FetchStats) error {
+		stats["fetched"], stats["new"] = progress.Fetched, progress.New
+		slog.Info("fetch progress", "run_id", runID, "direction", batch.Direction, "page", batch.Page, "fetched", progress.Fetched, "new", progress.New)
+		return rt.store.TouchRun(ctx, runID, stats)
+	}
 	fetched, err := rt.pipeline.Fetch(cmd.Context(), spec, &runID)
 	stats["fetched"], stats["new"] = fetched.Fetched, fetched.New
 	if err != nil {

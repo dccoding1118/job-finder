@@ -293,6 +293,7 @@ func TestAgentUsageColumnsArriveEmptyOnAnUpgradedDatabase(t *testing.T) {
 		"ALTER TABLE agent_calls DROP COLUMN cache_write_tokens",
 		"ALTER TABLE agent_calls DROP COLUMN reasoning_tokens",
 		"ALTER TABLE agent_calls DROP COLUMN cost_usd",
+		"ALTER TABLE runs DROP COLUMN heartbeat_at",
 		"PRAGMA user_version = 6",
 	} {
 		if _, execErr := raw.Exec(statement); execErr != nil {
@@ -383,5 +384,78 @@ func TestAgentUsageByDayGroupsOnTheTaipeiBoundaryAndDropsOldCalls(t *testing.T) 
 		if row.Calls != 1 || row.InputTokens != 100 {
 			t.Fatalf("each day holds its own call only: %+v", row)
 		}
+	}
+}
+
+// A run in flight has to report progress somewhere the next process can read
+// it: the fetch runs on its own, so nothing in the service's memory can say
+// whether it is still working.
+func TestTouchRunRecordsProgressWithoutFinishingTheRun(t *testing.T) {
+	ctx := context.Background()
+	data := openTestStore(t, filepath.Join(t.TempDir(), "runs.db"))
+	defer closeTestStore(t, data)
+
+	started := time.Date(2026, 7, 14, 9, 0, 0, 0, time.UTC)
+	data.now = func() time.Time { return started }
+	id, err := data.StartRun(ctx, RunTriggerTimer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runs, err := data.ListRuns(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 1 || runs[0].HeartbeatAt == nil || !runs[0].HeartbeatAt.Equal(started) {
+		t.Fatalf("a started run must carry the heartbeat it started with, got %+v", runs)
+	}
+
+	data.now = func() time.Time { return started.Add(90 * time.Second) }
+	stats := NewRunStats()
+	stats["fetched"], stats["new"] = 12, 4
+	if touchErr := data.TouchRun(ctx, id, stats); touchErr != nil {
+		t.Fatal(touchErr)
+	}
+	runs, err = data.ListRuns(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runs[0].FinishedAt != nil {
+		t.Fatal("a touched run must stay unfinished")
+	}
+	if runs[0].Stats["fetched"] != 12 || runs[0].Stats["new"] != 4 {
+		t.Fatalf("the counts gathered so far must be readable, got %v", runs[0].Stats)
+	}
+	if runs[0].HeartbeatAt == nil || !runs[0].HeartbeatAt.Equal(started.Add(90*time.Second)) {
+		t.Fatalf("the heartbeat must move with the progress, got %v", runs[0].HeartbeatAt)
+	}
+}
+
+// A run that already finished is history. A late touch — a slow goroutine, a
+// second process — must not reopen it or rewrite what it recorded.
+func TestTouchRunLeavesAFinishedRunAlone(t *testing.T) {
+	ctx := context.Background()
+	data := openTestStore(t, filepath.Join(t.TempDir(), "runs.db"))
+	defer closeTestStore(t, data)
+
+	id, err := data.StartRun(ctx, RunTriggerManualCLI)
+	if err != nil {
+		t.Fatal(err)
+	}
+	final := NewRunStats()
+	final["fetched"] = 30
+	if finishErr := data.FinishRun(ctx, id, final, ""); finishErr != nil {
+		t.Fatal(finishErr)
+	}
+	late := NewRunStats()
+	late["fetched"] = 7
+	if touchErr := data.TouchRun(ctx, id, late); touchErr != nil {
+		t.Fatal(touchErr)
+	}
+	runs, err := data.ListRuns(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runs[0].FinishedAt == nil || runs[0].Stats["fetched"] != 30 {
+		t.Fatalf("a finished run must keep its own record, got %+v", runs[0])
 	}
 }

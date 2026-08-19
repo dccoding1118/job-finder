@@ -13,7 +13,7 @@ const REVISION = /^sha256:[a-f0-9]{64}$/;
 // and the settings table with the runtime switches, so every snapshot mode checks
 // the same ten-table contract.
 function assertSchema(data) {
-  assert.equal(data.schema_version, 8);
+  assert.equal(data.schema_version, 9);
   assert.equal(data.journal_mode.toLowerCase(), "wal");
   assert.equal(data.foreign_keys, true);
   assert.deepEqual(data.tables, ["agent_calls", "filter_results", "job_dupe_candidates", "job_groups", "jobs", "letters", "runs", "scores", "settings", "status_events"]);
@@ -70,7 +70,7 @@ if (mode === "profile-reprocess-response") {
 
 if (mode === "profile-race") {
   const data = readJSON();
-  assert.equal(data.schema_version, 8);
+  assert.equal(data.schema_version, 9);
   const revisions = new Set(data.agent_calls.map(({ score_revision }) => score_revision).filter(Boolean));
   assert.ok(revisions.size >= 2, "agent audit did not retain multiple score revisions");
   const currentScores = data.jobs.filter((job) => job.score && job.score_revision === job.score.score_revision);
