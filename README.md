@@ -57,7 +57,7 @@ Scoring covers four dimensions: role-content fit (50%), compensation and benefit
 | Item | Linux | Windows |
 |---|---|---|
 | OS | A distribution with a systemd user session | Windows 10 / 11 |
-| Shell | bash, with `curl`, `tar`, `sha256sum` | PowerShell 5.1+ (built in) |
+| Shell | bash, with `curl`, `tar`, `unzip`, `sha256sum` | PowerShell 5.1+ (built in) |
 | Agent CLI | `claude` or `codex` on PATH | Same |
 | Browser | Chrome 114+ | Same |
 | Service persistence | `loginctl enable-linger` required, or scheduling stops at logout | Tasks trigger at logon; days without a logon are skipped |
@@ -85,11 +85,13 @@ irm https://raw.githubusercontent.com/dccoding1118/job-finder/main/scripts/boots
 
 Download the artifact and `SHA256SUMS` from [Releases](https://github.com/dccoding1118/job-finder/releases/latest), verify, extract, and run the `jobfinder install` inside:
 
+Set `VER` to the tag shown on the Releases page.
+
 ```bash
 # Linux
-VER=v0.1.0
-curl -fsSLO "https://github.com/dccoding1118/job-finder/releases/download/$VER/jobfinder_${VER}_linux_amd64.tar.gz"
-curl -fsSLO "https://github.com/dccoding1118/job-finder/releases/download/$VER/SHA256SUMS"
+REPO=dccoding1118/job-finder
+curl -fsSLO "https://github.com/$REPO/releases/download/$VER/jobfinder_${VER}_linux_amd64.tar.gz"
+curl -fsSLO "https://github.com/$REPO/releases/download/$VER/SHA256SUMS"
 sha256sum -c --ignore-missing SHA256SUMS
 tar -xzf "jobfinder_${VER}_linux_amd64.tar.gz"
 cd "jobfinder_${VER}_linux_amd64" && ./jobfinder install
@@ -97,7 +99,7 @@ cd "jobfinder_${VER}_linux_amd64" && ./jobfinder install
 
 ```powershell
 # Windows: clear the Mark of the Web after extracting, or SmartScreen will block execution
-$VER = "v0.1.0"; $name = "jobfinder_${VER}_windows_amd64"
+$name = "jobfinder_${VER}_windows_amd64"
 Expand-Archive "$name.zip" -DestinationPath . -Force
 Set-Location $name
 Get-ChildItem -Recurse | Unblock-File
@@ -114,28 +116,30 @@ The extracted executable is only the installer — it places its own copy where 
 
 `jobfinder paths` prints every location this machine actually uses — start there whenever something is not where you expect it.
 
-### 1. Fill in your profile
+### 1. Load the extension
 
-Edit the `profile` file listed by `jobfinder paths`, then check it:
+The extension is how you use jobfinder, so it comes before any other setup. It ships as its own release artifact, `jobfinder-extension_<tag>.zip` — the platform archive does not contain it, and the installer does not fetch it. **Keep it at the same version as the backend**: both are published from one tag, and nothing checks the pairing at runtime, so a mismatch misbehaves quietly rather than warning you.
+
+Extract it somewhere permanent (Chrome reads an unpacked extension from that directory on every start), then in Chrome open `chrome://extensions` → developer mode → *Load unpacked* → select that directory. The extension ID is a constant across machines and versions; use the one shown on the card.
+
+### 2. Connect it to the backend
+
+Set `api.extension_origin` in the configuration file to `chrome-extension://<extension ID>` and restart the service. Until this is set, the side panel cannot load anything. The ID never changes, so this is a one-time step.
+
+Then open the extension's options page and enter the endpoint (`http://127.0.0.1:8686` by default) and the `api.token` value from the configuration file.
+
+> On Windows, always specify the encoding when reading or writing the configuration file — PowerShell 5.1 neither writes nor reads UTF-8 by default, and a file corrupted on write fails silently. The exact commands are in the getting-started guide, §5.3.
+
+### 3. Fill in your profile
+
+The installer seeds an anonymised example profile; replace it with your own. The side panel's full-page editor is the way to do it — it validates the structure and scans for personal information on every save.
+
+Editing the `profile` file listed by `jobfinder paths` by hand works too. Either way, check the result:
 
 ```bash
 jobfinder profile lint
 # profile lint passed
 ```
-
-You can also skip ahead and use the extension's full-page editor instead, which applies the same validation and personal-information check.
-
-### 2. Load the extension
-
-In Chrome, open `chrome://extensions` → developer mode → *Load unpacked* → select the `extension/` directory. The extension ID is stable across machines; use the one shown on the card.
-
-### 3. Connect the two
-
-Set `api.extension_origin` in the configuration file to `chrome-extension://<extension ID>` and restart the service. Until this is set, the side panel cannot load anything.
-
-Then open the extension's options page and enter the endpoint (`http://127.0.0.1:8686` by default) and the `api.token` value from the configuration file.
-
-> On Windows, always specify the encoding when editing the configuration file — PowerShell 5.1 does not write UTF-8 by default, and a file corrupted this way fails silently. The exact commands are in the getting-started guide, §6.2.
 
 ### 4. Day-to-day
 
@@ -144,10 +148,10 @@ Work from the side panel. Scheduled matching runs daily at 08:30 (Asia/Taipei), 
 | Action | Linux | Windows |
 |---|---|---|
 | Match now | `systemctl --user start jobfinder-run.service` | `Start-ScheduledTask -TaskPath '\jobfinder\' -TaskName 'run'` |
-| Restart the service | `systemctl --user restart jobfinder-api.service` | `Restart-ScheduledTask -TaskPath '\jobfinder\' -TaskName 'api'` |
+| Restart the service | `systemctl --user restart jobfinder-api.service` | `Stop-ScheduledTask`, wait for the process to exit, then `Start-ScheduledTask` (guide §9) |
 | Read logs | `journalctl --user -u jobfinder-api.service` | The rotating file pointed at by `log.file` |
 
-To update, re-run the bootstrap script or run `jobfinder update` against a newer artifact; `jobfinder rollback` reverts it.
+To update, re-run the bootstrap script or run `jobfinder update` against a newer artifact; `jobfinder rollback` reverts it. Replace the extension in the same pass, so the two stay on one version.
 
 Running the backend on a different machine from the browser is possible but optional; see [the remote backend runbook](docs/guides/runbook-extension.md).
 

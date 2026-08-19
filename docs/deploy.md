@@ -101,7 +101,7 @@ Agent 稽核資料保留在 SQLite 的 `agent_calls`。
 
 安裝流程一律不觸發抓取：只確認排程已排定下一次觸發。抓取只由每日排程、操作者手動觸發，或 Side Panel 的重新整理動作啟動。
 
-Windows 的 `Start-ScheduledTask` 對已在執行的工作是 no-op，和 systemd 的 `enable --now` 是同一個陷阱：更新一律先停、等 process 真的消失、再啟動。不得將驗收部署（`.local-dev/verify/`）的 binary、設定或 state 直接覆蓋日常使用目錄。
+Windows 的 `Start-ScheduledTask` 對已在執行的工作是 no-op，和 systemd 的 `enable --now` 是同一個陷阱：更新一律先停、等 process 真的消失、再啟動。ScheduledTasks 模組沒有單一 cmdlet 能完成重啟，`Stop-ScheduledTask` 之後必須等到工作離開 `Running` 才呼叫 `Start-ScheduledTask`；服務行程在啟動時取得環境變數，改動 PATH 或補裝 Agent CLI 後同樣要走這一步。不得將驗收部署（`.local-dev/verify/`）的 binary、設定或 state 直接覆蓋日常使用目錄。
 
 ## 5. 遠端後端（選配）與維運
 
@@ -119,7 +119,7 @@ extension 的 `host_permissions` 只有 `http://127.0.0.1/*` 與 `http://[::1]/*
 |---|---|
 | 手動跑一批篩選 | `jobfinder run --stage filter --limit <n>` |
 | 手動跑一批評分 | `jobfinder run --stage score --limit <n>` |
-| 恢復常駐消化 | 改回 `paused: false` 後重啟 API（Linux `systemctl --user restart jobfinder-api.service`；Windows `Restart-ScheduledTask -TaskPath '\jobfinder\' -TaskName 'api'`） |
+| 恢復常駐消化 | 改回 `paused: false` 後重啟 API（Linux `systemctl --user restart jobfinder-api.service`；Windows 停止 api 工作、等行程消失、再啟動） |
 
 `llm.max_*_per_day` 不是暫停開關：值為 0 或負數代表**不設上限**，不是不執行。
 
@@ -153,6 +153,8 @@ release 工件：
 `-X` 的符號路徑 `github.com/dccoding1118/job-finder/internal/version.tag` 是字串綁定：package 搬家或變數改名會使注入**靜默失效**，版號悄悄退回 `dev`。改動時必須同步 `release.yml`。
 
 工件內容即安裝流程所需的全部素材：`configs/` 供設定渲染、平台目錄供排程掛載、bootstrap 腳本供下載路徑使用。安裝流程在開發 checkout 下改讀 `deploy/production/<平台>/`，因此兩種來源共用同一份實作。
+
+**extension 與後端必須同版**。兩者由同一個 tag 一起發出，但執行期沒有版本協商或相容性檢查：舊版 extension 連新版 API 一樣通過認證、Side Panel 一樣載入，只在個別功能上安靜地行為不對。extension 不由安裝流程取得——它是獨立工件，平台工件內不含它，載入 Chrome 是人工步驟，後端換版時一併更換。
 
 extension zip 需人工上傳至 Chrome Web Store 並送審——審查結果有變數，不納入自動發佈。
 
