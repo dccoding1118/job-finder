@@ -37,7 +37,7 @@ func TestGenerateLetterApprovesEditedLetter(t *testing.T) {
 	p := profile.Profile{Qualifications: profile.Qualifications{Skills: []profile.SkillEntry{{Name: "Go", Level: "expert"}}}}
 	draft := "我使用 Go 交付服務。[你的姓名][你的聯絡方式]"
 	edited := "我使用 Go 交付服務並持續改善。[你的姓名][你的聯絡方式]"
-	result, err := GenerateLetter(context.Background(), Drafter{Primary: &fakeRunner{name: "claude", replies: []string{`{"letter":"` + draft + `"}`}}}, Reviewer{Primary: &fakeRunner{name: "codex", replies: []string{`{"verdict":"approve","issues":[],"edited_letter":"` + edited + `"}`}}}, "profile", p, Job{Description: "Go services"}, nil, 600)
+	result, err := GenerateLetter(context.Background(), Drafter{Primary: &fakeRunner{name: "claude", replies: []string{`{"letter":"` + draft + `"}`}}}, Reviewer{Primary: &fakeRunner{name: "codex", replies: []string{`{"verdict":"approve","issues":[],"edited_letter":"` + edited + `"}`}}}, "profile", p, Job{Description: "Go services"}, nil, 600, 3)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,17 +46,126 @@ func TestGenerateLetterApprovesEditedLetter(t *testing.T) {
 	}
 }
 
-func TestGenerateLetterFailsAfterThreeRevisions(t *testing.T) {
+func TestGenerateLetterFinalizesLastRoundWithoutReview(t *testing.T) {
 	p := profile.Profile{Qualifications: profile.Qualifications{Skills: []profile.SkillEntry{{Name: "Go", Level: "expert"}}}}
-	letter := "Go。[你的姓名][你的聯絡方式]"
-	drafter := &fakeRunner{name: "claude", replies: []string{`{"letter":"` + letter + `"}`, `{"letter":"` + letter + `"}`, `{"letter":"` + letter + `"}`}}
+	third := "Go 第三版。[你的姓名][你的聯絡方式]"
+	drafter := &fakeRunner{name: "claude", replies: []string{`{"letter":"Go 第一版。[你的姓名][你的聯絡方式]"}`, `{"letter":"Go 第二版。[你的姓名][你的聯絡方式]"}`, `{"letter":"` + third + `"}`}}
 	reviewer := &fakeRunner{name: "codex", replies: []string{`{"verdict":"revise","issues":["精簡"]}`, `{"verdict":"revise","issues":["具體化"]}`, `{"verdict":"revise","issues":["仍需修改"]}`}}
-	result, err := GenerateLetter(context.Background(), Drafter{Primary: drafter}, Reviewer{Primary: reviewer}, "profile", p, Job{Description: "Go"}, nil, 600)
+	result, err := GenerateLetter(context.Background(), Drafter{Primary: drafter}, Reviewer{Primary: reviewer}, "profile", p, Job{Description: "Go"}, nil, 600, 3)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Status != "failed" || result.Rounds != 3 || !strings.Contains(result.ReviewLog, "仍需修改") {
+	if result.Status != "finalized" || result.Content != third || result.Rounds != 3 {
 		t.Fatalf("unexpected result: %+v", result)
+	}
+	if len(reviewer.replies) != 1 {
+		t.Fatalf("the last round was reviewed: %d canned replies left", len(reviewer.replies))
+	}
+	if !strings.Contains(result.ReviewLog, "精簡") || !strings.Contains(result.ReviewLog, "具體化") {
+		t.Fatalf("review log lost earlier rounds: %q", result.ReviewLog)
+	}
+}
+
+func TestGenerateLetterStopsOnFailedCall(t *testing.T) {
+	p := profile.Profile{Qualifications: profile.Qualifications{Skills: []profile.SkillEntry{{Name: "Go", Level: "expert"}}}}
+	letter := "Go。[你的姓名][你的聯絡方式]"
+	drafter := &fakeRunner{name: "claude", replies: []string{`{"letter":"` + letter + `"}`, `{"letter":"` + letter + `"}`}}
+	reviewer := &fakeRunner{name: "codex", replies: []string{`not json`, `not json`, `not json`, `{"verdict":"approve","issues":[]}`}}
+	result, err := GenerateLetter(context.Background(), Drafter{Primary: drafter}, Reviewer{Primary: reviewer}, "profile", p, Job{Description: "Go"}, nil, 600, 3)
+	if err == nil {
+		t.Fatal("a failed reviewer call was not reported")
+	}
+	if result.Status != "failed" || result.Content != "" || result.Rounds != 1 {
+		t.Fatalf("unexpected result: %+v", result)
+	}
+	if len(drafter.replies) != 1 {
+		t.Fatalf("the next round was drafted anyway: %d canned replies left", len(drafter.replies))
+	}
+}
+
+func TestGenerateLetterFailsWhenLastRoundBreaksGuard(t *testing.T) {
+	p := profile.Profile{Qualifications: profile.Qualifications{Skills: []profile.SkillEntry{{Name: "Go", Level: "expert"}}}}
+	drafter := &fakeRunner{name: "claude", replies: []string{`{"letter":"Go。[你的姓名][你的聯絡方式]"}`, `{"letter":"Go 與 Rust。[你的姓名][你的聯絡方式]"}`}}
+	reviewer := &fakeRunner{name: "codex", replies: []string{`{"verdict":"revise","issues":["精簡"]}`}}
+	result, err := GenerateLetter(context.Background(), Drafter{Primary: drafter}, Reviewer{Primary: reviewer}, "profile", p, Job{Description: "Go"}, nil, 600, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "failed" || result.Content != "" || result.Rounds != 2 {
+		t.Fatalf("unexpected result: %+v", result)
+	}
+}
+
+func TestGenerateLetterSkipsReviewWhenRoundsIsOne(t *testing.T) {
+	p := profile.Profile{Qualifications: profile.Qualifications{Skills: []profile.SkillEntry{{Name: "Go", Level: "expert"}}}}
+	letter := "Go。[你的姓名][你的聯絡方式]"
+	reviewer := &fakeRunner{name: "codex", replies: []string{`{"verdict":"revise","issues":["精簡"]}`}}
+	result, err := GenerateLetter(context.Background(), Drafter{Primary: &fakeRunner{name: "claude", replies: []string{`{"letter":"` + letter + `"}`}}}, Reviewer{Primary: reviewer}, "profile", p, Job{Description: "Go"}, nil, 600, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "finalized" || result.Content != letter || result.Rounds != 1 || result.ReviewRunner != "" {
+		t.Fatalf("unexpected result: %+v", result)
+	}
+	if len(reviewer.replies) != 1 {
+		t.Fatal("the reviewer was called with a round limit of one")
+	}
+}
+
+func TestDraftPromptCarriesEveryPastRound(t *testing.T) {
+	history := []LetterRound{
+		{Letter: "第一版內容", Issues: []string{"太空泛"}},
+		{Letter: "第二版內容", Issues: []string{"缺數據"}},
+	}
+	prompt := draftPrompt("profile", Job{Title: "Backend", Description: "Go"}, history)
+	for _, want := range []string{"第一版內容", "太空泛", "第二版內容", "缺數據"} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("draft prompt is missing %q", want)
+		}
+	}
+	if strings.Contains(draftPrompt("profile", Job{Title: "Backend"}, nil), "審查意見") {
+		t.Fatal("the first draft prompt carries a review section")
+	}
+}
+
+func TestReviewPromptStatesTheOutputContractAndPlaceholders(t *testing.T) {
+	prompt := reviewPrompt("profile", Job{Title: "Backend"}, "draft")
+	for _, want := range []string{"字串陣列", "[你的姓名]", "不得為物件"} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("review prompt is missing %q", want)
+		}
+	}
+}
+
+func TestParseReviewFlattensObjectIssues(t *testing.T) {
+	result, err := parseReview(`{"verdict":"revise","issues":[{"type":"幻覺","issue":"提到未列於 Profile 的 Rust","quote":"我熟悉 Rust"},{"problem":"結尾過於空泛"}]}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Issues) != 2 {
+		t.Fatalf("issues = %v", result.Issues)
+	}
+	if !strings.Contains(result.Issues[0], "Rust") || !strings.Contains(result.Issues[0], "我熟悉 Rust") {
+		t.Fatalf("object issue lost its text: %q", result.Issues[0])
+	}
+	if result.Issues[1] != "結尾過於空泛" {
+		t.Fatalf("object issue lost its text: %q", result.Issues[1])
+	}
+}
+
+func TestParseReviewKeepsStringIssuesAndContractChecks(t *testing.T) {
+	result, err := parseReview(`{"verdict":"revise","issues":["太空泛","缺數據"]}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Issues) != 2 || result.Issues[0] != "太空泛" || result.Issues[1] != "缺數據" {
+		t.Fatalf("issues = %v", result.Issues)
+	}
+	if _, err := parseReview(`{"verdict":"revise","issues":[]}`); err == nil {
+		t.Fatal("revise without issues was accepted")
+	}
+	if _, err := parseReview(`{"verdict":"maybe","issues":["x"]}`); err == nil {
+		t.Fatal("an invalid verdict was accepted")
 	}
 }
 

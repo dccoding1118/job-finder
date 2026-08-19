@@ -53,7 +53,7 @@ Side Panel 固定提供「目前職缺、待看、推薦、系統」四個頁籤
 
 主題以 `data-theme="light|dark"` 套用 `ui-design/DESIGN.md` 的語意 token。使用者選擇存於 extension local storage 的 `theme` 欄位；切換只改視覺，不重設 active tab、選取 Job、表單或 busy 狀態。JD、求職信與 Job response 只存在當次頁面記憶體，離線時可繼續閱讀，但不得寫入 extension storage。
 
-**求職信生成入口**（PRD R5.0、R6.8）：對照區依 API 回傳的 `letter_state` 決定呈現——`none` 顯示「產生求職信」按鈕；按下後送出 `POST /api/v1/jobs/{id}/letter`，立即轉為處理中並停用按鈕（回應為受理，不等待完成）；`requested` 顯示處理中與說明「後端完成後可重新載入」；`ready` 顯示求職信與複製；`failed` 顯示未過審與「再次產生」。生成結果由使用者重新整理或下次載入時取得，插件不得為此輪詢高頻請求。
+**求職信生成入口**（PRD R5.0、R6.8）：對照區依 API 回傳的 `letter_state` 決定呈現——`none` 顯示「產生求職信」按鈕；按下後送出 `POST /api/v1/jobs/{id}/letter`，立即轉為處理中並停用按鈕（回應為受理，不等待完成）；`requested` 顯示處理中與說明「後端完成後可重新載入」；`ready` 顯示求職信與複製，`letters.status` 為 `finalized` 時另標示該版已達輪數上限、未經最後一次審查，建議投遞前自行過目；`failed` 顯示產製失敗與「再次產生」，失敗原因（Agent 呼叫失敗或最終版未通過內容防線）於系統頁的 Agent 呼叫紀錄可查。生成結果由使用者重新整理或下次載入時取得，插件不得為此輪詢高頻請求。
 
 **單筆重新處理**：`process_state` 為 `filtered_out`、`scored` 或 `shortlisted` 且連線正常時，action dock 顯示次要按鈕「重新處理」；按下後送出 `POST /api/v1/jobs/{id}/reprocess`，請求期間停用按鈕，成功後該筆立即呈現為篩選中並依 §4.2 輪詢結果。判定為不適合的職缺同樣提供此入口——使用者不同意的判定既可能出在評分關，也可能出在篩選關。處理中的職缺與求職信階段的職缺不顯示此按鈕；後端拒絕時以 toast 說明，不改變畫面狀態。
 

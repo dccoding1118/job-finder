@@ -272,6 +272,35 @@ func TestForeignKeysAndRunAndAgentValidation(t *testing.T) {
 	}
 }
 
+func TestSaveLetterAcceptsFinalizedAndEmptyFailures(t *testing.T) {
+	store := openTestStore(t, filepath.Join(t.TempDir(), "jobs.db"))
+	defer closeTestStore(t, store)
+	ctx := context.Background()
+	description := "Go platform work"
+	job, err := store.UpsertJob(ctx, JobInput{Source: "yourator", ExternalID: "letter-status", URL: "https://example.test/jobs/letter-status", Title: "Platform Engineer", CompanyName: "Example Platform", CompanyInfo: "software", Description: &description, Location: "Taipei", RemoteType: "hybrid"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := job.Job.ID
+	// A finalized letter has content but never went back for a final review; a
+	// failed one has neither content nor, when the very first call failed, a runner.
+	if err := store.SaveLetter(ctx, LetterInput{JobID: id, Content: "letter", Status: "finalized", Rounds: 3, ReviewLog: "revise", RunnerDraft: "claude"}); err != nil {
+		t.Fatalf("finalized letter rejected: %v", err)
+	}
+	if err := store.SaveLetter(ctx, LetterInput{JobID: id, Status: "failed", Rounds: 1, ReviewLog: "error: all reviewer runners failed"}); err != nil {
+		t.Fatalf("failed letter rejected: %v", err)
+	}
+	if err := store.SaveLetter(ctx, LetterInput{JobID: id, Content: "letter", Status: "unreviewed", Rounds: 1, RunnerDraft: "claude"}); err == nil {
+		t.Fatal("an unknown letter status was accepted")
+	}
+	if err := store.SaveLetter(ctx, LetterInput{JobID: id, Status: "finalized", Rounds: 1, RunnerDraft: "claude"}); err == nil {
+		t.Fatal("a finalized letter with no content was accepted")
+	}
+	if err := store.SaveLetter(ctx, LetterInput{JobID: id, Content: "letter", Status: "approved", Rounds: 1, RunnerDraft: "claude"}); err == nil {
+		t.Fatal("an approved letter with no reviewer was accepted")
+	}
+}
+
 func TestSaveAgentCallMasksPIIAndKeepsUsage(t *testing.T) {
 	store := openTestStore(t, filepath.Join(t.TempDir(), "jobs.db"))
 	defer closeTestStore(t, store)

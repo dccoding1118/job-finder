@@ -239,7 +239,7 @@ ready_id="$(awk 'NR == 1 { print $1 }' "${output_file}")"
 "${binary}" jobs --db "${MOCK_DB}" --process-state letter_failed >"${output_file}" 2>&1 || fail 'failed letter is unreadable'
 failed_id="$(awk 'NR == 1 { print $1 }' "${output_file}")"
 [[ "${ready_id}" =~ ^[0-9]+$ && "${failed_id}" =~ ^[0-9]+$ ]] || fail 'letter fixture Job IDs are invalid'
-record "- 對兩筆 shortlisted 要求生成後：job_id=${ready_id} approved/rounds=1/apply=pending；job_id=${failed_id} failed/rounds=3；轉換經 shortlisted→letter_requested；calls filter=4、scorer=4、drafter=4、reviewer=4；兩個 Runner 均為 checked-in fake executable。"
+record "- 對兩筆 shortlisted 要求生成後：job_id=${ready_id} approved/rounds=1/apply=pending；job_id=${failed_id} 於首輪耗盡全部 reviewer runner，記為 failed/rounds=1、信件內容為空且未跑後續輪次；轉換經 shortlisted→letter_requested；calls filter=4、scorer=4、drafter=2、reviewer=4（其中 3 次 ok=false）；兩個 Runner 均為 checked-in fake executable。"
 pass_step
 
 begin_step 'S11' 'V2·R7' '重跑抓取與階段驗證冪等'
@@ -287,7 +287,7 @@ pass_step
 service_path="${HARNESS_ROOT}/bin:/usr/local/bin:/usr/bin:/bin"
 begin_step 'S13' 'V4·R7' '驗證 rendered systemd units'
 grep -Fqx "ExecStart=${binary} serve --config ${config}" "${RUNTIME_ROOT}/systemd-mock/jobfinder-api.service" || fail 'API unit does not target deployed artifact'
-grep -Fqx "ExecStart=${binary} run --config ${config}" "${RUNTIME_ROOT}/systemd-mock/jobfinder-run.service" || fail 'run unit does not target deployed artifact'
+grep -Fqx "ExecStart=${binary} run --config ${config} --trigger timer" "${RUNTIME_ROOT}/systemd-mock/jobfinder-run.service" || fail 'run unit does not target deployed artifact'
 grep -Fqx 'OnCalendar=*-*-* 08:30:00 Asia/Taipei' "${RUNTIME_ROOT}/systemd-mock/jobfinder-run.timer" || fail 'timer schedule is invalid'
 if ! systemd-analyze --user verify \
   "${RUNTIME_ROOT}/systemd-mock/jobfinder-api.service" \

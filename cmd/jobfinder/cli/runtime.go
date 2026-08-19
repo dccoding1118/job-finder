@@ -75,7 +75,8 @@ func loadRuntime(path string) (*runtime, error) {
 		DedupeEnabled:   cfg.Dedupe.Enabled == nil || *cfg.Dedupe.Enabled,
 		Dedupe:          store.DedupeOptions{TitleSimilarityThreshold: cfg.Dedupe.TitleSimilarityThreshold, SourcePriority: cfg.Dedupe.SourcePriority},
 		MaxFilterPerDay: cfg.LLM.MaxFilterPerDay, MaxScorePerDay: cfg.LLM.MaxScorePerDay,
-		MaxLetterPerDay: cfg.LLM.MaxLetterPerDay, MaxLetterLength: cfg.LLM.MaxLetterLength, MinInterval: interval,
+		MaxLetterPerDay: cfg.LLM.MaxLetterPerDay, MaxLetterLength: cfg.LLM.MaxLetterLength,
+		MaxLetterRounds: cfg.LLM.MaxLetterRounds, MinInterval: interval,
 	}
 	if cfg.Scoring.Threshold == nil {
 		p.Threshold = 75

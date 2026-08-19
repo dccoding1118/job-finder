@@ -61,6 +61,7 @@ llm:
   max_score_per_day: 30
   max_letter_per_day: 10
   max_letter_length: 600
+  max_letter_rounds: 3
   min_interval: 20s
   timeout: 5m
 worker:

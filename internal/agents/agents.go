@@ -314,10 +314,62 @@ type DraftResult struct {
 }
 
 type ReviewResult struct {
-	Verdict      string   `json:"verdict"`
-	Issues       []string `json:"issues"`
-	EditedLetter *string  `json:"edited_letter"`
+	Verdict      string       `json:"verdict"`
+	Issues       ReviewIssues `json:"issues"`
+	EditedLetter *string      `json:"edited_letter"`
 	Runner       string
+}
+
+// ReviewIssues is a list of one-sentence problems. The contract is an array of
+// strings, but a model that answers with objects is not wrong about the review
+// itself — flattening those keeps one loose field from discarding a whole draft
+// and review round.
+type ReviewIssues []string
+
+func (r *ReviewIssues) UnmarshalJSON(data []byte) error {
+	var raw []json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	issues := make(ReviewIssues, 0, len(raw))
+	for _, item := range raw {
+		var text string
+		if err := json.Unmarshal(item, &text); err == nil {
+			issues = append(issues, text)
+			continue
+		}
+		var fields map[string]any
+		if err := json.Unmarshal(item, &fields); err != nil {
+			return fmt.Errorf("agents: issue is neither string nor object")
+		}
+		issues = append(issues, flattenIssue(fields))
+	}
+	*r = issues
+	return nil
+}
+
+// flattenIssue turns an object-shaped issue into the one sentence the contract
+// asks for, preferring the fields that carry the problem itself over labels.
+func flattenIssue(fields map[string]any) string {
+	parts := make([]string, 0, 2)
+	for _, key := range []string{"issue", "problem", "description", "detail", "message", "text", "comment", "suggestion"} {
+		if text, ok := fields[key].(string); ok && strings.TrimSpace(text) != "" {
+			parts = append(parts, strings.TrimSpace(text))
+			break
+		}
+	}
+	if len(parts) == 0 {
+		for _, key := range []string{"type", "category", "field", "quote", "excerpt"} {
+			if text, ok := fields[key].(string); ok && strings.TrimSpace(text) != "" {
+				parts = append(parts, strings.TrimSpace(text))
+				break
+			}
+		}
+	}
+	if quote, ok := fields["quote"].(string); ok && strings.TrimSpace(quote) != "" && len(parts) == 1 && parts[0] != strings.TrimSpace(quote) {
+		parts = append(parts, "原文："+strings.TrimSpace(quote))
+	}
+	return strings.Join(parts, "；")
 }
 
 type (
@@ -336,8 +388,17 @@ type LetterResult struct {
 	Rounds                                                int
 }
 
-func (d Drafter) Draft(ctx context.Context, profileYAML string, job Job, issues []string) (DraftResult, error) {
-	prompt := draftPrompt(profileYAML, job, issues)
+// LetterRound is one produced draft together with the issues raised against it.
+// The drafter receives every past round, not only the latest issues: without the
+// text that was criticised it rewrites from scratch each time and repeats the
+// mistakes earlier rounds already paid to find.
+type LetterRound struct {
+	Letter string
+	Issues []string
+}
+
+func (d Drafter) Draft(ctx context.Context, profileYAML string, job Job, history []LetterRound) (DraftResult, error) {
+	prompt := draftPrompt(profileYAML, job, history)
 	var lastErr error
 	for _, runner := range []Runner{d.Primary, d.Primary, d.Fallback} {
 		if runner == nil {
@@ -392,27 +453,54 @@ func (r Reviewer) Review(ctx context.Context, profileYAML string, job Job, lette
 	return ReviewResult{}, runnersFailed("reviewer", lastErr)
 }
 
-func GenerateLetter(ctx context.Context, drafter Drafter, reviewer Reviewer, profileYAML string, p profile.Profile, job Job, denylist []string, maxLength int) (LetterResult, error) {
+// GenerateLetter runs at most maxRounds rounds. The first maxRounds-1 rounds are
+// draft plus review; the last round is drafted from the accumulated history and
+// returned unreviewed. A reviewer can always raise something, so treating its
+// verdict as a gate on the final round would discard every round's work; the
+// version it has not seen is the deliberate result instead.
+//
+// A failed Agent call ends the whole generation: the runner layer already tried
+// primary, primary and fallback, so retrying the round only burns the daily
+// budget while the service is down. A guard failure is not a failed call — the
+// draft arrived and is merely unusable, so it becomes the next round's issue.
+func GenerateLetter(ctx context.Context, drafter Drafter, reviewer Reviewer, profileYAML string, p profile.Profile, job Job, denylist []string, maxLength, maxRounds int) (LetterResult, error) {
 	if maxLength <= 0 {
 		maxLength = 600
 	}
-	issues := []string(nil)
-	log := make([]string, 0, 3)
+	if maxRounds <= 0 {
+		maxRounds = 3
+	}
+	history := []LetterRound(nil)
+	log := make([]string, 0, maxRounds)
 	draftRunner, reviewRunner := "", ""
-	for round := 1; round <= 3; round++ {
-		draft, err := drafter.Draft(ctx, profileYAML, job, issues)
+	result := func(content, status string, rounds int) LetterResult {
+		return LetterResult{Content: content, Status: status, ReviewLog: strings.Join(log, "\n"), Rounds: rounds, DraftRunner: draftRunner, ReviewRunner: reviewRunner}
+	}
+	for round := 1; round <= maxRounds; round++ {
+		draft, err := drafter.Draft(ctx, profileYAML, job, history)
 		if err != nil {
-			return LetterResult{}, err
+			log = append(log, "error: "+err.Error())
+			return result("", "failed", round), err
 		}
 		draftRunner = draft.Runner
-		if guardErr := Guard(draft.Letter, p, job.Description, denylist, maxLength); guardErr != nil {
-			issues = []string{guardErr.Error()}
+		guardErr := Guard(draft.Letter, p, job.Description, denylist, maxLength)
+		if round == maxRounds {
+			if guardErr != nil {
+				log = append(log, "guard: "+guardErr.Error())
+				return result("", "failed", round), nil
+			}
+			log = append(log, "finalized")
+			return result(draft.Letter, "finalized", round), nil
+		}
+		if guardErr != nil {
 			log = append(log, "guard: "+guardErr.Error())
+			history = append(history, LetterRound{Letter: draft.Letter, Issues: []string{guardErr.Error()}})
 			continue
 		}
 		review, err := reviewer.Review(ctx, profileYAML, job, draft.Letter)
 		if err != nil {
-			return LetterResult{}, err
+			log = append(log, "error: "+err.Error())
+			return result("", "failed", round), err
 		}
 		reviewRunner = review.Runner
 		if review.Verdict == "approve" {
@@ -420,18 +508,18 @@ func GenerateLetter(ctx context.Context, drafter Drafter, reviewer Reviewer, pro
 			if review.EditedLetter != nil {
 				content = *review.EditedLetter
 			}
-			if guardErr := Guard(content, p, job.Description, denylist, maxLength); guardErr != nil {
-				issues = []string{guardErr.Error()}
-				log = append(log, "guard: "+guardErr.Error())
+			if editedErr := Guard(content, p, job.Description, denylist, maxLength); editedErr != nil {
+				log = append(log, "guard: "+editedErr.Error())
+				history = append(history, LetterRound{Letter: content, Issues: []string{editedErr.Error()}})
 				continue
 			}
 			log = append(log, "approve")
-			return LetterResult{Content: content, Status: "approved", ReviewLog: strings.Join(log, "\n"), Rounds: round, DraftRunner: draftRunner, ReviewRunner: reviewRunner}, nil
+			return result(content, "approved", round), nil
 		}
 		log = append(log, "revise: "+strings.Join(review.Issues, "; "))
-		issues = review.Issues
+		history = append(history, LetterRound{Letter: draft.Letter, Issues: review.Issues})
 	}
-	return LetterResult{Status: "failed", ReviewLog: strings.Join(log, "\n"), Rounds: 3, DraftRunner: draftRunner, ReviewRunner: reviewRunner}, nil
+	return result("", "failed", maxRounds), fmt.Errorf("agents: letter loop ended without a result")
 }
 
 func Guard(letter string, p profile.Profile, description string, denylist []string, maxLength int) error {
@@ -460,12 +548,32 @@ func Guard(letter string, p profile.Profile, description string, denylist []stri
 	return nil
 }
 
-func draftPrompt(profileText string, j Job, issues []string) string {
-	return "你是求職信起草器。僅輸出單一 JSON 物件。只可使用 Profile 中的事實，遵守 honesty_bounds，300-450字，結尾必含 [你的姓名] 與 [你的聯絡方式]。\nProfile YAML:\n" + profileText + "\nJob:\n" + j.Title + "\n" + j.Description + "\nReviewer issues:\n" + strings.Join(issues, "\n") + "\n回傳 letter。"
+func draftPrompt(profileText string, j Job, history []LetterRound) string {
+	return "你是求職信起草器。僅輸出單一 JSON 物件。只可使用 Profile 中的事實，遵守 honesty_bounds，300-450字，結尾必含 [你的姓名] 與 [你的聯絡方式]。\n" +
+		"[你的姓名] 與 [你的聯絡方式] 是刻意保留的落款佔位符，原樣輸出，不得替換為任何真實姓名或聯絡方式，也不得出現其他 [ ] 佔位符。\n" +
+		"Profile YAML:\n" + profileText + "\nJob:\n" + j.Title + "\n" + j.Description + "\n" + draftHistory(history) + "回傳 letter。"
+}
+
+// draftHistory lays out every past version with the issues raised against it, so
+// the next draft fixes those problems while keeping what was not criticised.
+func draftHistory(history []LetterRound) string {
+	if len(history) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("以下是先前各版草稿與對它們的審查意見。請逐條修正這些問題，保留未被指出問題的內容，產出新的一版。\n")
+	for i, round := range history {
+		version := strconv.Itoa(i + 1)
+		b.WriteString("第" + version + "版草稿:\n" + round.Letter + "\n第" + version + "版審查意見:\n" + strings.Join(round.Issues, "\n") + "\n")
+	}
+	return b.String()
 }
 
 func reviewPrompt(profileText string, j Job, letter string) string {
-	return "你是嚴格的求職信審查器。僅輸出單一 JSON 物件。檢查 Profile 無依據的技能、經歷、數字、空泛或誇大文字與落款佔位符。回傳 verdict（approve 或 revise）、issues，approve 時可回傳 edited_letter。\nProfile YAML:\n" + profileText + "\nJob:\n" + j.Title + "\n" + j.Description + "\nDraft:\n" + letter
+	return "你是嚴格的求職信審查器。僅輸出單一 JSON 物件。檢查 Profile 無依據的技能、經歷、數字，以及空泛或誇大的文字。\n" +
+		"落款的 [你的姓名] 與 [你的聯絡方式] 是刻意保留的成品形態，由使用者投遞前自行填寫；要求以真實姓名或聯絡方式取代它們屬於錯誤意見，不得提出。應檢查的是這兩個佔位符是否完整存在，以及是否出現其他未解析的 [ ] 佔位符。\n" +
+		"輸出格式：verdict 為 approve 或 revise；issues 為字串陣列，每個元素是一個完整句子、描述一項具體問題，不得為物件或巢狀結構；verdict 為 revise 時 issues 不得為空；approve 時可回傳 edited_letter（字串），revise 時不得回傳 edited_letter。\n" +
+		"Profile YAML:\n" + profileText + "\nJob:\n" + j.Title + "\n" + j.Description + "\nDraft:\n" + letter
 }
 
 func parseDraft(raw string) (DraftResult, error) {

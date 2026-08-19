@@ -61,9 +61,9 @@
 |---|---|---|
 | `id` | INTEGER PK | |
 | `job_id` | INTEGER FK→jobs | |
-| `content` | TEXT | 最終求職信（含佔位符落款） |
-| `status` | TEXT | `approved` / `failed` |
-| `rounds` | INTEGER | 起草＋重寫總輪數 |
+| `content` | TEXT | 最終求職信（含佔位符落款）；`failed` 時為空字串 |
+| `status` | TEXT | `approved`（審查過關）/ `finalized`（跑滿輪數的最終版，未經最後一次審查）/ `failed`（呼叫失敗或最終版未過 guard） |
+| `rounds` | INTEGER | 實際跑過的輪數 |
 | `review_log` | TEXT | 各輪審查意見（JSON 字串），供稽核 |
 | `runner_draft` / `runner_review` | TEXT | 各角色使用的 runner |
 | `filter_revision` / `score_revision` | TEXT NULL | 產生此 Letter 的實際 Profile revision 對；新資料必填，legacy 可為 NULL |
@@ -185,8 +185,8 @@
 | `scored` | `new`／`discovered` | 同上 |
 | `shortlisted` | `new`／`discovered` | 同上 |
 | `shortlisted` | `letter_requested` | **使用者**要求生成求職信（Side Panel／CLI） |
-| `letter_requested` | `letter_ready` | Reviewer 過審 |
-| `letter_requested` | `letter_failed` | 重寫上限仍不過審 |
+| `letter_requested` | `letter_ready` | Reviewer 過審，或跑滿輪數產出最終版 |
+| `letter_requested` | `letter_failed` | Agent 呼叫失敗，或最終版未通過 guard |
 | `letter_failed` | `letter_requested` | 使用者再次要求生成（Side Panel／CLI） |
 | 任一非終態 | `new` | JD 內容雜湊變更（重新走流程；既有 scores/letters 保留為歷史） |
 | 任一狀態 | `merged` | 該筆被判定為其他 Job 的重複刊登，成為 alias（§4.2）；事件 note 記錄合併前狀態與 canonical job id |

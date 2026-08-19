@@ -93,7 +93,7 @@
 | 欄位 | 型別 | 約束 |
 |---|---|---|
 | `verdict` | enum | `approve` / `revise` |
-| `issues[]` | string[] | `revise` 時必填：具體問題（幻覺技能、空泛詞、誇大） |
+| `issues[]` | string[] | `revise` 時必填：具體問題（幻覺技能、空泛詞、誇大）。解析容忍元素為物件的回覆，取其文字欄位攤平為一句；模型單一欄位失守不該作廢整輪起草與審查 |
 | `edited_letter` | string NULL | Reviewer 直接刪改後可過審的版本；有值且 `verdict=approve` 時以此為最終稿 |
 
 ### 3.5 CalibrationResult（Calibrator）
@@ -118,8 +118,8 @@ Profile 輸入一律來自 provider snapshot，且**各角色只取自己該看�
 |---|---|---|
 | Filter | `qualifications`（學歷、技能、證照、語言）＋`experiences[]` 的 `industry` key 清單＋Job（title/company/JD/薪資/地點/remote） | 先把 JD 拆成逐條條件並標記必備／加分與選言分組；再逐條比對 Profile 給 `pass`／`fail`／`unknown`；**判不出來一律 `unknown`，不得猜測為 `fail`**；學歷須同一筆同時滿足級別與科系；年資與產業年資只回要求數值與對應的 `industry` key，不自行比較；不給分數 |
 | Scorer | `intents`＋`qualifications` 的 `skills`／`certifications`／`languages`＋`requirements.remote`／`locations`＋篩選關保存的加分條件＋Job（title/company/JD/薪資/地點/remote/福利與工時敘述） | 四維以門檻分為基準加減；`content_fit` 對照 `content_likes`／`content_dislikes`；`benefit_fit` 對照 `salary_target` 與優於勞基法的休假、彈性工時、額外獎金，遠端形式的加分級距見 [design-pipeline](design-pipeline.md) §3.3；`bonus_fit` **只加不減**；`industry_fit` 對照 `industry_interests`；無資訊可判時回基準分；理由 40~60 字（字數規則見 §3.2）。**輸入不含 `experiences` 的 `role`／`org_type`／`achievements` 與 `honesty_bounds`** |
-| Drafter | `experiences`＋`qualifications`＋`honesty_bounds`＋Job＋（重寫輪）Reviewer issues | 只可使用 Profile 存在的技能與成就；引用量化數據；遵守 `honesty_bounds`；精煉（300–450 字）；佔位符落款；繁體中文（JD 為英文則英文） |
-| Reviewer | 同 Drafter 的子集＋Job＋草稿 | 毒舌審查：任何 Profile 無根據的技能/經歷/數字＝幻覺必挑；空泛形容詞（「熱情」「抗壓」等無實據修飾）要求刪除；可直接給 `edited_letter`；檢查佔位符落款 |
+| Drafter | `experiences`＋`qualifications`＋`honesty_bounds`＋Job＋（重寫輪）歷輪草稿與其對應意見 | 只可使用 Profile 存在的技能與成就；引用量化數據；遵守 `honesty_bounds`；精煉（300–450 字）；佔位符落款；繁體中文（JD 為英文則英文） |
+| Reviewer | 同 Drafter 的子集＋Job＋草稿 | 毒舌審查：任何 Profile 無根據的技能/經歷/數字＝幻覺必挑；空泛形容詞（「熱情」「抗壓」等無實據修飾）要求刪除；可直接給 `edited_letter`；`issues` 為字串陣列，每則一句具體問題；落款的 `[你的姓名]` 與 `[你的聯絡方式]` 是刻意保留的成品形態，要求填入真實個資屬錯誤意見 |
 | Calibrator | Profile 的 `search`／`requirements`／`intents`＋成功樣本（JD、職稱、產業、地區、薪資、四維分數）＋對照樣本 | 只比較兩組樣本的共同與差異特徵，依 [design-profile](design-profile.md) §7.2 的維度作答；只得建議 `search`／`requirements`／`intents` 欄位；證據不足時回空 `suggestions`，不得臆測；不得輸出任何履歷事實的修改建議 |
 
 Scorer 的輸入排除履歷敘事：成就敘事會被讀成「擅長 ⇒ 適配高」，使「做過但不想再做」的內容只加不減，適配判斷因此失真。
@@ -128,20 +128,33 @@ Scorer 的輸入排除履歷敘事：成就敘事會被讀成「擅長 ⇒ 適�
 
 letter 工作以開始時取得的 snapshot 完成。若 Profile 在工作途中更新，Letter 與所有 draft／review call 仍記錄原 revision；完成後可立即導出 `letter_stale=true`，但不得丟棄、覆蓋或自動重跑已完成的使用者要求。
 
+輪數上限 N 由 `llm.max_letter_rounds` 給定（預設 3），語意是**最多產出第幾版**：前 N-1 輪各跑一次起草與一次審查，第 N 輪只起草，該版即最終稿。設為 1 時沒有任何審查。
+
 ```
-draft = Drafter(profile, job)
-for review_round in 1..3:  # 初稿後最多重寫兩次
-    guard(draft)            # 程式防線，失敗=直接要求重寫（視同 revise）
+history = []                 # 依序累積 (草稿, 該版意見)
+for round in 1..N:
+    draft = Drafter(profile, job, history)
+    if round == N:                        # 最後一輪不送審
+        guard(draft); pii_lint(draft)     # 失敗 → letter_failed
+        return finalized(draft, round, review_log)
+    if guard(draft) 失敗:                 # 程式防線，視同 revise
+        history += (draft, guard 錯誤)
+        continue
     rv = Reviewer(profile, job, draft)
     if rv.verdict == approve:
         final = rv.edited_letter ?? draft
-        guard(final); pii_lint(final)   # 最終稿再過一次防線
-        return approved(final, rounds, review_log)
-    if review_round == 3:
-        return failed(review_log)   # → letter_failed
-    draft = Drafter(profile, job, issues=rv.issues)
-return failed(review_log)   # → letter_failed
+        if guard(final); pii_lint(final) 失敗:
+            history += (final, guard 錯誤)
+            continue
+        return approved(final, round, review_log)
+    history += (draft, rv.issues)
 ```
+
+`history` 是多輪重寫唯一的累積機制：drafter 看得到每一版被批評的原文與對應意見，才能在保留已被認可部分的前提下修正問題。只傳最近一輪的意見等同每輪從零重寫，早期指出的問題會重犯。
+
+**任一輪的 Drafter 或 Reviewer 呼叫失敗**（Primary、Primary、Fallback 三個 runner 後仍失敗）即終止該次生成，不重試、不跑後續輪次，該筆轉 `letter_failed` 等使用者再次要求。runner 層已有三次嘗試，外加自動重試只會在服務中斷期間持續消耗每日額度。呼叫失敗與 guard 失敗是不同性質：前者拿不到產出，後者拿到了但這一版不合格，因此後者可由下一輪修正。
+
+終態與 `letters.status` 的對應見 [design-schema](design-schema.md) §2.3。
 
 `guard()` 程式防線（R5.4）：
 
@@ -155,8 +168,10 @@ return failed(review_log)   # → letter_failed
 ## 6. 測試
 
 - Runner：以假可執行檔模擬正常、非零、逾時與 argv/cwd；精確驗證 model flag、空暫存目錄與 cleanup。真 CLI 呼叫只由 opt-in 的 `e2e-live` 驗收，不進 CI。
-- 五 Agent：fake Runner 回罐頭 JSON，驗證解析、驗證失敗路徑、fallback 切換、迴圈輪次上限；Filter 另驗條件拆解欄位驗證、年資類 verdict 由程式覆寫、加分條件不進篩選彙總；Calibrator 另驗欄位白名單拒絕與空建議路徑。
+- 五 Agent：fake Runner 回罐頭 JSON，驗證解析、驗證失敗路徑、fallback 切換、迴圈輪次上限；Reviewer 另驗 `issues` 為物件陣列時攤平為字串、字串陣列維持原行為、`revise` 時 `issues` 不得為空；Filter 另驗條件拆解欄位驗證、年資類 verdict 由程式覆寫、加分條件不進篩選彙總；Calibrator 另驗欄位白名單拒絕與空建議路徑。
 - prompt 子集：Scorer prompt 不含 `achievements`／`role`／`org_type`／`honesty_bounds`；Filter prompt 不含 `intents`。
+- 生成迴圈：輪數取自設定；N 輪跑滿時最後一輪不呼叫 Reviewer 且回 `finalized`；中途 approve 立即結束不跑剩餘輪次；N 為 1 時無審查呼叫；drafter 第 k 輪的輸入含前 k-1 版草稿與其意見。
+- 生成迴圈的失敗路徑：任一輪 Drafter 或 Reviewer 呼叫失敗即終止且不跑後續輪次；最後一輪 guard 失敗回失敗；中間輪 guard 失敗轉為下一輪的意見。
 - guard：表驅動正反例（幻覺技能、缺佔位符、含 PII、超長）。
 
 ## 7. 交付物

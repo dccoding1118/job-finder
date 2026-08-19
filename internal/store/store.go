@@ -604,7 +604,16 @@ func (s *Store) SaveScore(ctx context.Context, input ScoreInput) error {
 }
 
 func (s *Store) SaveLetter(ctx context.Context, input LetterInput) error {
-	if input.JobID <= 0 || (input.Status != "approved" && input.Status != "failed") || input.Rounds < 1 || input.Content == "" || input.RunnerDraft == "" || (input.Status == "approved" && input.RunnerReview == "") {
+	// A failed letter carries no content and may carry no runner at all: the very
+	// first draft call can be the one that fails. It is still recorded, because the
+	// job needs the outcome to leave `letter_requested`.
+	if input.JobID <= 0 || !validLetterStatus(input.Status) || input.Rounds < 1 {
+		return errors.New("store: invalid letter")
+	}
+	if input.Status != "failed" && (input.Content == "" || input.RunnerDraft == "") {
+		return errors.New("store: invalid letter")
+	}
+	if input.Status == "approved" && input.RunnerReview == "" {
 		return errors.New("store: invalid letter")
 	}
 	if input.FilterRevision == "" {
@@ -618,6 +627,13 @@ func (s *Store) SaveLetter(ctx context.Context, input LetterInput) error {
 		return fmt.Errorf("save letter: %w", err)
 	}
 	return nil
+}
+
+// validLetterStatus lists the three outcomes a letter run can end in: approved by
+// the reviewer, finalized as the last round's version without a final review, or
+// failed with nothing usable to keep.
+func validLetterStatus(status string) bool {
+	return status == "approved" || status == "finalized" || status == "failed"
 }
 
 func (s *Store) SaveAgentCall(ctx context.Context, input AgentCallInput) error {

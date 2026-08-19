@@ -287,21 +287,29 @@ if (mode === "snapshot") {
     ]);
   } else {
     assert.deepEqual([jobs[1002].apply_state, jobs[1002].letter.status, jobs[1002].letter.rounds], ["pending", "approved", 1]);
-    assert.deepEqual([jobs[1001].apply_state, jobs[1001].letter.status, jobs[1001].letter.rounds], [null, "failed", 3]);
+    // #1001 exhausts every reviewer runner on its first round. The letter is
+    // recorded with no content so the job can leave `letter_requested`, and the
+    // user decides whether to ask for another attempt.
+    assert.deepEqual([jobs[1001].apply_state, jobs[1001].letter.status, jobs[1001].letter.rounds], [null, "failed", 1]);
+    assert.equal(jobs[1001].letter.runner_review, "");
+    assert.equal(jobs[1001].letter.has_name_placeholder, false);
+    assert.equal(jobs[1001].letter.has_contact_placeholder, false);
+    assert.equal(jobs[1002].letter.runner_review, "codex");
+    assert.equal(jobs[1002].letter.has_name_placeholder, true);
+    assert.equal(jobs[1002].letter.has_contact_placeholder, true);
     for (const id of [1001, 1002]) {
       assert.equal(jobs[id].letter.runner_draft, "claude");
-      assert.equal(jobs[id].letter.runner_review, "codex");
-      assert.equal(jobs[id].letter.has_name_placeholder, true);
-      assert.equal(jobs[id].letter.has_contact_placeholder, true);
       assert.equal(jobs[id].letter.score_revision, jobs[id].score_revision);
       assert.equal(jobs[id].letter.filter_revision, jobs[id].filter_revision);
     }
-    assert.equal(jobs[1001].letter.review_entries, 3);
+    assert.equal(jobs[1001].letter.review_entries, 1);
     assert.equal(jobs[1002].letter.review_entries, 1);
     assertAgentCalls(data.agent_calls, [
-      { role: "drafter", runner: "claude", ok: true, count: 4 },
+      { role: "drafter", runner: "claude", ok: true, count: 2 },
       { role: "filter", runner: "claude", ok: true, count: 4 },
-      { role: "reviewer", runner: "codex", ok: true, count: 4 },
+      { role: "reviewer", runner: "claude", ok: false, count: 1 },
+      { role: "reviewer", runner: "codex", ok: false, count: 2 },
+      { role: "reviewer", runner: "codex", ok: true, count: 1 },
       { role: "scorer", runner: "claude", ok: true, count: 4 },
     ]);
   }
@@ -390,7 +398,8 @@ if (mode === "api-detail") {
     assert.deepEqual([data.verdict, data.letter_state], ["recommended", "failed"]);
     assert.equal(data.score.total, 80);
     assert.equal(data.letter.status, "failed");
-    assert.equal(data.letter.rounds, 3);
+    assert.equal(data.letter.rounds, 1);
+    assert.equal(data.letter.content, "");
   }
   process.exit(0);
 }

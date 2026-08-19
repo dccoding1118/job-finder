@@ -219,6 +219,7 @@ activation 本身只做狀態切換與重新入隊，不呼叫 LLM；重篩的 F
 | `llm.max_filter_per_day` | 60 | 每日語意篩選上限，超出留待隔日；職缺停留 `new` |
 | `llm.max_score_per_day` | 30 | 每日評分上限，超出留待隔日 |
 | `llm.max_letter_per_day` | 10 | 每日求職信上限；未處理的 `letter_requested` 留待隔日，使用者的要求不會遺失 |
+| `llm.max_letter_rounds` | 3 | 單筆求職信的輪數上限，語意為最多產出第幾版；前 N-1 輪起草並審查，第 N 輪只起草（見 [design-agents](design-agents.md) §5） |
 | `llm.timeout` | 300s | 單次 Agent 呼叫逾時 |
 
 每日預算以**台北時間日界**重置，計數依 `agent_calls` 當日該 role 的成功呼叫數導出，不另存計數器（重啟後預算不歸零）。worker 常駐後沒有「輪」可作為上限單位，而 extension capture 由使用者隨時觸發，時間窗預算是成本封頂的唯一著力點。
@@ -230,7 +231,8 @@ activation 本身只做狀態切換與重新入隊，不呼叫 LLM；重篩的 F
 | 情境 | 處置 |
 |---|---|
 | 單一 source 抓取失敗 | 記 run stats.errors，其他 source 續行 |
-| 單筆 Agent 呼叫失敗（重試與 fallback 後仍失敗） | 該 job 停留原狀態（worker 下次掃描重試），記入該 job 的 `agent_calls`；不屬於任何 run |
+| 單筆 Agent 呼叫失敗（重試與 fallback 後仍失敗） | filter 與 score：該 job 停留原狀態（worker 下次掃描重試），記入該 job 的 `agent_calls`；不屬於任何 run |
+| letter 階段的 Agent 呼叫失敗 | 該筆立即轉 `letter_failed` 並寫入空 `content` 的 Letter，等使用者再次要求。自動重試在此階段是有害的：`letter_requested` 依 `updated_at` 取件，停留原狀態的失敗職缺會永遠排在隊首擋住其他要求，且每次重試付掉一格 `max_letter_per_day`。該筆已寫入結果並離開取件狀態，因此階段本身不回報錯誤；原因記於 Error log、`letters` 列與 `agent_calls` |
 | 每日預算用盡 | worker 停止取件至隔日日界；非錯誤，不記 errors |
 | fetch 致命錯誤（DB 打不開等） | FinishRun(error) 後非零退出 |
 | worker 致命錯誤 | 記錄後由 systemd 重啟 API service；狀態即進度，重啟後續作 |
@@ -272,7 +274,7 @@ log 不得含 JD、Profile、薪資、求職信內容或 Agent 原始輸入輸�
 | `dedupe.enabled` | 是否啟用跨來源分群（預設 true） |
 | `dedupe.title_similarity_threshold` | 灰帶候選的職稱相似度下限（預設 0.6） |
 | `dedupe.source_priority` | canonical 選擇的來源優先序（預設 `104` > `cake` > `yourator`） |
-| `llm` | §5 每日預算、呼叫間隔與 timeout；`llm.roles` 為各角色的 primary/fallback 分別指定 agent CLI 與 model（見 design-agents） |
+| `llm` | §5 每日預算、呼叫間隔、求職信輪數上限與 timeout；`llm.roles` 為各角色的 primary/fallback 分別指定 agent CLI 與 model（見 design-agents） |
 | `worker.scan_interval` | 常駐 worker 無待處理件時的掃描間隔（預設 5s） |
 | `worker.paused` | true 時 serve 不啟動常駐 worker、不持有 worker 鎖，filter／score／letter 改由 `run --stage` 手動批次消化（預設 false）；與 Side Panel 的自動處理開關是不同的軸（§2.2） |
 | `api.addr` | B4 API 監聽位址，預設 `127.0.0.1:8686` |
@@ -292,6 +294,7 @@ repo 內提供 `configs/config.example.yaml`；實際 `config.yaml` 含本機 to
 - `derived` 加總：`exclude_from_totals`、管理年資與各產業年資的比較由程式執行，Agent 只回語意對應。
 - 雙 revision 重跑範圍：只改 `intents` 時 `filtered_out`／`discovered` 不動、`scored`／`shortlisted` 回 `queued`；改硬規則欄位時全部回 `new` 重篩。
 - 按需生成：`shortlisted` 職缺在無使用者要求時不被 letter 階段取件、不產生 Agent 呼叫；`RequestLetter` 後才進入生成。
+- letter 呼叫失敗：該筆轉 `letter_failed` 並寫入空 `content` 的 Letter，同批其餘 `letter_requested` 於同一輪照常被取件消化。
 - ingest：列表與內頁 ingest 全程無 LLM 呼叫；內頁 ingest 對通過篩選者留 `queued` 並回 NULL score，對淘汰者同步回 `filtered_out` 與 `filter_hits`；快取命中回現行 score。
 - 兩次篩選：partial 入庫只套用「partial 適用」條件；補全文後套用全部條件，且第一次已 `filtered_out` 者不再被取件。
 - flock：worker 常駐時第二 process 的 `jobfinder run --stage` 立即退出。
