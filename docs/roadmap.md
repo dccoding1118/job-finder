@@ -65,7 +65,7 @@ MVP 架構中為擴展預留的縫：Source adapter 與半被動解析器（加�
   - **Chrome Web Store 上架**：extension ID 因此成為已知常數，`api.extension_origin` 可內建預設值，安裝時不再需要人工替換佔位。
   - **來源能力矩陣與雙層開關**：每個來源標記 `mode`（`auto`／`semi_passive`）；「此部署是否開放該來源」為部署層設定，「使用者是否啟用」存 store 並由設定 UI 開關。
   - **設定面完整化**：每日上限、掃描間隔、去重門檻、LLM 路由等移入 extension 設定頁。
-  - **集中式運作日誌與監控**：extension UI 分別檢視 UI／API、worker 批次、fetch 批次、求職信處理的日誌。
+  - **集中式運作日誌**：extension UI 分別檢視 UI／API、worker 批次、fetch 批次、求職信處理的逐行日誌。（執行中作業與批次狀態的呈現已落地，見系統頁的「進行中」與批次歷程。）
 - **退出標準**：一位非開發者依 README 自行完成安裝並走完閉環。
 
 ### S3 — 代管雲端版（架構預留，暫不開工）

@@ -55,6 +55,7 @@
     toastTimer: null,
     pollTimer: null,
     pollUntil: 0,
+    activityTimer: null,
   };
 
   const screens = [...document.querySelectorAll("[data-screen]")];
@@ -177,6 +178,7 @@
   function switchTab(name) {
     if (name !== state.activeTab) state.scrollPositions[state.activeTab] = window.scrollY;
     state.activeTab = name;
+    scheduleActivityPoll();
     tabs.forEach((tab) => {
       const active = tab.dataset.tab === name;
       tab.classList.toggle("is-active", active);
@@ -410,10 +412,58 @@
     root.querySelector("#load-more-jobs")?.addEventListener("click", loadMoreJobs);
   }
 
+  // A batch's facts are read at a glance or not at all, so every key is shown in
+  // the same wording the rest of the UI uses for the same thing. An unmapped key
+  // falls through as itself rather than being hidden: a fact nobody named yet is
+  // still a fact.
+  const RUN_TRIGGERS = { timer: "每日排程", "manual-cli": "手動（指令列）", "manual-extension": "手動（側邊欄）" };
+  const RUN_STATS = { queries: "查詢數", fetched: "抓取", new: "新職缺", errors: "錯誤" };
+  const RUN_STATES = {
+    running: { label: "執行中", tone: "" },
+    stalled: { label: "已中斷", tone: "is-warning" },
+    done: { label: "已完成", tone: "" },
+    failed: { label: "失敗", tone: "is-warning" },
+  };
+  const RUN_STATS_ORDER = ["queries", "fetched", "new", "errors"];
+
   function runStats(run) {
-    const stats = Object.entries(run.stats || {}).sort().map(([key, value]) => `${key}=${value}`);
-    const verdicts = Object.entries(run.verdicts || {}).filter(([, value]) => value).sort().map(([key, value]) => `${key}=${value}`);
+    const stats = Object.entries(run.stats || {})
+      .sort(([a], [b]) => RUN_STATS_ORDER.indexOf(a) - RUN_STATS_ORDER.indexOf(b))
+      .map(([key, value]) => `${RUN_STATS[key] || key} ${value}`);
+    const verdicts = Object.entries(run.verdicts || {})
+      .filter(([, value]) => value)
+      .map(([key, value]) => `${VERDICTS[key]?.label || key} ${value}`);
     return [...stats, ...verdicts];
+  }
+
+  // runStartLabel drops the timezone suffix and the seconds: the batch list is
+  // read for when and how long, not for a timestamp to correlate against.
+  function runStartLabel(run) {
+    return String(run.started_at || "").replace("T", " ").slice(0, 16);
+  }
+
+  function runStateMeta(run) {
+    return RUN_STATES[run.state] || { label: "狀態未知", tone: "" };
+  }
+
+  // runElapsed reports how long a batch has been running, which is what tells a
+  // slow fetch from a stopped one while it is still going.
+  function runElapsed(run) {
+    const startedAt = Date.parse(run.started_at);
+    const endedAt = run.finished_at ? Date.parse(run.finished_at) : Date.now();
+    if (!Number.isFinite(startedAt) || !Number.isFinite(endedAt)) return "";
+    return duration(endedAt - startedAt);
+  }
+
+  // duration words a span the way a person reads a clock: seconds while it is
+  // seconds, minutes after that. Anything longer than an hour is a fetch nobody
+  // is watching in real time, so hours are enough precision.
+  function duration(ms) {
+    const seconds = Math.max(0, Math.round(ms / 1000));
+    if (seconds < 60) return `${seconds} 秒`;
+    const minutes = Math.floor(seconds / 60);
+    if (minutes < 60) return `${minutes} 分 ${seconds % 60} 秒`;
+    return `${Math.floor(minutes / 60)} 小時 ${minutes % 60} 分`;
   }
 
   const PROGRESS_STATES = [
@@ -478,6 +528,38 @@
     return `<section class="card system-group" aria-labelledby="usage-title"><div class="card-heading"><h2 id="usage-title">每日 Token 用量</h2><span class="usage-subtitle">台灣時間 00:00 重置<br>依 AI 分開統計</span></div>${days}</section>`;
   }
 
+  const STAGE_LABELS = { fetch: "抓取職缺", filter: "篩選", score: "評分", letter: "產生求職信" };
+
+  // activitySection answers the one question every other panel leaves open:
+  // whether anything is happening right now. Every other signal on this page is
+  // written when a unit of work ends — a job's state moves, an Agent call is
+  // audited — so a stage spending four minutes inside one call leaves them all
+  // unchanged, and a stopped process looks exactly the same.
+  function activitySection() {
+    const units = state.progress?.in_flight || [];
+    const fetching = state.runs.find((run) => run.state === "running");
+    const rows = [];
+    if (fetching) {
+      const fetched = Number(fetching.stats?.fetched || 0);
+      rows.push({ title: STAGE_LABELS.fetch, detail: `已收 ${fetched} 筆`, elapsed: runElapsed(fetching) });
+    }
+    for (const unit of units) {
+      rows.push({
+        title: STAGE_LABELS[unit.stage] || unit.stage,
+        detail: unit.job_id ? `職缺 ${unit.job_id}` : "整批作業",
+        elapsed: duration(Number(unit.elapsed_ms || 0)),
+      });
+    }
+    if (!rows.length) {
+      const copy = state.connected === false
+        ? "連線恢復後會顯示正在執行的作業。"
+        : "抓取、篩選、評分或求職信開始後，會在這裡顯示已經跑了多久。";
+      return `<section aria-labelledby="activity-title"><div class="card-heading"><h2 id="activity-title">進行中</h2></div>${emptyState("目前沒有進行中的作業", copy)}</section>`;
+    }
+    const lines = rows.map((row) => `<div class="system-row"><span class="system-copy"><strong>${escapeHTML(row.title)}</strong><span>${escapeHTML(row.detail)}</span></span><span class="metric-value">${escapeHTML(row.elapsed)}</span></div>`).join("");
+    return `<section class="card system-group" aria-labelledby="activity-title"><div class="card-heading"><h2 id="activity-title">進行中</h2><span>${rows.length} 項 · 每 5 秒更新</span></div><div class="system-card">${lines}</div></section>`;
+  }
+
   function progressSection() {
     const progress = state.progress;
     if (!progress) return `<section aria-labelledby="progress-title"><div class="card-heading"><h2 id="progress-title">處理進度</h2></div>${emptyState("尚無處理進度", state.connected === false ? "連線恢復後會顯示待處理職缺與 Agent 呼叫。" : "重新整理後會顯示待處理職缺與 Agent 呼叫。")}</section>`;
@@ -534,7 +616,12 @@
 
   function renderSystem() {
     const root = document.querySelector("#screen-system");
-    const runs = state.runs.map((run) => `<article class="run-item"><div class="run-heading"><strong>${escapeHTML(text(run.trigger))}</strong><span>${escapeHTML(text(run.started_at))}</span></div><div class="run-stats">${runStats(run).map((value) => `<span>${escapeHTML(value)}</span>`).join("")}${run.error ? `<span>${escapeHTML(run.error)}</span>` : ""}</div></article>`).join("");
+    const runs = state.runs.map((run) => {
+      const meta = runStateMeta(run);
+      const stalled = run.state === "stalled" ? '<span class="run-detail">批次超過五分鐘沒有回報進度，執行它的程序可能已經結束。</span>' : "";
+      return `<article class="run-item ${run.state === "failed" ? "is-failed" : ""}"><div class="run-heading"><strong>${escapeHTML(RUN_TRIGGERS[run.trigger] || text(run.trigger))}</strong><span>${escapeHTML(runStartLabel(run))}</span></div>
+        <div class="run-stats"><span class="system-status ${meta.tone}"><span class="connection-dot"></span>${escapeHTML(meta.label)}</span><span>耗時 ${escapeHTML(runElapsed(run))}</span>${runStats(run).map((value) => `<span>${escapeHTML(value)}</span>`).join("")}${run.error ? `<span>${escapeHTML(run.error)}</span>` : ""}</div>${stalled}</article>`;
+    }).join("");
     const profile = state.profile;
     const profileStatus = profile?.status || (state.connected === false ? "offline" : "loading");
     const summary = profile?.summary || {};
@@ -550,6 +637,7 @@
     const staleJobs = Number(estimate.partial_screened || 0) + Number(estimate.refiltered || 0) + Number(estimate.requeued || 0);
     const protectedJobs = Number(estimate.protected || 0);
     root.innerHTML = `<div class="section-stack"><div class="screen-heading"><div><h1>系統</h1><p>連線、Profile、批次與執行歷程。</p></div></div>
+      ${activitySection()}
       <section class="card system-group" aria-labelledby="connection-title"><div class="card-heading"><h2 id="connection-title">連線與設定</h2></div><div class="system-card"><div class="system-row"><span class="system-copy"><strong>localhost API</strong><span>Side Panel 的 loopback 連線</span></span><span class="system-status ${state.connected ? "" : "is-warning"}"><span class="connection-dot"></span>${state.connected ? "正常" : "離線"}</span></div></div><button id="open-options" class="button is-secondary is-full" type="button">開啟連線設定</button></section>
       <section class="card profile-card" aria-labelledby="profile-title"><div class="card-heading"><h2 id="profile-title">Profile</h2><span class="profile-state is-${escapeHTML(profileStatus)}">${escapeHTML(profileStatus)}</span></div><p>${profileCopy}</p>${profileStatus === "ready" ? `<p class="reprocess-copy">${staleJobs ? `${staleJobs} 筆職缺使用舊版 Profile，等待手動更新。` : "所有可更新職缺均使用目前 Profile。"}${protectedJobs ? `另有 ${protectedJobs} 筆求職信歷史受保護。` : ""}</p>` : ""}<div class="button-stack"><button id="open-profile" class="button is-secondary is-full" type="button" ${profileStatus === "offline" || profileStatus === "loading" ? "disabled" : ""}>${escapeHTML(profileAction)}</button><button id="reprocess-profile" class="button is-primary is-full" type="button" ${profileStatus !== "ready" || staleJobs === 0 || state.busy.has("reprocess") ? "disabled" : ""}>${state.busy.has("reprocess") ? '<span class="spinner" aria-hidden="true"></span>正在排入更新' : `${icon("refresh")}更新過時判定職缺`}</button></div></section>
       ${autoProcessingSection()}
@@ -901,6 +989,34 @@
     const requeued = Number(activation.requeued || 0);
     const parts = [refiltered ? `${refiltered} 筆重新篩選` : "", requeued ? `${requeued} 筆重新評分` : ""].filter(Boolean);
     showToast(parts.length ? `已排入 ${parts.join("、")}` : "過時職缺已更新");
+  }
+
+  const ACTIVITY_POLL_MS = 5000;
+
+  // The activity poll runs only while the system page is open and something is
+  // actually running, so an idle panel makes no requests at all. It refreshes
+  // just the two collections the running view reads, and it stops on its own the
+  // first pass that finds nothing in flight.
+  function activeWork() {
+    return (state.progress?.in_flight || []).length > 0 || state.runs.some((run) => run.state === "running");
+  }
+
+  function scheduleActivityPoll() {
+    clearTimeout(state.activityTimer);
+    if (state.activeTab !== "system" || !activeWork()) return;
+    state.activityTimer = setTimeout(pollActivity, ACTIVITY_POLL_MS);
+  }
+
+  async function pollActivity() {
+    if (state.activeTab !== "system") return;
+    const [progress, runs] = await Promise.all([api("/api/v1/status"), api("/api/v1/runs")]);
+    if (progress?.ok) state.progress = progress.data;
+    if (runs?.ok) state.runs = runs.data.items || [];
+    if (progress?.ok || runs?.ok) {
+      setConnection(true);
+      renderSystem();
+    }
+    scheduleActivityPoll();
   }
 
   // Both pending verdicts are polled: a reprocessed job passes through screening

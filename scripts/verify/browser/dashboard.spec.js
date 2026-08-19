@@ -29,7 +29,7 @@ test("Side Panel loads, filters, shows a job, persists theme, updates apply stat
           if (request.path === "/api/v1/jobs/2") return Promise.resolve({ ok: true, data: { ...jobs[0], description: "Synthetic description", score: { content_fit: 90, benefit_fit: 90, bonus_fit: 90, industry_fit: 90, total: 90, reason: "Synthetic" }, letter: { status: "approved", content: "Synthetic letter" }, status_events: [] } });
           if (request.path === "/api/v1/queue") return Promise.resolve({ ok: true, data: { items: [] } });
           if (request.path === "/api/v1/runs" && request.method === "POST") return Promise.resolve({ ok: true, data: { status: "started" } });
-          if (request.path === "/api/v1/runs") return Promise.resolve({ ok: true, data: { items: [{ started_at: "2026-07-16T00:00:00+08:00", finished_at: null, trigger: "manual-extension", stats: { errors: 0, fetched: 4, new: 0, queries: 3 }, verdicts: { recommended: 2, not_recommended: 1, unfit: 1 }, error: null }] } });
+          if (request.path === "/api/v1/runs") return Promise.resolve({ ok: true, data: { items: [{ started_at: "2026-07-16T00:00:00+08:00", finished_at: "2026-07-16T00:04:00+08:00", heartbeat_at: "2026-07-16T00:04:00+08:00", state: "done", trigger: "manual-extension", stats: { errors: 0, fetched: 4, new: 0, queries: 3 }, verdicts: { recommended: 2, not_recommended: 1, unfit: 1 }, error: null }] } });
           if (request.path === "/api/v1/jobs/2/apply") return Promise.resolve({ ok: true, data: { ...jobs[0], apply_state: request.body.apply_state, description: "Synthetic description", score: { content_fit: 90, benefit_fit: 90, bonus_fit: 90, industry_fit: 90, total: 90, reason: "Synthetic" }, letter: { status: "approved", content: "Synthetic letter" }, status_events: [] } });
           return Promise.resolve({ ok: true, data: jobs[0] });
         },
@@ -62,8 +62,11 @@ test("Side Panel loads, filters, shows a job, persists theme, updates apply stat
   await page.getByRole("button", { name: "開啟連線設定" }).click();
   expect(await page.evaluate(() => window.__openedOptions)).toBeTruthy();
   await page.getByRole("button", { name: "更新過時判定職缺" }).click();
-  await expect(page.locator("#runs")).toContainText("fetched=4");
-  await expect(page.locator("#runs")).toContainText("recommended=2");
+  await expect(page.locator("#runs")).toContainText("手動（側邊欄）");
+  await expect(page.locator("#runs")).toContainText("已完成");
+  await expect(page.locator("#runs")).toContainText("抓取 4");
+  await expect(page.locator("#runs")).toContainText("推薦 2");
+  await expect(page.locator("#runs")).toContainText("耗時 4 分 0 秒");
   await expect(page.locator("#runs")).not.toContainText("[object Object]");
   await page.getByRole("button", { name: "立即手動抓取" }).click();
   const calls = await page.evaluate(() => window.__calls);
@@ -94,7 +97,7 @@ test("a scored job can be reprocessed on its own and the system tab shows proces
           if (request.path === "/api/v1/jobs/5/reprocess") return Promise.resolve({ ok: true, data: { status: "new", job: { ...screening, description: "Synthetic description", status_events: [] } } });
           if (request.path === "/api/v1/jobs/5") return Promise.resolve({ ok: true, data: { ...scored, description: "Synthetic description", score: { content_fit: 5, benefit_fit: 5, bonus_fit: 5, industry_fit: 5, total: 55, reason: "Synthetic" }, status_events: [] } });
           if (request.path?.startsWith("/api/v1/jobs?")) return Promise.resolve({ ok: true, data: { items: [scored], next_cursor: null } });
-          if (request.path === "/api/v1/status") return Promise.resolve({ ok: true, data: { jobs: { queued: 3, new: 1 }, score_budget: { remaining: 0, limited: true }, agent_calls: [{ id: 9, job_id: 5, role: "scorer", runner: "claude", ok: false, duration_ms: 90000, created_at: "2026-07-25T09:12:00+08:00", failure_kind: "reason_too_long", detail: "{\"reason\":\"…\"}" }, { id: 8, job_id: 5, role: "scorer", runner: "claude", ok: true, duration_ms: 8000, created_at: "2026-07-25T09:10:00+08:00" }] } });
+          if (request.path === "/api/v1/status") return Promise.resolve({ ok: true, data: { jobs: { queued: 3, new: 1 }, score_budget: { remaining: 0, limited: true }, in_flight: [{ stage: "score", job_id: 5, started_at: "2026-07-25T09:12:00+08:00", elapsed_ms: 135000 }], agent_calls: [{ id: 9, job_id: 5, role: "scorer", runner: "claude", ok: false, duration_ms: 90000, created_at: "2026-07-25T09:12:00+08:00", failure_kind: "reason_too_long", detail: "{\"reason\":\"…\"}" }, { id: 8, job_id: 5, role: "scorer", runner: "claude", ok: true, duration_ms: 8000, created_at: "2026-07-25T09:10:00+08:00" }] } });
           return Promise.resolve({ ok: true, data: { items: [], next_cursor: null } });
         },
       },
@@ -107,8 +110,11 @@ test("a scored job can be reprocessed on its own and the system tab shows proces
   await expect(page.locator("#verdict-label")).toContainText("篩選中");
   await expect(page.getByRole("button", { name: "重新處理這筆職缺" })).toHaveCount(0);
   await page.getByRole("tab", { name: "系統" }).click();
-  await expect(page.locator(".system-card").nth(3)).toContainText("評分中");
-  await expect(page.locator(".system-card").nth(3)).toContainText("剩 0");
+  await expect(page.locator(".system-card").nth(0)).toContainText("評分");
+  await expect(page.locator(".system-card").nth(0)).toContainText("職缺 5");
+  await expect(page.locator(".system-card").nth(0)).toContainText("2 分 15 秒");
+  await expect(page.locator(".system-card").nth(4)).toContainText("評分中");
+  await expect(page.locator(".system-card").nth(4)).toContainText("剩 0");
   await expect(page.locator("#agent-calls")).toContainText("理由超過 100 字上限");
   await expect(page.locator("#agent-calls")).toContainText("90s");
   await expect(page.locator("#agent-calls .run-item").nth(1)).toContainText("呼叫成功");

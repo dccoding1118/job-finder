@@ -88,9 +88,12 @@
 |---|---|---|
 | `id` | INTEGER PK | |
 | `started_at` / `finished_at` | TEXT | RFC3339 |
+| `heartbeat_at` | TEXT NULL | 最後一次回報進度的時刻；RFC3339。`StartRun`、每個批次落地、`FinishRun` 各寫一次 |
 | `trigger` | TEXT | `timer` / `manual-cli` / `manual-extension` |
-| `stats` | TEXT | 抓取事實（JSON 字串：fetched/new/queries/errors） |
+| `stats` | TEXT | 抓取事實（JSON 字串：fetched/new/queries/errors），執行中即逐步更新 |
 | `error` | TEXT NULL | 致命錯誤摘要（來源級錯誤入 stats.errors） |
+
+`heartbeat_at` 是「執行中」與「程序已死」的唯一判準：兩者都是 `finished_at` 為空且統計停止增長。心跳為 NULL 的列來自本欄位存在之前，一律不得判為執行中。已寫入 `finished_at` 的輪次是歷史，遲到的進度回報不得改寫它。狀態的導出規則見 [design-api](design-api.md)。
 
 `runs` 只記錄**抓取**（`jobfinder run` 的 fetch），不涵蓋 filter／score／letter——後三者由常駐 worker 連續消化，不屬於任何輪次（見 [design-pipeline](design-pipeline.md) §2）。該輪職缺的判定分布不入 `stats`，由 `discovered_by_run_id` 於查詢時即時導出。
 
@@ -284,6 +287,8 @@ migration 新增 revision 欄位時全部允許 legacy NULL，不猜測歷史資
 **schema v7（Agent 用量追蹤）migration**：`agent_calls` 新增 `model` 與六個用量欄位，並建立 `(runner, model, created_at)` 索引。既有資料列的 `model` 為 NULL、用量欄位取預設 0——歷史呼叫的實際用量無從回填，猜測會讓每日彙總失真。
 
 **schema v8 migration**：新增 `settings` 表。既有資料不受影響；未曾寫入的鍵由讀取端各自帶預設值，migration 不預先塞入任何列。
+
+**schema v9（抓取心跳）migration**：`runs` 新增 `heartbeat_at`。既有資料列取 NULL——歷史輪次的進度時刻無從回填，且未收尾的舊列本就屬於早已結束的程序。
 
 ## 6. 交付物
 

@@ -25,8 +25,6 @@
 
 - [ ] 求職信修正上版後的現場收尾：使用者 Windows 機器的 `worker.paused` 改回 false 並重啟服務；job 154 仍停在 `letter_requested`，取件後會依新規則得到結果（過審、跑滿輪數的最終版，或呼叫失敗即 `letter_failed`）。
 
-- [ ] 抓取階段沒有任何可觀測性：`internal/crawler` 與 `pipeline.Fetch` 全程不寫日誌，且整批爬完才一次寫入 SQLite，一趟十分鐘以上的作業對使用者只有「排程工作仍在執行中」一個訊號，分不出正常與卡死。至少要在每個查詢、每頁、每 N 筆內頁記一行。與下方「API 請求層 log」屬同一類但更具體。
-
 - [ ] 公開 GitHub repo。多數資安與對外可見度設定被 private＋免費方案擋住，須依下列**硬順序**在轉 public 當天一次做完（Dependabot alerts 與 automated security fixes 已於 private 階段開啟）：
   1. 本地備妥 `.github/workflows/codeql.yml`（**先別推**——private repo 的 `analyze` job 會恆紅）。
   2. `gh repo edit dccoding1118/job-finder --visibility public`（直接生效，不需 `--accept-visibility-change-consequences`，該旗標在部分 gh 版本會報 unknown flag）。
@@ -45,6 +43,6 @@
 - [ ] S2 extension 連線模式：Options 增設自部署 token／雲端帳號兩種模式，endpoint 改用 `optional_host_permissions` 並於使用者填入自有網域時 runtime 請求授權。
 - [ ] S2 來源能力矩陣與雙層開關：來源標記 `mode`；「此部署是否開放該來源」為部署層設定、「使用者是否啟用」存 store 並由設定 UI 開關。
 - [ ] S2 Chrome Web Store 上架：隱私政策頁、廣域 optional host permission 的用途說明；上架後 `api.extension_origin` 改為內建預設值。
-- [ ] S2 監控功能：在 extension UI 增加集中式、更詳細的運作流程日誌與監控細節，分別查看 UI／API 運作、worker 批次、fetch 批次、求職信處理的日誌；fetch 批次歷程中的英文改成中文呈現。
+- [ ] S2 集中式運作日誌：在 extension UI 增加更詳細的逐行運作日誌，分別查看 UI／API 運作、worker 批次、fetch 批次、求職信處理。執行中作業、批次執行狀態與中文用語已落地（見 `docs/changes/change-run-observability.md`）。
 - [ ] S2 設定功能：將配置檔內其餘功能提供到 extension 上配置（每日上限、掃描間隔、去重門檻、LLM 路由等；自動篩選與評分開關已落地）。處理量告警待 LLM 直串 API 的軟上限一併處理。
-- [ ] 工程面跨階段項：API 請求層 log、薪資字串解析涵蓋度、Agent「輸出已過契約驗證但 Invoke 回錯」不重跑的重試契約。
+- [ ] 工程面跨階段項：API 請求層 log、worker 心跳與卡住偵測、來源健康度（上次成功抓取時間與連續失敗次數）、薪資字串解析涵蓋度、Agent「輸出已過契約驗證但 Invoke 回錯」不重跑的重試契約。

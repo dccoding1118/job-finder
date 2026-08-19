@@ -75,6 +75,15 @@ type Pipeline struct {
 	// Logger receives one structured record per Agent-backed unit of work, which
 	// is what makes a long or failing stage observable while it runs.
 	Logger *slog.Logger
+	// Progress is called after each stored fetch batch with the totals so far. It
+	// is how a run in flight reports that it is still working; nil means the
+	// caller does not record fetch progress.
+	Progress func(context.Context, crawler.Batch, FetchStats) error
+	// Activity holds the unit of work this process is running right now, so a
+	// stage that spends minutes inside one Agent call is visible while it spends
+	// them. It is a pointer because every copy of the Pipeline value in a process
+	// must report into the same one; nil records nothing.
+	Activity *Activity
 	// Now supplies the clock the Taipei day boundary is derived from.
 	Now func() time.Time
 }
@@ -268,7 +277,9 @@ func (p Pipeline) LetterWithStats(ctx context.Context, limit int) (StageStats, e
 		}
 		p.logger().Info("drafting letter", "stage", "letter", "job_id", jobID, "filter_revision", snapshot.Revisions.Filter, "score_revision", snapshot.Revisions.Score)
 		startedAt := time.Now()
+		endUnit := p.Activity.Begin("letter", jobID, startedAt)
 		result, e := agents.GenerateLetter(ctx, drafter, reviewer, view, snapshot.Value, agents.Job{Title: job.Title, CompanyName: job.CompanyName, Description: desc, Location: job.Location, RemoteType: job.RemoteType, SalaryMin: job.SalaryMin, SalaryMax: job.SalaryMax}, p.Denylist, p.MaxLetterLength, p.MaxLetterRounds)
+		endUnit()
 		if e != nil {
 			if ctx.Err() != nil {
 				return stats, e
@@ -305,11 +316,19 @@ func (p Pipeline) LetterWithStats(ctx context.Context, limit int) (StageStats, e
 	return stats, nil
 }
 
+// InFlight reports the Agent-backed work this process is running right now.
+func (p Pipeline) InFlight() []Unit { return p.Activity.InFlight() }
+
 // FetchStats are the fetch facts one run records.
 type FetchStats struct{ Fetched, New int }
 
-// Fetch stores every job one search spec returns and attributes new jobs to the
+// Fetch stores the jobs one search spec returns and attributes new jobs to the
 // run. It performs no filtering or scoring: the resident worker consumes those.
+//
+// Each batch is stored as the source hands it over, and Progress is called with
+// the running totals afterwards. A fetch runs for many minutes, so a caller
+// that only wrote at the end would leave the database unchanged for the whole
+// of it — indistinguishable, from outside, from a process that had died.
 func (p Pipeline) Fetch(ctx context.Context, spec crawler.SearchSpec, runID *int64) (FetchStats, error) {
 	if p.Store == nil || p.Source == nil {
 		return FetchStats{}, fmt.Errorf("pipeline: store and source are required")
@@ -318,25 +337,27 @@ func (p Pipeline) Fetch(ctx context.Context, spec crawler.SearchSpec, runID *int
 	if err != nil {
 		return FetchStats{}, err
 	}
-	rows, err := p.Source.Fetch(ctx, spec)
-	if err != nil {
-		return FetchStats{}, err
-	}
 	stats := FetchStats{}
-	for _, r := range rows {
-		result, e := p.Store.UpsertJob(ctx, jobInput(r, snapshot.Revisions.Filter), runID)
-		if e != nil {
-			return stats, e
+	err = p.Source.Fetch(ctx, spec, func(batch crawler.Batch) error {
+		for _, r := range batch.Jobs {
+			result, e := p.Store.UpsertJob(ctx, jobInput(r, snapshot.Revisions.Filter), runID)
+			if e != nil {
+				return e
+			}
+			if _, e := p.link(ctx, result.Job.ID); e != nil {
+				return e
+			}
+			stats.Fetched++
+			if result.Created {
+				stats.New++
+			}
 		}
-		if _, e := p.link(ctx, result.Job.ID); e != nil {
-			return stats, e
+		if p.Progress == nil {
+			return nil
 		}
-		stats.Fetched++
-		if result.Created {
-			stats.New++
-		}
-	}
-	return stats, nil
+		return p.Progress(ctx, batch, stats)
+	})
+	return stats, err
 }
 
 // storeUsage carries an Agent call's token accounting into the store's own
@@ -523,7 +544,9 @@ func (p Pipeline) screenJob(ctx context.Context, job store.Job, snapshot workPro
 	// half costs nothing and needs no turn, and a priority request only ever waits
 	// for the one call in flight.
 	p.acquire(priority)
+	endUnit := p.Activity.Begin("filter", jobID, time.Now())
 	output, err := screener.Screen(ctx, view, agents.Job{Title: job.Title, CompanyName: job.CompanyName, Description: description, Location: job.Location, RemoteType: job.RemoteType, SalaryMin: job.SalaryMin, SalaryMax: job.SalaryMax})
+	endUnit()
 	p.Gate.Release()
 	if err != nil {
 		return store.FilterResult{}, false, err
@@ -680,7 +703,9 @@ func (p Pipeline) scoreAndStore(ctx context.Context, job store.Job, snapshot wor
 	log.Info("scoring job", "stage", "score", "job_id", jobID, "source", job.Source, "score_revision", snapshot.Revisions.Score, "priority", priority)
 	startedAt := time.Now()
 	p.acquire(priority)
+	endUnit := p.Activity.Begin("score", jobID, startedAt)
 	score, err := scorer.Score(ctx, view, agents.Job{Title: job.Title, CompanyName: job.CompanyName, Description: desc, Location: job.Location, RemoteType: job.RemoteType, SalaryMin: job.SalaryMin, SalaryMax: job.SalaryMax}, p.baseline())
+	endUnit()
 	p.Gate.Release()
 	if err != nil {
 		if ctx.Err() == nil {

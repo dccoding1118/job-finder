@@ -85,6 +85,7 @@ CREATE TABLE IF NOT EXISTS runs (
     id INTEGER PRIMARY KEY,
     started_at TEXT NOT NULL,
     finished_at TEXT,
+    heartbeat_at TEXT,
     trigger TEXT NOT NULL,
     stats TEXT NOT NULL,
     error TEXT

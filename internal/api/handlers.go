@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/dccoding1118/job-finder/internal/agents"
 	"github.com/dccoding1118/job-finder/internal/crawler"
@@ -251,6 +252,10 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 	}
 	value := map[string]any{"jobs": counts, "agent_calls": agentCallViews(calls), "agent_usage_daily": usage, "settings": s.settingsView(r)}
 	if s.pipeline != nil {
+		// What is in flight lives in this process's memory, so it is only ever the
+		// work this process is running: a fetch runs in its own process and reports
+		// through its run row instead.
+		value["in_flight"] = inFlightViews(s.pipeline.InFlight(), time.Now())
 		if remaining, limited, err := s.pipeline.FilterBudgetRemaining(r.Context()); err == nil {
 			value["filter_budget"] = map[string]any{"remaining": remaining, "limited": limited}
 		}
@@ -796,7 +801,7 @@ func (s *Server) pageRuns(r *http.Request, runs []store.Run) (map[string]any, er
 		if err != nil {
 			return nil, err
 		}
-		values = append(values, runView(run, states))
+		values = append(values, runView(run, states, time.Now()))
 	}
 	return map[string]any{"items": values, "next_cursor": next}, nil
 }

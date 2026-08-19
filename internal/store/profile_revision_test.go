@@ -29,6 +29,7 @@ func scoreInput(jobID int64, total float64, revision string) ScoreInput {
 // column at all.
 func rewindRevisionSchema(withProfileRevision bool) []string {
 	statements := []string{
+		"ALTER TABLE runs DROP COLUMN heartbeat_at",
 		"DROP TABLE IF EXISTS filter_results",
 		"ALTER TABLE jobs DROP COLUMN filter_revision",
 		"ALTER TABLE jobs DROP COLUMN score_revision",

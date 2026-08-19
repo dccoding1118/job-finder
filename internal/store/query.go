@@ -66,9 +66,12 @@ type Run struct {
 	ID         int64
 	StartedAt  time.Time
 	FinishedAt *time.Time
-	Trigger    string
-	Stats      RunStats
-	Error      *string
+	// HeartbeatAt is when the run last reported progress. It is nil only for runs
+	// recorded before runs reported any, so its absence never means "stalled".
+	HeartbeatAt *time.Time
+	Trigger     string
+	Stats       RunStats
+	Error       *string
 }
 
 func (s *Store) GetJobDetail(ctx context.Context, id int64) (JobDetail, bool, error) {
@@ -164,7 +167,7 @@ func (s *Store) LatestScore(ctx context.Context, jobID int64) (*Score, error) {
 }
 
 func (s *Store) ListRuns(ctx context.Context) ([]Run, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, started_at, finished_at, trigger, stats, error FROM runs ORDER BY started_at DESC, id DESC`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, started_at, finished_at, heartbeat_at, trigger, stats, error FROM runs ORDER BY started_at DESC, id DESC`)
 	if err != nil {
 		return nil, fmt.Errorf("list runs: %w", err)
 	}
@@ -173,8 +176,8 @@ func (s *Store) ListRuns(ctx context.Context) ([]Run, error) {
 	for rows.Next() {
 		var run Run
 		var stats, startedAt string
-		var finishedAt sql.NullString
-		if scanErr := rows.Scan(&run.ID, &startedAt, &finishedAt, &run.Trigger, &stats, &run.Error); scanErr != nil {
+		var finishedAt, heartbeatAt sql.NullString
+		if scanErr := rows.Scan(&run.ID, &startedAt, &finishedAt, &heartbeatAt, &run.Trigger, &stats, &run.Error); scanErr != nil {
 			return nil, fmt.Errorf("scan run: %w", scanErr)
 		}
 		run.StartedAt, err = parseTimestamp(startedAt)
@@ -187,6 +190,13 @@ func (s *Store) ListRuns(ctx context.Context) ([]Run, error) {
 				return nil, fmt.Errorf("decode run finish timestamp: %w", parseErr)
 			}
 			run.FinishedAt = &finished
+		}
+		if heartbeatAt.Valid {
+			heartbeat, parseErr := parseTimestamp(heartbeatAt.String)
+			if parseErr != nil {
+				return nil, fmt.Errorf("decode run heartbeat timestamp: %w", parseErr)
+			}
+			run.HeartbeatAt = &heartbeat
 		}
 		if err := json.Unmarshal([]byte(stats), &run.Stats); err != nil {
 			return nil, fmt.Errorf("decode run stats: %w", err)

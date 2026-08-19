@@ -46,6 +46,7 @@ type Processor interface {
 	ProcessJobNow(context.Context, int64) error
 	FilterBudgetRemaining(context.Context) (int, bool, error)
 	ScoreBudgetRemaining(context.Context) (int, bool, error)
+	InFlight() []pipeline.Unit
 }
 
 type Server struct {

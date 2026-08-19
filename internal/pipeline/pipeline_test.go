@@ -33,8 +33,13 @@ func (r *letterRunner) Invoke(context.Context, string) (agents.Reply, error) {
 type mockSource struct{ jobs []crawler.RawJob }
 
 func (s mockSource) Name() string { return "yourator" }
-func (s mockSource) Fetch(context.Context, crawler.SearchSpec) ([]crawler.RawJob, error) {
-	return s.jobs, nil
+func (s mockSource) Fetch(_ context.Context, _ crawler.SearchSpec, emit func(crawler.Batch) error) error {
+	for _, job := range s.jobs {
+		if err := emit(crawler.Batch{Direction: "P1", Page: 1, Jobs: []crawler.RawJob{job}}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func TestMockEndToEndPipeline(t *testing.T) {

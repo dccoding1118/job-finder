@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"html"
 	"io"
+	"log/slog"
 	"math/rand/v2"
 	"net/http"
 	"net/url"
@@ -39,6 +40,9 @@ var (
 )
 
 type Yourator struct {
+	// Logger receives one line per query and per page. It defaults to the process
+	// logger, so an adapter built without one still reports progress.
+	Logger                           *slog.Logger
 	BaseURL                          string
 	Client                           *http.Client
 	UserAgent, Referer               string
@@ -53,9 +57,18 @@ type Yourator struct {
 type requestState struct{ count int }
 
 func (y Yourator) Name() string { return "yourator" }
-func (y Yourator) Fetch(ctx context.Context, spec SearchSpec) ([]RawJob, error) {
+
+// Fetch walks every query's list pages and reads each listing's detail page.
+// One job is one batch, so the caller stores it the moment it is parsed and a
+// fetch interrupted after nine minutes keeps the nine minutes of work. Every
+// query and every page is logged: the source imposes a delay between requests,
+// so a healthy fetch and a hung one look identical from the outside without it.
+func (y Yourator) Fetch(ctx context.Context, spec SearchSpec, emit func(Batch) error) error {
 	if err := spec.Validate(); err != nil {
-		return nil, err
+		return err
+	}
+	if emit == nil {
+		return fmt.Errorf("crawler: an emit function is required")
 	}
 	base := strings.TrimRight(y.BaseURL, "/")
 	if base == "" {
@@ -68,13 +81,16 @@ func (y Yourator) Fetch(ctx context.Context, spec SearchSpec) ([]RawJob, error) 
 	state := &requestState{}
 	if y.CheckRobots {
 		if err := y.checkRobots(ctx, client, base, state); err != nil {
-			return nil, err
+			return err
 		}
 	}
-	jobs := []RawJob{}
+	log := y.logger()
 	seen := make(map[string]struct{})
+	harvested := 0
 	for _, query := range spec.Queries {
+		log.Info("fetching a search query", "source", y.Name(), "direction", query.Direction, "keywords", strings.Join(query.Keywords, ","), "max_pages", spec.MaxPages)
 		for page := 1; page <= spec.MaxPages; page++ {
+			pageStartedAt := time.Now()
 			u, _ := url.Parse(base + "/api/v4/jobs")
 			q := u.Query()
 			for _, term := range query.Keywords {
@@ -84,7 +100,7 @@ func (y Yourator) Fetch(ctx context.Context, spec SearchSpec) ([]RawJob, error) 
 			u.RawQuery = q.Encode()
 			body, err := y.get(ctx, client, u.String(), "application/json", state)
 			if err != nil {
-				return nil, err
+				return err
 			}
 			var response struct {
 				Payload struct {
@@ -99,11 +115,12 @@ func (y Yourator) Fetch(ctx context.Context, spec SearchSpec) ([]RawJob, error) 
 				} `json:"payload"`
 			}
 			if err := json.Unmarshal(body, &response); err != nil {
-				return nil, fmt.Errorf("crawler: decode Yourator list: %w", err)
+				return fmt.Errorf("crawler: decode Yourator list: %w", err)
 			}
 			if response.Payload.Jobs == nil {
-				return nil, fmt.Errorf("crawler: Yourator response has no jobs")
+				return fmt.Errorf("crawler: Yourator response has no jobs")
 			}
+			log.Info("read a list page", "source", y.Name(), "direction", query.Direction, "page", page, "listings", len(response.Payload.Jobs), "has_more", response.Payload.HasMore)
 			for _, item := range response.Payload.Jobs {
 				// A listing without an id, title, path or company cannot be
 				// identified, fetched or judged, so it is skipped rather than
@@ -117,9 +134,10 @@ func (y Yourator) Fetch(ctx context.Context, spec SearchSpec) ([]RawJob, error) 
 					continue
 				}
 				seen[externalID] = struct{}{}
+				detailStartedAt := time.Now()
 				detail, err := y.get(ctx, client, base+item.Path, "text/html", state)
 				if err != nil {
-					return nil, err
+					return err
 				}
 				description := extractJobDescription(string(detail))
 				min, max := parseSalary(item.Salary)
@@ -127,14 +145,34 @@ func (y Yourator) Fetch(ctx context.Context, spec SearchSpec) ([]RawJob, error) 
 				if location == "" {
 					location = store.LocationUnknown
 				}
-				jobs = append(jobs, RawJob{Source: y.Name(), ExternalID: externalID, URL: base + item.Path, Title: item.Name, CompanyName: item.Company.Brand, CompanyInfo: "", Description: description, SalaryMin: min, SalaryMax: max, Location: location, RemoteType: remoteType(item.Name + "\n" + description)})
+				job := RawJob{Source: y.Name(), ExternalID: externalID, URL: base + item.Path, Title: item.Name, CompanyName: item.Company.Brand, CompanyInfo: "", Description: description, SalaryMin: min, SalaryMax: max, Location: location, RemoteType: remoteType(item.Name + "\n" + description)}
+				harvested++
+				log.Debug("read a listing", "source", y.Name(), "direction", query.Direction, "page", page, "external_id", externalID, "description_chars", len(description), "duration_ms", time.Since(detailStartedAt).Milliseconds(), "harvested", harvested)
+				if err := emit(Batch{Direction: query.Direction, Page: page, Jobs: []RawJob{job}}); err != nil {
+					return err
+				}
+			}
+			log.Info("finished a list page", "source", y.Name(), "direction", query.Direction, "page", page, "harvested", harvested, "duration_ms", time.Since(pageStartedAt).Milliseconds())
+			// The empty batch reports the page even when every listing on it was a
+			// repeat, so a fetch that harvests nothing for several pages still shows
+			// as making progress rather than as stalled.
+			if err := emit(Batch{Direction: query.Direction, Page: page}); err != nil {
+				return err
 			}
 			if !response.Payload.HasMore {
 				break
 			}
 		}
 	}
-	return jobs, nil
+	log.Info("fetch finished", "source", y.Name(), "queries", len(spec.Queries), "harvested", harvested, "requests", state.count)
+	return nil
+}
+
+func (y Yourator) logger() *slog.Logger {
+	if y.Logger != nil {
+		return y.Logger
+	}
+	return slog.Default()
 }
 
 func (y Yourator) get(ctx context.Context, client *http.Client, address, expectedContentType string, state *requestState) ([]byte, error) {

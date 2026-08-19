@@ -131,7 +131,7 @@ Cake 列表以 `__NEXT_DATA__` 與 DOM 收割兩種素材各擷取一次；內�
 | S19 | 載入固定 ID extension 模擬環境 | 固定 unpacked ID `oddnhajj…`；安全摘要 Origin=absent、Authorization present=true、token 已清空 | V4·R6 | ✅ |
 | S20 | Side Panel 判定篩選、copy、apply | 四頁籤與 light／dark theme 正常；filters_verified、detail_verified、clipboard==核准合成信、`#1002` apply pending→applied 並寫回 SQLite | V4·R6 | ✅ |
 | S21 | Side Panel 求職信生成入口 | 對 `#1001`（letter_failed）再次產生→受理轉 `letter_requested`；狀態事件永久記錄第 2 次 `letter_requested`，worker 隨後取件 | V4·R6 | ✅ |
-| S22 | Side Panel 手動抓取與 Run history | manual fetch 完成；API `runs` 出現 `trigger=manual-extension`；Run history 呈現 fetch stats 與 verdict 分布；存 screenshot | V4·R7 | ✅ |
+| S22 | Side Panel 手動抓取與 Run history | manual fetch 完成；API `runs` 出現 `trigger=manual-extension`；批次歷程以中文呈現觸發方式、執行狀態、耗時、fetch stats 與 verdict 分布；抓取期間「進行中」顯示已收筆數與已耗時；存 screenshot | V4·R7 | ✅ |
 | S23 | extension mock browser L1 | 專案鎖定 Playwright 19 tests 全 pass：Side Panel（含單筆重新處理與系統頁處理進度）／Profile editor／Options／service worker 的 mock Chrome API 互動，及 content script 於 104 search／notification／detail fixture 上的標記與 active-tab context（搜尋頁 `.jobfinder-mark` 依 verdict 標記、跳過 hotjob 廣告、title／data-gtm 地區薪資照 live selector 讀取；通知頁無 data-gtm 依位置與格式讀取；內頁由 JobPosting JSON-LD 擷取且不注入完整評分 overlay） | V4·R6／R9 | ✅ |
 | S24 | 104 清單就地判定且列表路徑零 Agent | v5intern→`unfit/filtered_out`、v5senior→`discovered/pending_detail`；列表路徑只跑結構化硬規則，Agent 呼叫數不變 | V5·R2/R3/R9 | ✅ |
 | S25 | 104 既有職缺回判定、內頁 capture 非同步 | 重複 list 對既有職缺 `created=false` 回現行判定；v5senior 進待看 queue；`capture/job`→`new/pending_score`、score=null，語意篩選與評分由 worker 消化 | V5·R9 | ✅ |

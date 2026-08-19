@@ -20,7 +20,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const schemaVersion = 8
+const schemaVersion = 9
 
 //go:embed schema.sql
 var schemaSQL string
@@ -147,6 +147,11 @@ var upgrades = map[int]string{
 		value TEXT NOT NULL,
 		updated_at TEXT NOT NULL
 	);`,
+	// A fetch reports progress by moving this timestamp, which is what separates
+	// a run still working from one whose process died: both leave finished_at
+	// NULL, and only the heartbeat tells them apart. Existing rows carry NULL and
+	// are read as finished-or-abandoned, never as running.
+	8: `ALTER TABLE runs ADD COLUMN heartbeat_at TEXT;`,
 }
 
 var piiPattern = regexp.MustCompile(`(?i)[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}`)
@@ -694,7 +699,8 @@ func (s *Store) StartRun(ctx context.Context, trigger string) (int64, error) {
 		return 0, fmt.Errorf("store: invalid run trigger %q", trigger)
 	}
 	encoded, _ := json.Marshal(NewRunStats())
-	result, err := s.db.ExecContext(ctx, "INSERT INTO runs (started_at, trigger, stats) VALUES (?, ?, ?)", s.timestamp(), trigger, string(encoded))
+	now := s.timestamp()
+	result, err := s.db.ExecContext(ctx, "INSERT INTO runs (started_at, heartbeat_at, trigger, stats) VALUES (?, ?, ?, ?)", now, now, trigger, string(encoded))
 	if err != nil {
 		return 0, fmt.Errorf("start run: %w", err)
 	}
@@ -705,6 +711,24 @@ func (s *Store) StartRun(ctx context.Context, trigger string) (int64, error) {
 	return id, nil
 }
 
+// TouchRun records the progress of a run still in flight: it stores the counts
+// gathered so far and moves the heartbeat. A fetch that stores nothing for
+// minutes at a time still moves it, which is what lets a reader tell a slow
+// source from a dead process. A run already finished is left alone.
+func (s *Store) TouchRun(ctx context.Context, id int64, stats RunStats) error {
+	if id <= 0 {
+		return errors.New("store: invalid run id")
+	}
+	encoded, err := json.Marshal(stats)
+	if err != nil {
+		return fmt.Errorf("encode run stats: %w", err)
+	}
+	if _, err := s.db.ExecContext(ctx, "UPDATE runs SET heartbeat_at=?, stats=? WHERE id=? AND finished_at IS NULL", s.timestamp(), string(encoded), id); err != nil {
+		return fmt.Errorf("touch run: %w", err)
+	}
+	return nil
+}
+
 func (s *Store) FinishRun(ctx context.Context, id int64, stats RunStats, runErr string) error {
 	if id <= 0 {
 		return errors.New("store: invalid run id")
@@ -713,7 +737,8 @@ func (s *Store) FinishRun(ctx context.Context, id int64, stats RunStats, runErr 
 	if err != nil {
 		return fmt.Errorf("encode run stats: %w", err)
 	}
-	result, err := s.db.ExecContext(ctx, "UPDATE runs SET finished_at=?, stats=?, error=? WHERE id=? AND finished_at IS NULL", s.timestamp(), string(encoded), nullableString(runErr), id)
+	now := s.timestamp()
+	result, err := s.db.ExecContext(ctx, "UPDATE runs SET finished_at=?, heartbeat_at=?, stats=?, error=? WHERE id=? AND finished_at IS NULL", now, now, string(encoded), nullableString(runErr), id)
 	if err != nil {
 		return fmt.Errorf("finish run: %w", err)
 	}

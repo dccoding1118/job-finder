@@ -22,10 +22,13 @@
 | 型別 | 欄位/方法 | 說明 |
 |---|---|---|
 | `Source`（介面） | `Name() string` | 來源代碼；僅全自動來源實作（目前只有 `yourator`） |
-| | `Fetch(ctx, spec SearchSpec) ([]RawJob, error)` | 依搜尋條件抓取一批職缺 |
+| | `Fetch(ctx, spec SearchSpec, emit func(Batch) error) error` | 依搜尋條件抓取，**邊解析邊交付**：每取得一批就呼叫 `emit`，走完整份 spec 才回傳。`emit` 回錯即中止並原樣回傳該錯誤——呼叫端存不下這一批，其餘的也不必再付出抓取成本 |
+| `Batch` | `Direction string`、`Page int`、`Jobs []RawJob` | 一次交付的單位。`Jobs` 可為空：那表示「這一頁到達了」，讓整頁都是重複刊登時仍算進度 |
 | `SearchSpec` | `Queries []SearchQuery`、`Area []string`、`MaxPages int` | 由 Profile directions 展開（見 §5）；每個方向一組 query，每個來源最多三組 |
 | `SearchQuery` | `Direction string`、`Keywords []string` | 同一方向的 keywords 一起送入平台搜尋；不同方向不混入同一 request |
 | `RawJob` | 對應 `jobs` 表的來源端欄位（external_id、url、title、company_name、company_info、description、salary_min/max、location、remote_type） | `description` 可為空（partial，僅列表可見欄位）→ upsert 為 `discovered`；含全文 → `new`。見 [design-schema](design-schema.md) §3 |
+
+串流交付是契約而非最佳化。一趟抓取要跑十分鐘以上，整批回傳的話呼叫端在那之前寫不進任何東西，資料庫的靜止與程序死亡無從分辨，中途中止也會讓已抓到的內容全部作廢。
 
 104 與 Cake 不實作 `Source`（無伺服器端抓取）；本模組為兩者各提供一個**半被動解析器**：輸入插件擷取的原始素材（列表頁項目、內頁 JSON-LD 或內嵌 JSON），輸出 `RawJob`，由 API capture endpoint 依 payload 的 `source` 分派（見 [design-api](design-api.md)）。
 
@@ -106,6 +109,8 @@
 | 列表 JSON `name`、`path`、`company.brand`、`salary`、`location` | `title`、`url`、`company_name`、薪資、`location` | URL 為 `https://www.yourator.co` 加 `path`；薪資僅在 `NT$ min - max` 月薪格式時解析，其他格式為 NULL；`location` 為 null 或空字串時填 `unknown`。 |
 | 公開職缺 HTML 外層 `section.job-description` | `description` | 依巢狀 `section` 平衡邊界擷取完整容器，包含工作內容、條件要求、遠端型態、加分條件與其他職缺資訊；**先整段移除 `script`／`style` 元素內容**，再移除 HTML tag、解碼 entity 並保留標題與段落換行。容器不存在或結構不完整時保留 partial 職缺。 |
 | 職稱與 JD 中的 `remote`／`遠端`／`hybrid`／`混合` | `remote_type` | 依序判定 remote、hybrid，其他為 onsite。 |
+
+**交付與日誌**：Yourator 每解析完一筆職缺即交付一個 `Batch`，每頁走完另交付一個不帶職缺的 `Batch`。日誌顆粒度為每個查詢一行、每頁進入與結束各一行（Info，帶頁碼、筆數與耗時），每筆職缺一行（Debug，帶耗時與累計筆數）。來源本身要求請求間隔，沒有這些行的話健康的抓取與停住的抓取在外部完全相同。
 
 ## 4. Cake 解析器（B6，半被動）
 
@@ -206,6 +211,7 @@ Cake 的職缺常不自帶地點（遠端與混合型尤其如此），刊登公
 - 104 解析器：搜尋頁與通知頁兩套 fixture 各自映射至同一組 partial `RawJob`；廣告職缺被排除；職稱取自 `title` 屬性而非含 `text-highlight` 的節點文字；列表 `description` 恆為 NULL。
 - Cake 解析器：列表 `__NEXT_DATA__` 映射為 partial `RawJob`（`external_id` 為 `{companyPath}/{jobPath}`、`description` 恆為 NULL、非 TWD 月薪不解析）；內頁 `pageProps.job` 的三段 HTML 串接為純文字全文，`hide_salary_completely` 時薪資為 NULL，`remote` 各值映射正確；缺 `__NEXT_DATA__` 或缺 `pageProps.job` 回 error。
 - 104 內頁：JSON-LD 兩層跳脫的 `description` 解碼為含全部區段的純文字；`baseSalary` 為面議 placeholder 時 `salary_min/max` 為 NULL；`TELECOMMUTE` ＋部分遠端內文映射為 `hybrid`；空 `skills`／`educationRequirements` 不映射。
+- Yourator 交付：一次抓取所交付的批次逐筆對應解析出的職缺，且每頁結束有一個不帶職缺的批次；`emit` 回錯時抓取立即結束並回傳該錯誤，後續頁面不再請求。
 - 負向：非 200、JSON 結構變更（缺欄位時報 error 而非靜默略過）、空結果、內頁缺 JSON-LD。
 - 真實端點 smoke 為手動案例（`docs/verify.md`），不進 CI。
 

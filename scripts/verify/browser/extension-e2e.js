@@ -157,7 +157,7 @@ async function main() {
     for (let attempt = 0; attempt < 50; attempt += 1) {
       await dashboard.locator("#refresh").click();
       const runText = await dashboard.locator("#runs").textContent();
-      if (runText.includes("manual-extension") && runText.includes("fetched=") && !runText.includes("[object Object]")) {
+      if (runText.includes("手動（側邊欄）") && runText.includes("抓取 ") && !runText.includes("[object Object]")) {
         result.run_history_rendered = true;
         break;
       }
