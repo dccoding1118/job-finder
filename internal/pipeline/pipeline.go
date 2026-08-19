@@ -58,6 +58,7 @@ type Pipeline struct {
 	MaxScorePerDay  int
 	MaxLetterPerDay int
 	MaxLetterLength int
+	MaxLetterRounds int
 	MinInterval     time.Duration
 	// Gate serializes this process's Agent calls and lets the user's single-job
 	// request cut ahead of the resident worker. It is shared by every copy of the
@@ -239,7 +240,6 @@ func (p Pipeline) LetterWithStats(ctx context.Context, limit int) (StageStats, e
 		return StageStats{}, err
 	}
 	stats := StageStats{}
-	var failures []error
 	for i, job := range jobs {
 		snapshot, snapshotErr := p.snapshot()
 		if snapshotErr != nil {
@@ -268,23 +268,27 @@ func (p Pipeline) LetterWithStats(ctx context.Context, limit int) (StageStats, e
 		}
 		p.logger().Info("drafting letter", "stage", "letter", "job_id", jobID, "filter_revision", snapshot.Revisions.Filter, "score_revision", snapshot.Revisions.Score)
 		startedAt := time.Now()
-		result, e := agents.GenerateLetter(ctx, drafter, reviewer, view, snapshot.Value, agents.Job{Title: job.Title, CompanyName: job.CompanyName, Description: desc, Location: job.Location, RemoteType: job.RemoteType, SalaryMin: job.SalaryMin, SalaryMax: job.SalaryMax}, p.Denylist, p.MaxLetterLength)
+		result, e := agents.GenerateLetter(ctx, drafter, reviewer, view, snapshot.Value, agents.Job{Title: job.Title, CompanyName: job.CompanyName, Description: desc, Location: job.Location, RemoteType: job.RemoteType, SalaryMin: job.SalaryMin, SalaryMax: job.SalaryMax}, p.Denylist, p.MaxLetterLength, p.MaxLetterRounds)
 		if e != nil {
 			if ctx.Err() != nil {
 				return stats, e
 			}
+			// A failed call still records the outcome and moves the job on. Leaving
+			// it in `letter_requested` puts it back at the head of the queue on every
+			// tick — blocking every other request and spending a day's budget on one
+			// job that cannot succeed. The stage itself does not fail: the job reached
+			// a terminal state, which the log line, the letter row and the audited
+			// calls all record.
 			p.logger().Error("letter failed", "stage", "letter", "job_id", jobID, "duration_ms", time.Since(startedAt).Milliseconds(), "error", e)
-			failures = append(failures, fmt.Errorf("letter job %d: %w", job.ID, e))
-			continue
 		}
-		if result.Status == "failed" {
-			result.Content = "[你的姓名]\n[你的聯絡方式]"
-		}
-		if err := p.Store.SaveLetter(ctx, store.LetterInput{JobID: job.ID, Content: result.Content, Status: result.Status, ReviewLog: result.ReviewLog, Rounds: result.Rounds, RunnerDraft: result.DraftRunner, RunnerReview: result.ReviewRunner, FilterRevision: snapshot.Revisions.Filter, ScoreRevision: snapshot.Revisions.Score}); err != nil {
-			return stats, err
-		}
+		// A run that produced no usable letter records no Letter at all: the state
+		// says it failed, the audited calls say why, and an empty row would only be
+		// a letter that is not one.
 		state := "letter_failed"
-		if result.Status == "approved" {
+		if result.Status == "approved" || result.Status == "finalized" {
+			if err := p.Store.SaveLetter(ctx, store.LetterInput{JobID: job.ID, Content: result.Content, Status: result.Status, ReviewLog: result.ReviewLog, Rounds: result.Rounds, RunnerDraft: result.DraftRunner, RunnerReview: result.ReviewRunner, FilterRevision: snapshot.Revisions.Filter, ScoreRevision: snapshot.Revisions.Score}); err != nil {
+				return stats, err
+			}
 			state = "letter_ready"
 			stats.LettersOK++
 		} else {
@@ -293,10 +297,12 @@ func (p Pipeline) LetterWithStats(ctx context.Context, limit int) (StageStats, e
 		if err := p.Store.TransitionProcess(ctx, job.ID, state); err != nil {
 			return stats, err
 		}
-		p.logger().Info("letter completed", "stage", "letter", "job_id", jobID, "state", state, "rounds", result.Rounds, "duration_ms", time.Since(startedAt).Milliseconds())
+		if e == nil {
+			p.logger().Info("letter completed", "stage", "letter", "job_id", jobID, "state", state, "rounds", result.Rounds, "duration_ms", time.Since(startedAt).Milliseconds())
+		}
 		stats.Processed++
 	}
-	return stats, errors.Join(failures...)
+	return stats, nil
 }
 
 // FetchStats are the fetch facts one run records.

@@ -54,6 +54,7 @@ type fileConfig struct {
 		MaxScorePerDay  int        `yaml:"max_score_per_day"`
 		MaxLetterPerDay int        `yaml:"max_letter_per_day"`
 		MaxLetterLength int        `yaml:"max_letter_length"`
+		MaxLetterRounds int        `yaml:"max_letter_rounds"`
 		MinInterval     string     `yaml:"min_interval"`
 		Timeout         string     `yaml:"timeout"`
 		Roles           roleRoutes `yaml:"roles"`

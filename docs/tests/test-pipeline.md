@@ -38,14 +38,16 @@
 | 編號 | 測試情境 | 預期結果 |
 |---|---|---|
 | PT-30 | 一筆 `letter_requested` Job 的草稿通過防線，Reviewer 首輪核准 | 儲存一筆 approved letter 與審查歷程，Job 僅經 store 轉為 `letter_ready`，並建立 process event 與各次 agent call |
-| PT-31 | Reviewer 前兩輪要求 revise，第三輪核准 | 依序傳遞各輪 issues，保存第三份通過的信件與完整 review log；重寫次數不超過兩次 |
-| PT-32 | 三輪審查均為 revise | 保存 failed letter 與 review log，Job 轉為 `letter_failed`；不得留下可當成完成稿的 letter |
-| PT-33 | 草稿或 Reviewer 編輯稿被佔位符、技術詞、PII 或字數防線拒絕 | 不接受該版本；若重寫上限耗盡，依 PT-32 結束；錯誤摘要不含信件全文或敏感片段 |
-| PT-34 | Drafter 或 Reviewer 經重試與 fallback 後仍失敗 | Job 維持 `letter_requested`，不儲存 letter、不建立 process transition；全部 agent calls 正確記錄，使用者的要求保留待 worker 下次取件重試 |
+| PT-31 | 輪數上限 3，Reviewer 前兩輪要求 revise | 保存第三版信件為 `finalized` letter 與完整 review log，Job 轉為 `letter_ready`；第三輪不呼叫 Reviewer |
+| PT-32 | 最後一輪的草稿被防線拒絕 | Job 轉為 `letter_failed` 且不寫入任何 letter；不得留下可當成完成稿的 letter |
+| PT-33 | 中間輪次的草稿或 Reviewer 編輯稿被佔位符、技術詞、PII 或字數防線拒絕 | 不接受該版本，防線問題成為下一輪的意見；若輪數用盡則依 PT-32 結束；錯誤摘要不含信件全文或敏感片段 |
+| PT-34 | Drafter 或 Reviewer 經重試與 fallback 後仍失敗 | Job 轉為 `letter_failed` 並建立 process event，不寫入 letter；全部 agent calls 正確記錄，失敗原因可由稽核查得；不重試該輪、不跑後續輪次 |
+| PT-97 | 一批 `letter_requested` 中第一筆呼叫失敗 | 該筆轉 `letter_failed` 後，同批其餘職缺於同一輪照常取件消化，不因失敗筆數而停止 |
 | PT-35 | 當日 `letter_requested` Job 筆數超過 `max_letter_per_day` | 僅處理上限內的工作，剩餘 Job 維持 `letter_requested` 且不記為錯誤；跨台北日界後恢復取件 |
 | PT-36 | 先前已成功轉為 `letter_ready` 的 Job 再次被 worker 掃描 | 不取件、不再次呼叫 Drafter 或 Reviewer，不新增 letter 或 agent call |
 | PT-37 | letter 階段完成一部分後 worker 中斷，再重啟 | 已轉為終態的 Job 不重複呼叫；殘留 `letter_requested` Job 續作 |
 | PT-38 | `--job` 指向 `letter_requested` Job | 僅處理指定 Job，且遵守相同的防線、上限與稽核語意 |
+| PT-98 | `max_letter_rounds` 設為不同值 | Drafter 與 Reviewer 的呼叫次數隨設定改變；letter 的 `rounds` 記實際跑過的輪數 |
 | PT-39 | 同一 run 的連續 Drafter／Reviewer 呼叫 | 依設定的最小間隔序列化；注入 sleeper 的等待次數與時長符合設定 |
 | PT-40 | Profile 儲存變更可接受地點、薪資下限或任一硬規則項目 | worker 不重啟即對新 ingest 使用新 snapshot；既有 Job revision 與狀態不變，不讀取或要求 `config.yaml` 的重複求職條件 |
 | PT-41 | 兩輪 run 之間變更 `llm.roles` | 新一輪的評分、起草與審查使用新路由；每次 Agent 呼叫記錄實際 runner |

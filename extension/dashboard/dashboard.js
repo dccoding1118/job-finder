@@ -231,20 +231,25 @@
   }
 
   function letterCard(job) {
-    const letterReady = job.letter_state === "ready" && job.letter?.status === "approved";
+    // A finalized letter is the last round's version, produced from every review
+    // so far but never sent back for a final verdict. It is a real letter and is
+    // shown as one, flagged so the user gives it one read before applying.
+    const finalized = job.letter?.status === "finalized";
+    const letterReady = job.letter_state === "ready" && (job.letter?.status === "approved" || finalized);
     const requested = job.letter_state === "requested";
     const failed = job.letter_state === "failed";
     if (!job.letter_state) return `<section class="card"><div class="letter-heading"><h2>投遞追蹤</h2></div>${trackingFields(job)}</section>`;
     let body = "";
     let badge = "按需生成";
     if (letterReady) {
-      badge = `${icon("check")}已過審`;
-      body = `<pre id="letter" class="letter-content">${escapeHTML(job.letter.content)}</pre>`;
+      badge = finalized ? `${icon("check")}已達輪數上限` : `${icon("check")}已過審`;
+      const note = finalized ? '<p class="letter-copy">這是修改輪數用完後的最終版，未再經過一次審查。投遞前請自行過目。</p>' : "";
+      body = `${note}<pre id="letter" class="letter-content">${escapeHTML(job.letter.content)}</pre>`;
     } else if (requested) {
       badge = '<span class="spinner" aria-hidden="true"></span>產生中';
       body = '<p class="letter-copy">要求已送出。常駐 worker 完成起草與審查後，重新整理即可取得信件。</p><pre id="letter" class="visually-hidden"></pre>';
     } else {
-      body = `<p class="letter-copy">${failed ? "上次信件未通過審查，可再次要求產生。" : "確認想投遞後才產生，避免消耗 Agent 額度。"}</p><pre id="letter" class="visually-hidden"></pre>`;
+      body = `<p class="letter-copy">${failed ? "上次產製失敗，可再次要求產生；失敗原因見系統頁的 Agent 呼叫紀錄。" : "確認想投遞後才產生，避免消耗 Agent 額度。"}</p><pre id="letter" class="visually-hidden"></pre>`;
     }
     return `
       <section class="card letter-card" aria-labelledby="letter-title">
@@ -298,7 +303,7 @@
   function actionDock(job) {
     const source = `<a id="source" class="button is-secondary" href="${escapeHTML(job.url || "#")}" target="_blank" rel="noreferrer" aria-label="開啟原始職缺">${icon("external")}</a>`;
     if (state.connected === false) return `<div class="action-dock">${source}<button class="button is-primary" type="button" disabled>${icon("cloud")}等待重新連線</button></div>`;
-    if (job.letter_state === "ready" && job.letter?.status === "approved") return `<div class="action-dock">${source}<button id="copy" class="button is-primary" type="button">${icon("copy")}複製求職信</button></div>`;
+    if (job.letter_state === "ready" && (job.letter?.status === "approved" || job.letter?.status === "finalized")) return `<div class="action-dock">${source}<button id="copy" class="button is-primary" type="button">${icon("copy")}複製求職信</button></div>`;
     if (job.letter_state === "requested") return `<div class="action-dock">${source}<button id="request-letter" class="button is-primary" type="button" disabled><span class="spinner" aria-hidden="true"></span>求職信產生中</button></div>`;
     if (job.verdict === "recommended") return `<div class="action-dock">${source}${reprocessButton(job)}<button id="request-letter" class="button is-primary" type="button" ${state.busy.has("letter") ? "disabled" : ""}>${icon("spark")}${job.letter_state === "failed" ? "再次產生求職信" : "產生求職信"}</button></div>`;
     if (job.verdict === "pending_screen" || job.verdict === "pending_score") return `<div class="action-dock">${source}${processNowButton(job)}</div>`;
@@ -379,7 +384,7 @@
   function filterOptions() {
     return `<details class="card filter-panel" ${state.filtersOpen ? "open" : ""}><summary>進階篩選</summary><div class="filter-grid">
       <label>判定<select id="verdict"><option value="recommended">推薦</option><option value="not_recommended">不推薦</option><option value="pending_score">評分中</option><option value="pending_screen">篩選中</option><option value="pending_detail">待看</option><option value="unfit">不適合</option><option value="">全部</option></select></label>
-      <label>處理狀態<select id="process"><option value="">全部</option><option value="discovered">待看</option><option value="new">篩選中</option><option value="queued">評分中</option><option value="scored">已評分</option><option value="shortlisted">已入選</option><option value="letter_requested">信件產生中</option><option value="letter_ready">信件就緒</option><option value="letter_failed">信件未過審</option><option value="filtered_out">已排除</option></select></label>
+      <label>處理狀態<select id="process"><option value="">全部</option><option value="discovered">待看</option><option value="new">篩選中</option><option value="queued">評分中</option><option value="scored">已評分</option><option value="shortlisted">已入選</option><option value="letter_requested">信件產生中</option><option value="letter_ready">信件就緒</option><option value="letter_failed">信件產製失敗</option><option value="filtered_out">已排除</option></select></label>
       <label>投遞狀態<select id="apply"><option value="">全部</option><option value="pending">待投遞</option><option value="applied">已投遞</option><option value="interview">面試</option><option value="offer">錄取</option><option value="ghosted">無回音</option><option value="dropped">放棄</option></select></label>
       <label>來源<select id="source-filter"><option value="">全部</option><option value="yourator">Yourator</option><option value="cake">Cake</option><option value="104">104</option></select></label>
     </div></details>`;

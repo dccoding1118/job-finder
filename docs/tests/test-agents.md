@@ -61,29 +61,36 @@
 | AT-21 | Drafter 缺少 `letter`、`letter` 非字串或回傳無法解析 JSON | 拒絕輸出，依呼叫策略重試或 fallback |
 | AT-22 | Reviewer 回傳 `approve`，未提供 `edited_letter` | 採用原草稿為最終稿 |
 | AT-23 | Reviewer 回傳 `approve` 與合法 `edited_letter` | 採用編輯後版本為最終稿，並重新通過全部防線 |
-| AT-24 | Reviewer 回傳 `revise` 與具體 `issues` | 將 issues 放入下一次 Drafter prompt，產生新草稿後重新審查 |
+| AT-24 | Reviewer 回傳 `revise` 與具體 `issues` | 該版草稿與其 issues 併入歷程，放入下一次 Drafter prompt，產生新草稿後重新審查 |
 | AT-25 | Reviewer 的 verdict 非法、`revise` 未附 issues，或 `edited_letter` 型別錯誤 | 拒絕輸出，依呼叫策略重試或 fallback |
 | AT-26 | Reviewer 以 `revise` 回覆非空 `edited_letter`，或 `issues` 含空白項目 | 拒絕不符合契約的回覆；不得把未核准版本當成下一輪草稿或最終稿 |
+| AT-27 | Reviewer 的 `issues` 元素為物件而非字串 | 取其文字欄位攤平為一句後照常解析；不因此判定整份回覆不合法 |
+| AT-28 | Reviewer 的 `issues` 元素為字串 | 維持原行為，逐則原樣保留 |
 
 ### 4.2 生成迴圈與防幻覺防線
 
 | 編號 | 測試情境 | 預期結果 |
 |---|---|---|
 | AT-30 | 初稿通過防線且 Reviewer 首輪 `approve` | 產生 approved 結果，記錄一輪審查、draft/review runner 與可供 store 保存的 review log |
-| AT-31 | 初稿兩次被 `revise`，第三份草稿被 `approve` | 最多兩次重寫後成功；每次 issues 均只影響下一次草稿，review log 完整保留 |
-| AT-32 | 初稿與兩次重寫後仍被 `revise` | 回傳 failed 結果；不產出 approved 信件，供 pipeline 轉為 `letter_failed` |
+| AT-31 | 輪數上限 3，初稿與第二版皆被 `revise`，第三版不再送審 | 回傳 `finalized` 結果與第三版信件；第三輪不呼叫 Reviewer；review log 完整保留前兩輪意見 |
+| AT-32 | 輪數上限 3，第二輪 Reviewer 回 `approve` | 立即回傳 approved 結果，不跑第三輪，`rounds` 記 2 |
 | AT-33 | 信件缺少任一指定佔位符，或含額外未解析的 `[…]` 佔位符 | 程式防線拒絕信件，不送出或不接受 Reviewer 的核准結果 |
 | AT-34 | 信件含 Profile 技能集與 JD 皆未出現的技術詞 | 程式防線以幻覺技術詞拒絕信件 |
 | AT-35 | 信件含 denylist 禁詞、內建 PII pattern，或超過設定的字數上限 | 程式防線拒絕信件，錯誤指出觸發的規則，不輸出完整敏感內容 |
 | AT-36 | 信件僅使用 Profile 或 JD 可支持的技術詞，含正確佔位符，且長度與 PII 檢核均合法 | 程式防線通過 |
 | AT-37 | 以合成 Profile、Job 與 Reviewer issues 產生 Drafter／Reviewer prompt | Drafter prompt 限制可用事實、語言、字數與佔位符；Reviewer prompt 要求檢查幻覺、誇大與空泛詞 |
-| AT-38 | 初稿或 Reviewer `edited_letter` 未通過防線 | 不呼叫 Reviewer，或不接受其 `approve`；以具體防線問題要求 Drafter 重寫，並計入兩次重寫上限 |
+| AT-38 | 中間輪次的草稿或 Reviewer `edited_letter` 未通過防線 | 不呼叫 Reviewer，或不接受其 `approve`；以具體防線問題作為該版意見併入歷程要求重寫，並計入輪數上限 |
 | AT-39 | Drafter 或 Reviewer 的 primary、重試與 fallback 呼叫交錯發生 | 每次嘗試都以正確 role 和 runner 寫稽核資料；成功結果只採用通過契約驗證者 |
 | AT-40 | 分類被拒回應：CLI 自報錯誤（含 rate limit）、空輸出、無 JSON、JSON 無法解析、`reason` 超過上限、四維超出範圍、Filter 條件欄位不合法、其他內容不合法 | 各回對應失敗類別（含 `invalid_condition`）；CLI 自報錯誤優先於內容驗證 |
 | AT-41 | 四維皆為低分但格式合法的評分回應 | 通過驗證並視為成功呼叫；低分不得被判定為失敗 |
 | AT-42 | `reason` 恰為 100 字與 101 字 | 前者通過驗證；後者被拒 |
 | AT-43 | 以字數規則計算 `reason` 長度：純中文、單一英文詞、含 `Node.js`／`C++`／`Go/Rust` 的混排 | 中文逐字計數，連續英數整段計一字，連字與 `.`／`/`／`+`／`#` 不切斷該詞 |
 | AT-44 | 中英混排、runes 超過 100 但依字數規則未超過上限的 `reason` | 通過驗證，不觸發重跑 |
+| AT-58 | 最後一輪的草稿未通過防線 | 回傳 failed 結果、不帶信件內容，供 pipeline 轉為 `letter_failed` |
+| AT-59 | 任一輪的 Drafter 或 Reviewer 三個 runner 全數失敗 | 立即終止生成並回錯誤，不重試該輪、不跑後續輪次；已完成輪次的稽核資料照常寫入 |
+| AT-60 | 第 k 輪的 Drafter prompt | 含第 1 至 k-1 版草稿原文與各版對應意見，依輪次順序排列 |
+| AT-61 | 輪數上限取自設定而非常數 | 以不同上限值驅動，Drafter 與 Reviewer 的呼叫次數隨之改變 |
+| AT-62 | 輪數上限設為 1 | 只跑一次 Drafter、不呼叫 Reviewer，回 `finalized`；`runner_review` 為空 |
 
 ## 4.4 B7 單元測試案例：Filter 與四維 Scorer
 
@@ -112,5 +119,6 @@
 - `mise run fmt`、`mise run lint` 與 `mise run test` 全數通過。
 - B2 能以合法結構化回覆取得各維分數與理由，並正確處理 Runner 重試、fallback 與稽核資料。
 - B7 的 Filter 能拆解 JD 條件並逐條給 `pass`／`fail`／`unknown`；年資類判定由程式覆寫，加分條件不進篩選彙總；Scorer prompt 不含履歷敘事。
-- B3 能在初稿後最多重寫兩次；只有通過佔位符、技術詞、PII 與字數防線且 Reviewer 核准的信件才能成為 approved 結果。
+- B3 依 `llm.max_letter_rounds` 決定輪數，最後一輪不送審而直接產出 `finalized`；只有通過佔位符、技術詞、PII 與字數防線且 Reviewer 核准的信件才能成為 approved 結果，兩者都必須通過全部防線。
+- B3 在任一輪 Agent 呼叫失敗時立即終止，不自行重試整輪。
 - 真實 claude / codex CLI、真實職缺與可供使用者檢閱的求職信，僅依 [verify](../verify.md) 的 B2、B3 手動驗收案例檢查，不進 L1 或例行 CI。

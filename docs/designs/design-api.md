@@ -46,7 +46,7 @@ extension 的 Options 儲存 API endpoint 與 token，service worker 代為發�
 
 `merged`（被判定為其他 Job 的重複刊登）**不導出 verdict**，也不出現在任何清單；命中它的查詢與 capture 一律改回該群組的 canonical Job（PRD R2.8）。
 
-推薦職缺另附 `letter_state`，供前端決定呈現生成入口、處理中或求職信：`none`（`shortlisted`，未要求）／`requested`（`letter_requested`，處理中）／`ready`（`letter_ready`）；`letter_failed` 的 verdict 仍為 `recommended`，`letter_state` 為 `failed`。
+推薦職缺另附 `letter_state`，供前端決定呈現生成入口、處理中或求職信：`none`（`shortlisted`，未要求）／`requested`（`letter_requested`，處理中）／`ready`（`letter_ready`）；`letter_failed` 的 verdict 仍為 `recommended`，`letter_state` 為 `failed`。`ready` 涵蓋 `letters.status` 為 `approved` 與 `finalized` 兩種，兩者都有可讀取的信件內容，差別由前端依 `status` 呈現（見 [design-schema](design-schema.md) §2.3）。
 - Job 的原始 JD、信件與評分理由仍只在本機 API 回應，不寫入 extension storage 或 log。
 
 Job viewmodel 另回 `group`：`{ group_id, canonical_job_id, members: [{ job_id, source, url, external_id }], duplicate_candidate_count }`，供前端列出同一職缺的其他來源連結。單成員群組同樣回傳，`members` 只有自己。

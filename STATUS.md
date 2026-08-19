@@ -23,6 +23,8 @@
 
 - [ ] 這台 Linux 機器目前跑的是 dev 建置（`mise run deploy-update`），不是 release。以 `v0.1.1` 之後的 release 工件重裝，才回到「跑的是正式版」的狀態。
 
+- [ ] 求職信修正上版後的現場收尾：使用者 Windows 機器的 `worker.paused` 改回 false 並重啟服務；job 154 仍停在 `letter_requested`，取件後會依新規則得到結果（過審、跑滿輪數的最終版，或呼叫失敗即 `letter_failed`）。
+
 - [ ] 抓取階段沒有任何可觀測性：`internal/crawler` 與 `pipeline.Fetch` 全程不寫日誌，且整批爬完才一次寫入 SQLite，一趟十分鐘以上的作業對使用者只有「排程工作仍在執行中」一個訊號，分不出正常與卡死。至少要在每個查詢、每頁、每 N 筆內頁記一行。與下方「API 請求層 log」屬同一類但更具體。
 
 - [ ] 公開 GitHub repo。多數資安與對外可見度設定被 private＋免費方案擋住，須依下列**硬順序**在轉 public 當天一次做完（Dependabot alerts 與 automated security fixes 已於 private 階段開啟）：

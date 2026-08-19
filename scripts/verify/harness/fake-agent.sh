@@ -66,8 +66,10 @@ case "${prompt}" in
     payload='{"letter":"我使用 Go 建立可靠服務。[你的姓名][你的聯絡方式]"}'
     ;;
   *"審查器"*)
+    # The failure fixture answers with prose instead of a JSON object, so every
+    # reviewer runner is exhausted and the job takes the failed-call path.
     if [[ "${prompt}" == *"Verification failure"* ]]; then
-      payload='{"verdict":"revise","issues":["驗證用的固定退回結果"]}'
+      payload='驗證用的固定不合法回應'
     else
       payload='{"verdict":"approve","issues":[]}'
     fi

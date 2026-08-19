@@ -272,6 +272,36 @@ func TestForeignKeysAndRunAndAgentValidation(t *testing.T) {
 	}
 }
 
+func TestSaveLetterWritesOnlyProducedLetters(t *testing.T) {
+	store := openTestStore(t, filepath.Join(t.TempDir(), "jobs.db"))
+	defer closeTestStore(t, store)
+	ctx := context.Background()
+	description := "Go platform work"
+	job, err := store.UpsertJob(ctx, JobInput{Source: "yourator", ExternalID: "letter-status", URL: "https://example.test/jobs/letter-status", Title: "Platform Engineer", CompanyName: "Example Platform", CompanyInfo: "software", Description: &description, Location: "Taipei", RemoteType: "hybrid"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := job.Job.ID
+	// A finalized letter has content but never went back for a final review.
+	if err := store.SaveLetter(ctx, LetterInput{JobID: id, Content: "letter", Status: "finalized", Rounds: 3, ReviewLog: "revise", RunnerDraft: "claude"}); err != nil {
+		t.Fatalf("finalized letter rejected: %v", err)
+	}
+	// A run that produced nothing writes no row at all, so neither an empty letter
+	// nor the legacy `failed` status is accepted any more.
+	if err := store.SaveLetter(ctx, LetterInput{JobID: id, Status: "failed", Rounds: 1, ReviewLog: "error"}); err == nil {
+		t.Fatal("a failed letter was written")
+	}
+	if err := store.SaveLetter(ctx, LetterInput{JobID: id, Content: "letter", Status: "unreviewed", Rounds: 1, RunnerDraft: "claude"}); err == nil {
+		t.Fatal("an unknown letter status was accepted")
+	}
+	if err := store.SaveLetter(ctx, LetterInput{JobID: id, Status: "finalized", Rounds: 1, RunnerDraft: "claude"}); err == nil {
+		t.Fatal("a finalized letter with no content was accepted")
+	}
+	if err := store.SaveLetter(ctx, LetterInput{JobID: id, Content: "letter", Status: "approved", Rounds: 1, RunnerDraft: "claude"}); err == nil {
+		t.Fatal("an approved letter with no reviewer was accepted")
+	}
+}
+
 func TestSaveAgentCallMasksPIIAndKeepsUsage(t *testing.T) {
 	store := openTestStore(t, filepath.Join(t.TempDir(), "jobs.db"))
 	defer closeTestStore(t, store)

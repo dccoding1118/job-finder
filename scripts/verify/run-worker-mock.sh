@@ -81,11 +81,13 @@ start_api() {
     systemctl --user reset-failed "${api_unit}.service" >/dev/null 2>&1 || true
     # The resident worker holds an exclusive lock for as long as it runs, so the
     # replacement may only start once the previous one has actually released it.
+    # The claim is the kernel lock on the handle, not the lock file, which is left
+    # behind on purpose — so it is the lock that must be probed, not the path.
     for _ in $(seq 1 200); do
-      [[ -e "${worker_db}.worker.lock" ]] || break
+      flock -n "${worker_db}.worker.lock" true 2>/dev/null && break
       sleep 0.1
     done
-    if [[ -e "${worker_db}.worker.lock" ]]; then
+    if ! flock -n "${worker_db}.worker.lock" true 2>/dev/null; then
       fail 'the previous worker never released its lock'
     fi
   fi
