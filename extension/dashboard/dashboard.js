@@ -47,6 +47,10 @@
     // does not distinguish "waiting" from "being worked on", so the button that
     // was pressed is what turns the action into a progress state here.
     pushedJobIDs: new Set(),
+    // letterHistory belongs to one job and is fetched only when the user opens
+    // the section: it carries every draft in full, which is far more than the
+    // job view should drag along on every render.
+    letterHistory: { jobID: null, attempts: null, open: false },
     filters: { verdict: "recommended", process: "", apply: "", source: "" },
     filtersOpen: false,
     scrollPositions: { current: 0, queue: 0, shortlist: 0, system: 0 },
@@ -257,8 +261,56 @@
       <section class="card letter-card" aria-labelledby="letter-title">
         <div class="letter-heading"><h2 id="letter-title">求職信</h2><span id="letter-state" class="letter-state ${letterReady ? "is-ready" : requested ? "is-pending" : ""}">${badge}</span></div>
         ${body}
+        ${letterHistoryBlock(job)}
         ${trackingFields(job)}
       </section>`;
+  }
+
+  const ATTEMPT_STATUS = { approved: "已過審", finalized: "已達輪數上限", failed: "未產出信件", running: "產生中" };
+  const CALL_ROLE = { drafter: "起草", reviewer: "審查" };
+
+  // letterHistoryBlock is the only place a past round is readable. It stays shut
+  // until asked: a generation holds several full drafts, and the answer most
+  // readings want is the final letter above it.
+  function letterHistoryBlock(job) {
+    const history = state.letterHistory;
+    const open = history.open && history.jobID === job.id;
+    if (!open) {
+      return `<details class="details-card letter-history"><summary data-letter-history="${job.id}">產製歷程</summary></details>`;
+    }
+    if (!history.attempts) {
+      return `<details class="details-card letter-history" open><summary data-letter-history="${job.id}">產製歷程</summary><div class="details-content"><p class="letter-copy"><span class="spinner" aria-hidden="true"></span>讀取中…</p></div></details>`;
+    }
+    if (!history.attempts.length) {
+      return `<details class="details-card letter-history" open><summary data-letter-history="${job.id}">產製歷程</summary><div class="details-content"><p class="letter-copy">這筆職缺還沒有跑過求職信產製。</p></div></details>`;
+    }
+    const entries = history.attempts.map(attemptEntry).join("");
+    return `<details class="details-card letter-history" open><summary data-letter-history="${job.id}">產製歷程<span class="attempt-count">${history.attempts.length} 次</span></summary><div class="details-content">${entries}</div></details>`;
+  }
+
+  function attemptEntry(attempt) {
+    const status = ATTEMPT_STATUS[attempt.status] || attempt.status;
+    const when = attempt.started_at ? new Date(attempt.started_at).toLocaleString("zh-TW", { hour12: false }) : "";
+    const runners = [attempt.runner_draft && `起草 ${attempt.runner_draft}`, attempt.runner_review && `審查 ${attempt.runner_review}`].filter(Boolean).join("・");
+    const failure = attempt.error ? `<p class="letter-copy is-negative">${escapeHTML(attempt.error)}</p>` : "";
+    const log = attempt.review_log ? `<ul class="attempt-log">${attempt.review_log.split("\n").filter(Boolean).map((line, index) => `<li><span class="attempt-round">第 ${index + 1} 輪</span>${escapeHTML(reviewLogLine(line))}</li>`).join("")}</ul>` : "";
+    // Calls are absent for a generation that predates this record, so the entry
+    // falls back to the summary it does have rather than showing an empty shell.
+    const rounds = attempt.calls?.length
+      ? attempt.calls.map((call) => `<div class="attempt-call"><div class="attempt-call-heading"><span class="attempt-round">第 ${call.round || "?"} 輪</span><span>${escapeHTML(CALL_ROLE[call.role] || call.role)}</span><span>${escapeHTML(call.runner)}${call.model ? `・${escapeHTML(call.model)}` : ""}</span>${call.ok ? "" : '<span class="attempt-failed">呼叫未通過</span>'}</div><pre class="attempt-output">${escapeHTML(call.output)}</pre></div>`).join("")
+      : '<p class="letter-copy">這次產製早於逐輪紀錄，只留下上面的審查摘要。</p>';
+    return `<details class="attempt"><summary><span class="attempt-status is-${escapeHTML(attempt.status)}">${escapeHTML(status)}</span><span>${escapeHTML(when)}</span><span>${attempt.rounds} 輪</span><span>${escapeHTML(runners)}</span></summary><div class="attempt-body">${failure}${log}${rounds}</div></details>`;
+  }
+
+  // The review log is written for the audit trail, so its prefixes are read back
+  // into the words the rest of the interface uses.
+  function reviewLogLine(line) {
+    if (line.startsWith("revise: ")) return `要求修改：${line.slice(8)}`;
+    if (line.startsWith("guard: ")) return `未通過保護規則：${line.slice(7)}`;
+    if (line.startsWith("error: ")) return `呼叫失敗：${line.slice(7)}`;
+    if (line === "approve") return "審查通過";
+    if (line === "finalized") return "輪數用完，直接定稿";
+    return line;
   }
 
   // A verdict the user disagrees with is redone as a whole: the screening
@@ -809,10 +861,38 @@
     document.querySelector("#reprocess")?.addEventListener("click", reprocessJob);
     document.querySelector("#process-now")?.addEventListener("click", processJobNow);
     document.querySelector("#save-apply")?.addEventListener("click", saveApply);
+    document.querySelector("[data-letter-history]")?.addEventListener("click", toggleLetterHistory);
     document.querySelector("#next-job")?.addEventListener("click", () => switchTab("queue"));
     for (const button of document.querySelectorAll("[data-unmerge]")) {
       button.addEventListener("click", () => unmergeJob(Number(button.dataset.unmerge)));
     }
+  }
+
+  // toggleLetterHistory owns the section's open state itself rather than letting
+  // the details element keep it: the panel is re-rendered on every job update,
+  // and a summary click that only toggled the DOM would close again on the next
+  // render.
+  async function toggleLetterHistory(event) {
+    const jobID = Number(event.currentTarget.dataset.letterHistory);
+    const history = state.letterHistory;
+    if (history.open && history.jobID === jobID) {
+      state.letterHistory = { jobID, attempts: history.attempts, open: false };
+      renderAll();
+      return;
+    }
+    event.preventDefault();
+    const cached = history.jobID === jobID ? history.attempts : null;
+    state.letterHistory = { jobID, attempts: cached, open: true };
+    renderAll();
+    if (cached) return;
+    const result = await api(`/api/v1/jobs/${jobID}/letter-history`);
+    if (!result?.ok) {
+      state.letterHistory = { jobID: null, attempts: null, open: false };
+      renderAll();
+      return showToast(result?.error || "無法讀取產製歷程");
+    }
+    state.letterHistory = { jobID, attempts: result.data?.attempts || [], open: true };
+    renderAll();
   }
 
   // unmergeJob undoes one grouping decision. The alias returns to the state it

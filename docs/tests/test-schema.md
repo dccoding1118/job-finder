@@ -26,7 +26,7 @@
 
 | 編號 | 測試情境 | 預期結果 |
 |---|---|---|
-| ST-01 | 對空資料庫執行 migration | 建立 `jobs`、`scores`、`filter_results`、`letters`、`status_events`、`runs`、`agent_calls`、`job_groups`、`job_dupe_candidates`，並將 `PRAGMA user_version` 設為最新版本 |
+| ST-01 | 對空資料庫執行 migration | 建立 `jobs`、`scores`、`filter_results`、`letter_attempts`、`letters`、`status_events`、`runs`、`agent_calls`、`job_groups`、`job_dupe_candidates`，並將 `PRAGMA user_version` 設為最新版本 |
 | ST-02 | 對已在最新版本的資料庫再次執行 migration | 成功完成；schema、資料與版本不變 |
 | ST-03 | 建立重複 `(source, external_id)` 的 Job | 寫入被唯一鍵拒絕；store 的 upsert 不產生第二筆 Job |
 | ST-04 | 寫入依附不存在 Job 的 score、letter、status event 或 agent call | 外鍵約束拒絕寫入 |
@@ -101,6 +101,15 @@
 | ST-57 | 儲存校準用途的 agent call | `role` 為 `calibrator`、`job_id` 可為 NULL；其餘必填欄位仍受驗證 |
 | ST-58 | agent call 含非法 role、runner、ok 值或負 duration | 被拒絕且不寫入資料 |
 | ST-59 | agent call 的 prompt 或輸出含 Email／手機號 | 寫入成功；`input`／`output` 中命中處替換為 `[EMAIL]`／`[PHONE]`，其餘文字、判定內容與 token 用量欄位不變 |
+
+### 3.6A 求職信產製歷程
+
+| 編號 | 測試情境 | 預期結果 |
+|---|---|---|
+| ST-59A | 開一次產製、寫入逐輪呼叫、以 `failed` 收尾 | attempt 留存且 `finished_at`、`error` 皆有值；無 Letter；`ListLetterAttempts` 依 id 順序回該次的每一筆呼叫與其輪次 |
+| ST-59B | 同一職缺的其他階段呼叫 | 未帶 attempt 的呼叫不出現在任何一次產製的 `calls` |
+| ST-59C | 儲存不帶 attempt 的 Letter | 被拒絕且不寫入資料 |
+| ST-59D | migration 升級既有資料至 v10 | 既有每封 Letter 各得一列 attempt，承接輪數、審查摘要與兩個角色 runner；Letter 指向該 attempt；既有 agent call 的 `attempt_id`／`round` 為 NULL；Job 詳情的輪數與審查摘要改由 attempt 讀出且值不變 |
 
 ### 3.7 Profile revision 與 activation
 

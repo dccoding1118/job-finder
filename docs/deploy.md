@@ -80,7 +80,7 @@ Agent 稽核資料保留在 SQLite 的 `agent_calls`。
 | 子命令 | 動作 | 生效面驗證 |
 |---|---|---|
 | `install` | 建立 §2 目錄 → 渲染設定並生成隨機 token（既有者不覆寫）→ 種入範例 Profile 與空 denylist（既有者不覆寫）→ `profile lint` 閘門 → 放置 binary → 掛載排程 → 註冊 PATH → 啟動並驗證 | 見下段 |
-| `update` | 保留現行 binary 至 `jobfinder.prev` → 替換 binary 與排程定義 → 重啟 API → 驗證 | 同上，且啟動時間須晚於替換點 |
+| `update` | 保留現行 binary 至 `jobfinder.prev`（新舊為同一份建置時保留既有的 `.prev` 不覆蓋）→ 替換 binary 與排程定義 → 重啟 API → 驗證 | 同上，且啟動時間須晚於替換點 |
 | `rollback` | 現行 binary 存為 `.bad`（保留前滾可能）→ 由 `.prev` 與 stash 的排程定義還原 → 重啟 API → 驗證；SQLite **不自動更動**，僅在確認毀損時由備份目錄手動還原 | 同上 |
 
 `update` 與 `rollback` 對該平台的**全部**執行檔一起動作。Windows 只還原其中一支會讓使用者輸入的 binary 與實際在跑的服務落在不同版本，比原本要回滾的狀態更糟，因此回滾前先確認每一支都有對應的 `.prev`，缺一即拒絕。
@@ -100,6 +100,8 @@ Agent 稽核資料保留在 SQLite 的 `agent_calls`。
 第一次安裝時若無設定檔，由 `configs/config.example.yaml` 渲染出絕對路徑與隨機 token 的 `config.yaml`。**每個佔位替換都要求恰好命中一次**，否則安裝直接失敗——靜默未命中會讓安裝指向相對的開發路徑，然後在無關的地方才炸。`api.extension_origin` 仍為佔位，須在載入 extension 前替換為實際 `chrome-extension://` id。Linux 的 unit 為渲染後的靜態副本，安裝前會比對並將差異吵出（template 改版或人工修改都不靜默吞掉）。
 
 安裝流程一律不觸發抓取：只確認排程已排定下一次觸發。抓取只由每日排程、操作者手動觸發，或 Side Panel 的重新整理動作啟動。
+
+重啟一律是**無條件重啟**，不是「有在跑才重啟」也不是「啟用」：`systemctl --user enable --now` 對執行中的服務無作用，`try-restart` 對停止中的服務無作用，兩者各自會在一半的情境下讓新 binary 躺在磁碟上而記憶體裡沒有它。同版重跑 `update` 不覆蓋 `jobfinder.prev`：回滾點必須指向前一個版本，被現行版蓋掉等於回滾指向它自己要撤銷的那一版。
 
 Windows 的 `Start-ScheduledTask` 對已在執行的工作是 no-op，和 systemd 的 `enable --now` 是同一個陷阱：更新一律先停、等 process 真的消失、再啟動。ScheduledTasks 模組沒有單一 cmdlet 能完成重啟，`Stop-ScheduledTask` 之後必須等到工作離開 `Running` 才呼叫 `Start-ScheduledTask`；服務行程在啟動時取得環境變數，改動 PATH 或補裝 Agent CLI 後同樣要走這一步。不得將驗收部署（`.local-dev/verify/`）的 binary、設定或 state 直接覆蓋日常使用目錄。
 

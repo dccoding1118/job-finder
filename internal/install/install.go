@@ -318,7 +318,17 @@ func placeBinary(source, target, previous string, out io.Writer) error {
 		return fmt.Errorf("install: refusing to install %s over itself; run the unpacked artifact, not the installed copy", source)
 	}
 	if _, err := os.Stat(target); err == nil {
-		if err := copyFile(target, previous, 0o755); err != nil {
+		// Keeping the outgoing copy is what rollback goes back to, so it is kept
+		// only when it is a different build. Re-running the same version would
+		// otherwise overwrite the previous version with the current one and leave
+		// rollback pointing at the very build it is meant to undo.
+		identical, err := sameContent(source, target)
+		if err != nil {
+			return err
+		}
+		if identical {
+			report(out, "%s is already this build; keeping the existing rollback copy", target)
+		} else if err := copyFile(target, previous, 0o755); err != nil {
 			return err
 		}
 	}
@@ -410,6 +420,21 @@ func copyFile(src, dst string, mode os.FileMode) error {
 		return fmt.Errorf("install: place %s: %w", dst, err)
 	}
 	return nil
+}
+
+// sameContent compares two executables by digest, which is what separates
+// "installing the same build again" from a real version change; the two files
+// are distinct paths either way, so identity of the file cannot answer it.
+func sameContent(a, b string) (bool, error) {
+	digestA, err := fileSHA256(a)
+	if err != nil {
+		return false, err
+	}
+	digestB, err := fileSHA256(b)
+	if err != nil {
+		return false, err
+	}
+	return digestA == digestB, nil
 }
 
 func sameFile(a, b string) (bool, error) {

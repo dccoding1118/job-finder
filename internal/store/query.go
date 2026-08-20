@@ -94,7 +94,9 @@ func (s *Store) GetJobDetail(ctx context.Context, id int64) (JobDetail, bool, er
 	}
 	var letter Letter
 	var letterCreatedAt string
-	err = s.db.QueryRowContext(ctx, `SELECT content, status, rounds, review_log, created_at, filter_revision, score_revision FROM letters WHERE job_id=? ORDER BY created_at DESC, id DESC LIMIT 1`, id).Scan(&letter.Content, &letter.Status, &letter.Rounds, &letter.ReviewLog, &letterCreatedAt, &letter.FilterRevision, &letter.ScoreRevision)
+	err = s.db.QueryRowContext(ctx, `SELECT l.content, l.status, COALESCE(a.rounds, 0), COALESCE(a.review_log, ''), l.created_at, l.filter_revision, l.score_revision
+		FROM letters l LEFT JOIN letter_attempts a ON a.id = l.attempt_id
+		WHERE l.job_id=? ORDER BY l.created_at DESC, l.id DESC LIMIT 1`, id).Scan(&letter.Content, &letter.Status, &letter.Rounds, &letter.ReviewLog, &letterCreatedAt, &letter.FilterRevision, &letter.ScoreRevision)
 	if err == nil {
 		letter.CreatedAt, err = parseTimestamp(letterCreatedAt)
 		if err != nil {
@@ -363,4 +365,109 @@ func (s *Store) PickForStage(ctx context.Context, stage string, revisions Revisi
 		return nil, fmt.Errorf("iterate picked jobs: %w", err)
 	}
 	return jobs, nil
+}
+
+// LetterAttempt is one letter generation with the Agent calls it made. Calls are
+// ordered as they happened; a legacy attempt built by migration has none, which
+// is why the field is a possibly empty slice rather than a promise.
+type LetterAttempt struct {
+	ID           int64             `json:"id"`
+	Status       string            `json:"status"`
+	Rounds       int               `json:"rounds"`
+	ReviewLog    string            `json:"review_log"`
+	RunnerDraft  string            `json:"runner_draft"`
+	RunnerReview string            `json:"runner_review"`
+	Error        *string           `json:"error"`
+	StartedAt    time.Time         `json:"started_at"`
+	FinishedAt   *time.Time        `json:"finished_at"`
+	Content      *string           `json:"content"`
+	Calls        []LetterAgentCall `json:"calls"`
+}
+
+// LetterAgentCall is one audited drafter or reviewer call. It carries the output
+// and never the prompt: the draft and the review verdict are both in the output,
+// while the prompt embeds the whole Profile view.
+type LetterAgentCall struct {
+	Round      int       `json:"round"`
+	Role       string    `json:"role"`
+	Runner     string    `json:"runner"`
+	Model      string    `json:"model"`
+	OK         bool      `json:"ok"`
+	DurationMS int64     `json:"duration_ms"`
+	Output     string    `json:"output"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
+// ListLetterAttempts returns every generation run for one job, newest first, so
+// a re-run reads as another entry rather than as a replacement.
+func (s *Store) ListLetterAttempts(ctx context.Context, jobID int64) ([]LetterAttempt, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT a.id, a.status, a.rounds, a.review_log, a.runner_draft, a.runner_review, a.error, a.started_at, a.finished_at, l.content
+		FROM letter_attempts a LEFT JOIN letters l ON l.attempt_id = a.id
+		WHERE a.job_id=? ORDER BY a.started_at DESC, a.id DESC`, jobID)
+	if err != nil {
+		return nil, fmt.Errorf("list letter attempts: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	attempts := []LetterAttempt{}
+	for rows.Next() {
+		var attempt LetterAttempt
+		var startedAt string
+		var finishedAt *string
+		if scanErr := rows.Scan(&attempt.ID, &attempt.Status, &attempt.Rounds, &attempt.ReviewLog, &attempt.RunnerDraft, &attempt.RunnerReview,
+			&attempt.Error, &startedAt, &finishedAt, &attempt.Content); scanErr != nil {
+			return nil, fmt.Errorf("scan letter attempt: %w", scanErr)
+		}
+		attempt.StartedAt, err = parseTimestamp(startedAt)
+		if err != nil {
+			return nil, fmt.Errorf("decode letter attempt timestamp: %w", err)
+		}
+		if finishedAt != nil {
+			finished, parseErr := parseTimestamp(*finishedAt)
+			if parseErr != nil {
+				return nil, fmt.Errorf("decode letter attempt timestamp: %w", parseErr)
+			}
+			attempt.FinishedAt = &finished
+		}
+		attempt.Calls = []LetterAgentCall{}
+		attempts = append(attempts, attempt)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list letter attempts: %w", err)
+	}
+	for i := range attempts {
+		calls, callErr := s.letterAttemptCalls(ctx, attempts[i].ID)
+		if callErr != nil {
+			return nil, callErr
+		}
+		attempts[i].Calls = calls
+	}
+	return attempts, nil
+}
+
+func (s *Store) letterAttemptCalls(ctx context.Context, attemptID int64) ([]LetterAgentCall, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT COALESCE(round, 0), role, runner, COALESCE(model, ''), ok, duration_ms, output, created_at
+		FROM agent_calls WHERE attempt_id=? ORDER BY id`, attemptID)
+	if err != nil {
+		return nil, fmt.Errorf("list letter attempt calls: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	calls := []LetterAgentCall{}
+	for rows.Next() {
+		var call LetterAgentCall
+		var ok int
+		var createdAt string
+		if scanErr := rows.Scan(&call.Round, &call.Role, &call.Runner, &call.Model, &ok, &call.DurationMS, &call.Output, &createdAt); scanErr != nil {
+			return nil, fmt.Errorf("scan letter attempt call: %w", scanErr)
+		}
+		call.OK = ok == 1
+		call.CreatedAt, err = parseTimestamp(createdAt)
+		if err != nil {
+			return nil, fmt.Errorf("decode letter attempt call timestamp: %w", err)
+		}
+		calls = append(calls, call)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list letter attempt calls: %w", err)
+	}
+	return calls, nil
 }

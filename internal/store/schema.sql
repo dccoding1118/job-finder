@@ -57,15 +57,29 @@ CREATE TABLE IF NOT EXISTS filter_results (
 
 CREATE INDEX IF NOT EXISTS filter_results_job_idx ON filter_results(job_id);
 
+CREATE TABLE IF NOT EXISTS letter_attempts (
+    id INTEGER PRIMARY KEY,
+    job_id INTEGER NOT NULL REFERENCES jobs(id),
+    status TEXT NOT NULL,
+    rounds INTEGER NOT NULL DEFAULT 0,
+    review_log TEXT NOT NULL DEFAULT '',
+    runner_draft TEXT NOT NULL DEFAULT '',
+    runner_review TEXT NOT NULL DEFAULT '',
+    error TEXT,
+    filter_revision TEXT,
+    score_revision TEXT,
+    started_at TEXT NOT NULL,
+    finished_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS letter_attempts_job_idx ON letter_attempts(job_id, started_at);
+
 CREATE TABLE IF NOT EXISTS letters (
     id INTEGER PRIMARY KEY,
     job_id INTEGER NOT NULL REFERENCES jobs(id),
+    attempt_id INTEGER REFERENCES letter_attempts(id),
     content TEXT NOT NULL,
     status TEXT NOT NULL,
-    rounds INTEGER NOT NULL,
-    review_log TEXT NOT NULL,
-    runner_draft TEXT NOT NULL,
-    runner_review TEXT NOT NULL,
     filter_revision TEXT,
     score_revision TEXT,
     created_at TEXT NOT NULL
@@ -94,6 +108,8 @@ CREATE TABLE IF NOT EXISTS runs (
 CREATE TABLE IF NOT EXISTS agent_calls (
     id INTEGER PRIMARY KEY,
     job_id INTEGER REFERENCES jobs(id),
+    attempt_id INTEGER REFERENCES letter_attempts(id),
+    round INTEGER,
     role TEXT NOT NULL,
     runner TEXT NOT NULL,
     model TEXT,
@@ -114,6 +130,7 @@ CREATE TABLE IF NOT EXISTS agent_calls (
 
 CREATE INDEX IF NOT EXISTS agent_calls_role_created_idx ON agent_calls(role, created_at);
 CREATE INDEX IF NOT EXISTS agent_calls_runner_model_created_idx ON agent_calls(runner, model, created_at);
+CREATE INDEX IF NOT EXISTS agent_calls_attempt_idx ON agent_calls(attempt_id, id);
 
 CREATE TABLE IF NOT EXISTS job_groups (
     id INTEGER PRIMARY KEY,

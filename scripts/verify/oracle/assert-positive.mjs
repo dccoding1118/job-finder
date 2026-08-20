@@ -9,14 +9,15 @@ const sha256 = (value) => crypto.createHash("sha256").update(value).digest("hex"
 const readJSON = () => JSON.parse(fs.readFileSync(file, "utf8"));
 const REVISION = /^sha256:[a-f0-9]{64}$/;
 
-// The screening results table joined the schema with the split hard/soft gates
-// and the settings table with the runtime switches, so every snapshot mode checks
-// the same ten-table contract.
+// The screening results table joined the schema with the split hard/soft gates,
+// the settings table with the runtime switches and the letter attempts table with
+// the generation history, so every snapshot mode checks the same eleven-table
+// contract.
 function assertSchema(data) {
-  assert.equal(data.schema_version, 9);
+  assert.equal(data.schema_version, 10);
   assert.equal(data.journal_mode.toLowerCase(), "wal");
   assert.equal(data.foreign_keys, true);
-  assert.deepEqual(data.tables, ["agent_calls", "filter_results", "job_dupe_candidates", "job_groups", "jobs", "letters", "runs", "scores", "settings", "status_events"]);
+  assert.deepEqual(data.tables, ["agent_calls", "filter_results", "job_dupe_candidates", "job_groups", "jobs", "letter_attempts", "letters", "runs", "scores", "settings", "status_events"]);
 }
 
 if (mode === "schema") {
@@ -70,7 +71,7 @@ if (mode === "profile-reprocess-response") {
 
 if (mode === "profile-race") {
   const data = readJSON();
-  assert.equal(data.schema_version, 9);
+  assert.equal(data.schema_version, 10);
   const revisions = new Set(data.agent_calls.map(({ score_revision }) => score_revision).filter(Boolean));
   assert.ok(revisions.size >= 2, "agent audit did not retain multiple score revisions");
   const currentScores = data.jobs.filter((job) => job.score && job.score_revision === job.score.score_revision);

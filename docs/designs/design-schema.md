@@ -16,7 +16,7 @@
 |---|---|---|
 | `id` | INTEGER PK | 內部流水號 |
 | `source` | TEXT | 來源代碼：`yourator` / `cake` / `104` |
-| `group_id` | INTEGER NULL FK→job_groups | 所屬職缺群組（§2.7）；每筆入庫即歸屬一個群組，legacy 可為 NULL |
+| `group_id` | INTEGER NULL FK→job_groups | 所屬職缺群組（§2.8）；每筆入庫即歸屬一個群組，legacy 可為 NULL |
 | `external_id` | TEXT | 平台端職缺 ID；`UNIQUE(source, external_id)` |
 | `url` | TEXT | 原始職缺連結 |
 | `title` | TEXT | 職稱 |
@@ -55,21 +55,42 @@
 
 現行有效評分＝與 `jobs.score_revision` 相同的最新一筆；revision 不同或為 legacy NULL 的 Score 保留供稽核，但不可當成現行評分。
 
-### 2.3 `letters`
+### 2.3 `letter_attempts`
+
+一次求職信產製一列，於第一次 Agent 呼叫之前寫入、產製結束時回填。產不出信件的產製同樣留列——它是那次產製唯一存在的紀錄。
 
 | 欄位 | 型別 | 說明 |
 |---|---|---|
 | `id` | INTEGER PK | |
 | `job_id` | INTEGER FK→jobs | |
+| `status` | TEXT | `running`（產製中）/ `approved` / `finalized` / `failed` |
+| `rounds` | INTEGER，預設 0 | 實際跑過的輪數 |
+| `review_log` | TEXT，預設空 | 各輪結果摘要，一輪一行：`revise: <逐條意見>`／`approve`／`guard: <原因>`／`error: <原因>`／`finalized` |
+| `runner_draft` / `runner_review` | TEXT，預設空 | 各角色使用的 runner；未跑到審查者為空 |
+| `error` | TEXT NULL | 終止該次產製的呼叫錯誤 |
+| `filter_revision` / `score_revision` | TEXT NULL | 產製開始時的 Profile revision 對 |
+| `started_at` | TEXT | RFC3339 |
+| `finished_at` | TEXT NULL | RFC3339；為 NULL 表示產製尚未收尾 |
+
+`finished_at` 為 NULL 且 `status` 仍為 `running` 的列，在服務程序被終止後會永久保留該狀態。讀取端依職缺的 `process_state` 判定該次產製是否仍在進行，本表不另設心跳。
+
+索引：`(job_id, started_at)` 供逐職缺的歷程查詢。
+
+### 2.4 `letters`
+
+| 欄位 | 型別 | 說明 |
+|---|---|---|
+| `id` | INTEGER PK | |
+| `job_id` | INTEGER FK→jobs | |
+| `attempt_id` | INTEGER NULL FK→letter_attempts | 產出此信件的那次產製；新資料必填 |
 | `content` | TEXT | 最終求職信（含佔位符落款） |
 | `status` | TEXT | `approved`（審查過關）/ `finalized`（跑滿輪數的最終版，未經最後一次審查）。產不出可用信件的一次生成不寫入任何列 |
-| `rounds` | INTEGER | 實際跑過的輪數 |
-| `review_log` | TEXT | 各輪審查意見（JSON 字串），供稽核 |
-| `runner_draft` / `runner_review` | TEXT | 各角色使用的 runner |
 | `filter_revision` / `score_revision` | TEXT NULL | 產生此 Letter 的實際 Profile revision 對；新資料必填，legacy 可為 NULL |
 | `created_at` | TEXT | RFC3339 |
 
-### 2.4 `status_events`
+輪數、審查意見與各角色 runner 屬於**產製**而非信件，一律由 `letter_attempts` 持有。
+
+### 2.5 `status_events`
 
 | 欄位 | 型別 | 說明 |
 |---|---|---|
@@ -82,7 +103,7 @@
 
 反向校準（R1.3）以 `axis='apply' AND to_state='interview'` 計數與取樣。
 
-### 2.5 `runs`
+### 2.6 `runs`
 
 | 欄位 | 型別 | 說明 |
 |---|---|---|
@@ -97,12 +118,14 @@
 
 `runs` 只記錄**抓取**（`jobfinder run` 的 fetch），不涵蓋 filter／score／letter——後三者由常駐 worker 連續消化，不屬於任何輪次（見 [design-pipeline](design-pipeline.md) §2）。該輪職缺的判定分布不入 `stats`，由 `discovered_by_run_id` 於查詢時即時導出。
 
-### 2.6 `agent_calls`（R8.2 稽核）
+### 2.7 `agent_calls`（R8.2 稽核）
 
 | 欄位 | 型別 | 說明 |
 |---|---|---|
 | `id` | INTEGER PK | |
 | `job_id` | INTEGER NULL FK | 校準等非職缺呼叫為 NULL |
+| `attempt_id` | INTEGER NULL FK→letter_attempts | 所屬的求職信產製；求職信以外的角色與 legacy 資料為 NULL |
+| `round` | INTEGER NULL | 該次呼叫所屬的求職信輪次；不按輪次進行的角色與 legacy 資料為 NULL |
 | `role` | TEXT | `filter` / `scorer` / `drafter` / `reviewer` / `calibrator` |
 | `runner` | TEXT | `claude` / `codex` |
 | `model` | TEXT NULL | 該次呼叫實際指定的 model；未指定 model 的 runner 為 NULL |
@@ -116,9 +139,9 @@
 | `filter_revision` / `score_revision` | TEXT NULL | 呼叫開始時的對應 Profile revision：filter 呼叫填前者、scorer 填後者、draft／review 兩者皆填；與 Profile 無關的呼叫為 NULL |
 | `created_at` | TEXT | RFC3339 |
 
-索引：`(role, created_at)` 供每日預算計數，`(runner, model, created_at)` 供每日用量彙總。六個用量欄位與 `cost_usd` 一律**照 runner 自報值原樣保存**，成功與失敗的呼叫皆記——驗證未過的回應同樣燒掉了 token。預設 0 使不自報用量的 runner 與既有資料列不需特例。
+索引：`(role, created_at)` 供每日預算計數，`(runner, model, created_at)` 供每日用量彙總，`(attempt_id, id)` 供逐次產製的逐輪查詢。輪次由 drafter 與 reviewer 於呼叫時帶入，不由呼叫順序推導——runner 重試與 guard 失敗都會讓同一輪出現連續兩筆 drafter 呼叫，兩者的邊界意義不同。六個用量欄位與 `cost_usd` 一律**照 runner 自報值原樣保存**，成功與失敗的呼叫皆記——驗證未過的回應同樣燒掉了 token。預設 0 使不自報用量的 runner 與既有資料列不需特例。
 
-### 2.7 `job_groups`（跨來源同一職缺）
+### 2.8 `job_groups`（跨來源同一職缺）
 
 | 欄位 | 型別 | 說明 |
 |---|---|---|
@@ -129,7 +152,7 @@
 
 索引：`(dedupe_key)`。單成員群組是常態——每筆 Job 入庫即建立自己的群組，合併只是把成員收斂到同一個。
 
-### 2.8 `filter_results`（硬規則判定與 JD 條件拆解）
+### 2.9 `filter_results`（硬規則判定與 JD 條件拆解）
 
 | 欄位 | 型別 | 說明 |
 |---|---|---|
@@ -144,7 +167,7 @@
 
 索引：`(job_id)`。現行有效判定＝與 `jobs.filter_revision` 相同的最新一筆；其餘保留供稽核。`conditions` 中標為 `bonus` 的條目由評分關的 `bonus_fit` 重用，不參與 `outcome` 彙總。
 
-### 2.9 `job_dupe_candidates`（疑似重複，待使用者裁決）
+### 2.10 `job_dupe_candidates`（疑似重複，待使用者裁決）
 
 | 欄位 | 型別 | 說明 |
 |---|---|---|
@@ -155,7 +178,7 @@
 | `state` | TEXT | `pending` / `merged` / `ignored` |
 | `created_at` | TEXT | RFC3339 |
 
-### 2.10 `settings`（使用者可在 Side Panel 改動的執行期設定）
+### 2.11 `settings`（使用者可在 Side Panel 改動的執行期設定）
 
 | 欄位 | 型別 | 說明 |
 |---|---|---|
@@ -278,6 +301,8 @@ capture 或 fetch 命中 alias 時，回傳的一律是 **canonical 的 job id �
 | `CountAgentCallsSince(role, since)` | 每日預算計數（見 [design-pipeline](design-pipeline.md) §5） |
 | `AgentUsageByDay(days)` | 近 `days` 天的用量彙總：依「台北日界 × runner × model」分組，回筆數與六個用量欄位、`cost_usd` 的加總。日界於 SQL 內以 `date(created_at, '+8 hours')` 計算，與每日預算重置用的是同一個日界 |
 | `SummarizeRunJobs(runID)` | 依 `discovered_by_run_id` 即時導出該輪職缺的現行判定分布 |
+| `StartLetterAttempt(jobID, revisions)` / `FinishLetterAttempt(input)` | 求職信產製的開始與收尾：前者於第一次呼叫之前開列並回傳 attempt id，後者寫入終態、輪數、審查摘要、各角色 runner 與終止原因；已收尾的列不再改寫 |
+| `ListLetterAttempts(jobID)` | 該職缺的全部產製，新到舊；每次產製附其 `agent_calls` 的角色、輪次、runner、model、成敗、耗時與輸出，成功者另附信件內容。不回傳 prompt |
 | `SaveScore / SaveLetter / SaveAgentCall / StartRun / FinishRun` | 寫入各實體 |
 
 migration 新增 revision 欄位時全部允許 legacy NULL，不猜測歷史資料使用的 Profile。升級與服務啟動不自動 activation；legacy Job 維持 stale，直到使用者明確要求更新過時評分。migration 本身不呼叫 Agent。
@@ -289,6 +314,8 @@ migration 新增 revision 欄位時全部允許 legacy NULL，不猜測歷史資
 **schema v8 migration**：新增 `settings` 表。既有資料不受影響；未曾寫入的鍵由讀取端各自帶預設值，migration 不預先塞入任何列。
 
 **schema v9（抓取心跳）migration**：`runs` 新增 `heartbeat_at`。既有資料列取 NULL——歷史輪次的進度時刻無從回填，且未收尾的舊列本就屬於早已結束的程序。
+
+**schema v10（求職信產製歷程）migration**：新增 `letter_attempts`；`agent_calls` 新增 `attempt_id` 與 `round`；`letters` 新增 `attempt_id` 並移除 `rounds`／`review_log`／`runner_draft`／`runner_review`。既有每一列 `letters` 各生成一列 `letter_attempts` 承接被移除的欄位，`started_at` 與 `finished_at` 取該信件的 `created_at`。既有 `agent_calls` 的 `attempt_id` 與 `round` 取 NULL——時間戳推導出的輪次會在 runner 重試與 guard 失敗處出錯，空值讀得出「不知道」。
 
 ## 6. 交付物
 

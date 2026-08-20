@@ -41,7 +41,7 @@
 
 每次 invocation 使用新建的空暫存目錄，並受 `llm.timeout` 限制。`agent_calls` 保存實際 runner；固定 model 由該次物化 config 與 Runner argv 驗證，不把 model 誤寫成 runner 名稱。
 
-每次呼叫（含失敗）寫入 `agent_calls`（role、runner、model、input、output、ok、duration 與該次用量）。用量取自 runner 自己回報的欄位，不由本模組估算：`claude` 的 JSON result envelope 提供 `usage`（`input_tokens`、`output_tokens`、`cache_read_input_tokens`、`cache_creation_input_tokens`）與 `total_cost_usd`；`codex exec --json` 的事件行提供 token 數但不報費用，其 `cost_usd` 因此為 0。runner 未提供的欄位保持 0，不以價目表換算——換算會讓稽核值隨本地價目表漂移，失去「當時實際花費」的意義。
+每次呼叫（含失敗）以單一稽核記錄交給呼叫端寫入 `agent_calls`，記錄含 role、runner、model、input、output、ok、duration、該次用量與 `round`。`round` 是求職信的輪次，drafter 與 reviewer 於呼叫當下帶入；不按輪次進行的角色為 0，寫入時存為 NULL。呼叫端負責把記錄接上職缺、產製與 Profile revision——那三者是本模組看不到的脈絡。用量取自 runner 自己回報的欄位，不由本模組估算：`claude` 的 JSON result envelope 提供 `usage`（`input_tokens`、`output_tokens`、`cache_read_input_tokens`、`cache_creation_input_tokens`）與 `total_cost_usd`；`codex exec --json` 的事件行提供 token 數但不報費用，其 `cost_usd` 因此為 0。runner 未提供的欄位保持 0，不以價目表換算——換算會讓稽核值隨本地價目表漂移，失去「當時實際花費」的意義。
 
 `primary.agent` 與 `fallback.agent` 可相同，model 可不同。每次 `jobfinder run` 在啟動時讀取設定；修改 agent 或 model 後的下一輪執行立即生效，不需重新建置。稽核保存實際 runner，不保存 CLI 憑證。
 
@@ -154,7 +154,7 @@ for round in 1..N:
 
 **任一輪的 Drafter 或 Reviewer 呼叫失敗**（Primary、Primary、Fallback 三個 runner 後仍失敗）即終止該次生成，不重試、不跑後續輪次，該筆轉 `letter_failed` 等使用者再次要求。runner 層已有三次嘗試，外加自動重試只會在服務中斷期間持續消耗每日額度。呼叫失敗與 guard 失敗是不同性質：前者拿不到產出，後者拿到了但這一版不合格，因此後者可由下一輪修正。
 
-產不出可用信件的一次生成（呼叫失敗，或最後一輪未過 guard）不寫入 Letter，該筆停在 `letter_failed` 等使用者再次要求；終態與 `letters.status` 的對應見 [design-schema](design-schema.md) §2.3。
+產不出可用信件的一次生成（呼叫失敗，或最後一輪未過 guard）不寫入 Letter，該筆停在 `letter_failed` 等使用者再次要求；終態與 `letters.status` 的對應見 [design-schema](design-schema.md) §2.4。該次生成本身仍完整留在 `letter_attempts` 與其逐輪呼叫上。
 
 `guard()` 程式防線（R5.4）：
 

@@ -69,6 +69,8 @@ filter、score 與 letter 每筆工作開始時各自從 Profile provider 取得
 
 被「篩選判定過時」擋住的職缺數量改變時，worker 記一行 Info（§6.1），因此消化停滯時 log 有可讀的原因與筆數，而非靜默。
 
+letter 階段在第一次 Agent 呼叫之前經 store 開一列 `letter_attempts`，該次生成的每一筆稽核呼叫都帶著它的 id 與輪次；生成結束（含失敗）回填終態、輪數、審查摘要與各角色 runner。產出信件者另把 attempt id 寫在 Letter 上。這使「產不出信件的那次生成」與「重跑前的舊生成」都留有完整紀錄，而不是只剩最後一封信。
+
 **letter 階段只處理使用者已要求的職缺**（PRD R5.0）：`shortlisted` 不是取件狀態，達閾值的推薦職缺停留在該狀態直到使用者要求。使用者的要求由 API（[design-api](design-api.md)）或 `jobfinder letter request --job ID` 經 store 轉為 `letter_requested`，worker 才取件。無待處理要求時，letter 階段自然是零筆、零 Agent 呼叫、零費用。
 
 `RequestLetter(jobID)`：pipeline 提供此入口供 API 呼叫——經 store 將 `shortlisted` 或 `letter_failed` 轉為 `letter_requested` 後即回。worker 自然取件，呼叫端不等待 Agent 完成。
@@ -185,7 +187,7 @@ JD 未提及遠端即等於現場：`required` 與 `rejected` 都據此定案，
 
 待看完全由等待補全文的 `discovered` 承載——沒有另一個「資訊不足」狀態。全文 JD 走到這裡若仍是 `unknown`，是彙總的契約違反，store 會回錯而非落地成狀態。
 
-逐條判定（條件名稱、`pass`／`fail`／`unknown`、必備／加分標記）與 JD 條件拆解一併保存（見 [design-schema](design-schema.md) §2.8），供 UI 呈現「為什麼判不適合」、供使用者調整求職條件（R3.5），並由評分關的 `bonus_fit` 重用，兩關不各自重解一次。
+逐條判定（條件名稱、`pass`／`fail`／`unknown`、必備／加分標記）與 JD 條件拆解一併保存（見 [design-schema](design-schema.md) §2.9），供 UI 呈現「為什麼判不適合」、供使用者調整求職條件（R3.5），並由評分關的 `bonus_fit` 重用，兩關不各自重解一次。
 
 ### 3.5 跨來源分群（R2.8）
 

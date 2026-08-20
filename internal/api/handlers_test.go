@@ -140,6 +140,78 @@ func TestJobViewDerivesVerdictAndLetterState(t *testing.T) {
 	}
 }
 
+// The history route is what makes a re-run readable: every generation stays,
+// newest first, each carrying the rounds it went through and never the prompt.
+func TestLetterHistoryListsEveryGenerationWithoutPrompts(t *testing.T) {
+	processor := &fakeProcessor{}
+	server, data := newTestServer(t, processor)
+	processor.store = data
+	ctx := context.Background()
+	description := "Synthetic job description"
+	created, err := data.UpsertJob(ctx, store.JobInput{Source: "yourator", ExternalID: "history-job", URL: "https://example.test/jobs/history-job", Title: "Engineer", CompanyName: "Example", CompanyInfo: "software", Description: &description, Location: "Taipei", RemoteType: "hybrid"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := created.Job.ID
+	failed, err := data.StartLetterAttempt(ctx, id, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if callErr := data.SaveAgentCall(ctx, store.AgentCallInput{JobID: &id, AttemptID: &failed, Round: 1, Role: "drafter", Runner: "claude", Input: "profile view and jd", Output: "first draft", OK: true, DurationMS: 3}); callErr != nil {
+		t.Fatal(err)
+	}
+	if finishErr := data.FinishLetterAttempt(ctx, store.LetterAttemptInput{AttemptID: failed, Status: "failed", Rounds: 1, ReviewLog: "guard: letter exceeds maximum length", RunnerDraft: "claude"}); finishErr != nil {
+		t.Fatal(err)
+	}
+	second, err := data.StartLetterAttempt(ctx, id, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if callErr := data.SaveAgentCall(ctx, store.AgentCallInput{JobID: &id, AttemptID: &second, Round: 1, Role: "reviewer", Runner: "codex", Input: "profile view and draft", Output: "approve", OK: true, DurationMS: 2}); callErr != nil {
+		t.Fatal(err)
+	}
+	if letterErr := data.SaveLetter(ctx, store.LetterInput{JobID: id, AttemptID: second, Content: "final letter", Status: "approved"}); letterErr != nil {
+		t.Fatal(err)
+	}
+	if finishErr := data.FinishLetterAttempt(ctx, store.LetterAttemptInput{AttemptID: second, Status: "approved", Rounds: 1, ReviewLog: "approve", RunnerDraft: "claude", RunnerReview: "codex"}); finishErr != nil {
+		t.Fatal(err)
+	}
+
+	request := authedRequest(http.MethodGet, "/api/v1/jobs/1/letter-history", nil)
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("letter history status = %d", response.Code)
+	}
+	body := decode(t, response)
+	attempts, ok := body["attempts"].([]any)
+	if !ok || len(attempts) != 2 {
+		t.Fatalf("attempts = %v, want two generations", body["attempts"])
+	}
+	newest := attempts[0].(map[string]any)
+	if newest["status"] != "approved" || newest["content"] != "final letter" {
+		t.Fatalf("newest attempt = %v, want the approved generation first", newest)
+	}
+	oldest := attempts[1].(map[string]any)
+	if oldest["status"] != "failed" || oldest["content"] != nil {
+		t.Fatalf("oldest attempt = %v, want the failed generation with no letter", oldest)
+	}
+	calls := oldest["calls"].([]any)
+	if len(calls) != 1 {
+		t.Fatalf("calls = %v, want the one drafter call", calls)
+	}
+	call := calls[0].(map[string]any)
+	if call["output"] != "first draft" || call["round"] != float64(1) {
+		t.Fatalf("call = %v, want the round 1 draft", call)
+	}
+	if _, present := call["input"]; present {
+		t.Fatal("the history route exposed the prompt")
+	}
+	if oldest["review_log"] != "guard: letter exceeds maximum length" {
+		t.Fatalf("review log = %v, want the guard failure that ended the generation", oldest["review_log"])
+	}
+}
+
 func TestRequestLetterForwardsToPipeline(t *testing.T) {
 	processor := &fakeProcessor{}
 	server, data := newTestServer(t, processor)

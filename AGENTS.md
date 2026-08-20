@@ -97,7 +97,7 @@ Go 不保證在裸 PATH；以 `mise run <task>` 或 `mise exec -- go <args>` 執
 | Source adapter（批次比對來源）、去重、內容變更偵測、瀏覽輔助來源的 payload 解析 | `docs/designs/design-crawler.md` | `internal/crawler/` |
 | fetch／filter／score／letter 編排、Profile activation 與重新處理入隊、執行記錄、revision-aware CAS、每日預算與鎖 | `docs/designs/design-pipeline.md` | `internal/pipeline/` |
 | CLI Runner、Filter、Scorer、Drafter、Reviewer、Calibrator 與輸出驗證 | `docs/designs/design-agents.md` | `internal/agents/` |
-| Profile 讀寫、Job stale viewmodel、Job／Run／狀態／verdict／求職信要求／單筆重新處理／處理進度／手動 run／重複裁決與各平台 capture API | `docs/designs/design-api.md` | `internal/api/` |
+| Profile 讀寫、Job stale viewmodel、Job／Run／狀態／verdict／求職信要求與產製歷程／單筆重新處理／處理進度／手動 run／重複裁決與各平台 capture API | `docs/designs/design-api.md` | `internal/api/` |
 | Side Panel、全頁 Profile editor、清單就地標記與職缺頁資訊補全、SPA 模式路由、疑似重複裁決 | `docs/designs/design-extension.md` | `extension/` |
 | 搜尋條件展開（只用於批次比對來源） | `docs/designs/design-crawler.md` §5 | `cmd/jobfinder/cli/queries.go` |
 | 跨平台路徑決策、`jobfinder paths` | `docs/deploy.md` §2 | `internal/paths/` |

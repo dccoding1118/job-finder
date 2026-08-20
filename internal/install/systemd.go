@@ -130,11 +130,13 @@ func (s systemdScheduler) start(ctx context.Context, layout paths.Layout, out io
 	return nil
 }
 
-// restart uses try-restart rather than "enable --now": enabling does nothing to
-// a service that is already running, which is exactly how a replaced binary
-// ends up not being the one in memory.
+// restart uses restart rather than "enable --now" or try-restart. Enabling does
+// nothing to a service that is already running, which is exactly how a replaced
+// binary ends up not being the one in memory; try-restart has the mirror-image
+// hole, doing nothing to a service that is stopped and leaving the update with a
+// new binary on disk and nothing serving from it.
 func (s systemdScheduler) restart(ctx context.Context, layout paths.Layout, out io.Writer) error {
-	if _, err := run(ctx, "systemctl", "--user", "try-restart", apiService); err != nil {
+	if _, err := run(ctx, "systemctl", "--user", "restart", apiService); err != nil {
 		return err
 	}
 	waitFor(ctx, 15*time.Second, func() bool { return apiResponding(layout) })

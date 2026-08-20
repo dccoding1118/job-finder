@@ -29,6 +29,16 @@ func scoreInput(jobID int64, total float64, revision string) ScoreInput {
 // column at all.
 func rewindRevisionSchema(withProfileRevision bool) []string {
 	statements := []string{
+		"DROP INDEX agent_calls_attempt_idx",
+		"ALTER TABLE agent_calls DROP COLUMN attempt_id",
+		"ALTER TABLE agent_calls DROP COLUMN round",
+		"ALTER TABLE letters DROP COLUMN attempt_id",
+		"ALTER TABLE letters ADD COLUMN rounds INTEGER NOT NULL DEFAULT 0",
+		"ALTER TABLE letters ADD COLUMN review_log TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE letters ADD COLUMN runner_draft TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE letters ADD COLUMN runner_review TEXT NOT NULL DEFAULT ''",
+		"DROP INDEX letter_attempts_job_idx",
+		"DROP TABLE letter_attempts",
 		"ALTER TABLE runs DROP COLUMN heartbeat_at",
 		"DROP TABLE IF EXISTS filter_results",
 		"ALTER TABLE jobs DROP COLUMN filter_revision",
@@ -161,7 +171,14 @@ func TestMigrationToVersionSixResetsAssessedJobsAndKeepsLetters(t *testing.T) {
 			t.Fatal(stepErr)
 		}
 	}
-	if stepErr := created.SaveLetter(ctx, LetterInput{JobID: letteredJob.Job.ID, Content: "letter", Status: "approved", Rounds: 1, ReviewLog: "approve", RunnerDraft: "claude", RunnerReview: "codex"}); stepErr != nil {
+	letterAttempt, stepErr := created.StartLetterAttempt(ctx, letteredJob.Job.ID, "", "")
+	if stepErr != nil {
+		t.Fatal(stepErr)
+	}
+	if stepErr := created.SaveLetter(ctx, LetterInput{JobID: letteredJob.Job.ID, AttemptID: letterAttempt, Content: "letter", Status: "approved"}); stepErr != nil {
+		t.Fatal(stepErr)
+	}
+	if stepErr := created.FinishLetterAttempt(ctx, LetterAttemptInput{AttemptID: letterAttempt, Status: "approved", Rounds: 1, ReviewLog: "approve", RunnerDraft: "claude", RunnerReview: "codex"}); stepErr != nil {
 		t.Fatal(stepErr)
 	}
 	closeTestStore(t, created)
