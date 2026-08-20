@@ -253,6 +253,44 @@ func TestRollbackRefusesWithoutAPreviousBinary(t *testing.T) {
 	}
 }
 
+// Rollback goes back exactly one version. A second run would restore the build
+// already installed and overwrite the forward-roll copy with it, destroying the
+// version the first rollback undid — while reporting success.
+func TestRollbackRefusesWhenThePreviousBuildIsAlreadyInstalled(t *testing.T) {
+	layout := sandbox(t)
+	// Every executable of the platform is prepared, because rollback checks the
+	// whole set before it touches any of it: a Windows layout carries two.
+	targets := rollbackSet(layout)
+	for _, target := range targets {
+		for path, contents := range map[string]string{
+			target.current:  "same build",
+			target.previous: "same build",
+			target.bad:      "the build being undone",
+		} {
+			if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+				t.Fatalf("mkdir: %v", err)
+			}
+			if err := os.WriteFile(path, []byte(contents), 0o755); err != nil { // #nosec G306 -- test fixture stands in for an executable.
+				t.Fatalf("write: %v", err)
+			}
+		}
+	}
+	sched := &recordingScheduler{}
+	err := Rollback(context.Background(), Options{Out: io.Discard, SkipVerify: true, scheduler: sched})
+	if err == nil || !strings.Contains(err.Error(), "nothing to undo") {
+		t.Fatalf("err = %v, want a refusal to roll back onto the same build", err)
+	}
+	if len(sched.calls) != 0 {
+		t.Fatalf("scheduler calls = %v, want none — the refusal must come before anything is touched", sched.calls)
+	}
+	for _, target := range targets {
+		contents, readErr := os.ReadFile(target.bad) // #nosec G304 -- path built by the test itself.
+		if readErr != nil || string(contents) != "the build being undone" {
+			t.Fatalf("bad copy %s = %q, %v; the forward-roll copy was overwritten", target.bad, contents, readErr)
+		}
+	}
+}
+
 // A profile carrying PII must stop the install before any service is started
 // around it.
 func TestInstallStopsOnAProfileThatFailsTheLintGate(t *testing.T) {

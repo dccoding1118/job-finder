@@ -193,6 +193,24 @@ func Rollback(ctx context.Context, opts Options) error {
 			return fmt.Errorf("install: no previous binary at %s; nothing to roll back to", binary.previous)
 		}
 	}
+	// Rollback is a single step: the layout keeps exactly one previous build and
+	// rolling back does not shift it, so running the command again would restore
+	// the build already installed while overwriting the forward-roll copy with
+	// it — the second run would quietly destroy the version the first one undid.
+	unchanged := true
+	for _, binary := range rollbackSet(layout) {
+		identical, err := sameContent(binary.previous, binary.current)
+		if err != nil {
+			return err
+		}
+		if !identical {
+			unchanged = false
+			break
+		}
+	}
+	if unchanged {
+		return fmt.Errorf("install: %s is already the build kept for rollback; there is nothing to undo, and rollback goes back one version only", layout.Binary)
+	}
 	sched := opts.mechanism(layout.OS)
 	report(opts.Out, "rollback")
 	if err := sched.preflight(ctx); err != nil {
