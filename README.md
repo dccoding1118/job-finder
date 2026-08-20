@@ -90,6 +90,7 @@ Set `VER` to the tag shown on the Releases page.
 ```bash
 # Linux
 REPO=dccoding1118/job-finder
+cd "$(mktemp -d)"
 curl -fsSLO "https://github.com/$REPO/releases/download/$VER/jobfinder_${VER}_linux_amd64.tar.gz"
 curl -fsSLO "https://github.com/$REPO/releases/download/$VER/SHA256SUMS"
 sha256sum -c --ignore-missing SHA256SUMS

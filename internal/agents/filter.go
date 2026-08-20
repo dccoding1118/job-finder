@@ -74,7 +74,7 @@ func (f Filter) Screen(ctx context.Context, profileYAML string, job Job) (Filter
 			lastErr = invocationError(err, parseErr)
 		}
 		if f.Audit != nil {
-			if auditErr := f.Audit("filter", runner.Name(), runner.Model(), prompt, raw, ok, time.Since(start), reply.Usage); auditErr != nil {
+			if auditErr := f.Audit(AuditRecord{Role: "filter", Runner: runner.Name(), Model: runner.Model(), Input: prompt, Output: raw, OK: ok, Duration: time.Since(start), Usage: reply.Usage}); auditErr != nil {
 				return FilterOutput{}, fmt.Errorf("agents: audit filter call: %w", auditErr)
 			}
 		}

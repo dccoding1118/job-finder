@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -282,23 +283,87 @@ func TestSaveLetterWritesOnlyProducedLetters(t *testing.T) {
 		t.Fatal(err)
 	}
 	id := job.Job.ID
+	attempt, err := store.StartLetterAttempt(ctx, id, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
 	// A finalized letter has content but never went back for a final review.
-	if err := store.SaveLetter(ctx, LetterInput{JobID: id, Content: "letter", Status: "finalized", Rounds: 3, ReviewLog: "revise", RunnerDraft: "claude"}); err != nil {
+	if err := store.SaveLetter(ctx, LetterInput{JobID: id, AttemptID: attempt, Content: "letter", Status: "finalized"}); err != nil {
 		t.Fatalf("finalized letter rejected: %v", err)
 	}
 	// A run that produced nothing writes no row at all, so neither an empty letter
 	// nor the legacy `failed` status is accepted any more.
-	if err := store.SaveLetter(ctx, LetterInput{JobID: id, Status: "failed", Rounds: 1, ReviewLog: "error"}); err == nil {
+	if err := store.SaveLetter(ctx, LetterInput{JobID: id, AttemptID: attempt, Status: "failed"}); err == nil {
 		t.Fatal("a failed letter was written")
 	}
-	if err := store.SaveLetter(ctx, LetterInput{JobID: id, Content: "letter", Status: "unreviewed", Rounds: 1, RunnerDraft: "claude"}); err == nil {
+	if err := store.SaveLetter(ctx, LetterInput{JobID: id, AttemptID: attempt, Content: "letter", Status: "unreviewed"}); err == nil {
 		t.Fatal("an unknown letter status was accepted")
 	}
-	if err := store.SaveLetter(ctx, LetterInput{JobID: id, Status: "finalized", Rounds: 1, RunnerDraft: "claude"}); err == nil {
+	if err := store.SaveLetter(ctx, LetterInput{JobID: id, AttemptID: attempt, Status: "finalized"}); err == nil {
 		t.Fatal("a finalized letter with no content was accepted")
 	}
-	if err := store.SaveLetter(ctx, LetterInput{JobID: id, Content: "letter", Status: "approved", Rounds: 1, RunnerDraft: "claude"}); err == nil {
-		t.Fatal("an approved letter with no reviewer was accepted")
+	// A letter with no generation behind it cannot say how it was reached.
+	if err := store.SaveLetter(ctx, LetterInput{JobID: id, Content: "letter", Status: "approved"}); err == nil {
+		t.Fatal("a letter with no attempt was accepted")
+	}
+}
+
+// A generation that produces nothing is the case the letters table cannot
+// record, so the attempt has to carry it, together with the calls it made.
+func TestLetterAttemptKeepsFailedGeneration(t *testing.T) {
+	store := openTestStore(t, filepath.Join(t.TempDir(), "jobs.db"))
+	defer closeTestStore(t, store)
+	ctx := context.Background()
+	description := "Platform work."
+	job, err := store.UpsertJob(ctx, JobInput{Source: "yourator", ExternalID: "letter-attempt", URL: "https://example.test/jobs/letter-attempt", Title: "Platform Engineer", CompanyName: "Example Platform", CompanyInfo: "software", Description: &description, Location: "Taipei", RemoteType: "hybrid"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := job.Job.ID
+	attempt, err := store.StartLetterAttempt(ctx, id, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, call := range []AgentCallInput{
+		{JobID: &id, AttemptID: &attempt, Round: 1, Role: "drafter", Runner: "claude", Input: "draft prompt", Output: "draft one", OK: true, DurationMS: 5},
+		{JobID: &id, AttemptID: &attempt, Round: 1, Role: "reviewer", Runner: "claude", Input: "review prompt", Output: "revise this", OK: true, DurationMS: 4},
+	} {
+		if callErr := store.SaveAgentCall(ctx, call); callErr != nil {
+			t.Fatal(err)
+		}
+	}
+	if finishErr := store.FinishLetterAttempt(ctx, LetterAttemptInput{AttemptID: attempt, Status: "failed", Rounds: 1, ReviewLog: "guard: unresolved placeholder", RunnerDraft: "claude", RunnerReview: "claude", Error: "agents: drafter runners failed"}); finishErr != nil {
+		t.Fatal(err)
+	}
+	attempts, err := store.ListLetterAttempts(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(attempts) != 1 {
+		t.Fatalf("attempts = %d, want 1", len(attempts))
+	}
+	if attempts[0].Status != "failed" || attempts[0].Content != nil {
+		t.Fatalf("attempt = %+v, want a failed attempt with no letter", attempts[0])
+	}
+	if attempts[0].FinishedAt == nil || attempts[0].Error == nil {
+		t.Fatal("a finished attempt kept neither its end nor its reason")
+	}
+	if len(attempts[0].Calls) != 2 {
+		t.Fatalf("calls = %d, want 2", len(attempts[0].Calls))
+	}
+	if attempts[0].Calls[0].Role != "drafter" || attempts[0].Calls[0].Round != 1 || attempts[0].Calls[0].Output != "draft one" {
+		t.Fatalf("first call = %+v, want the round 1 draft", attempts[0].Calls[0])
+	}
+	// Calls made outside a generation stay outside it.
+	if callErr := store.SaveAgentCall(ctx, AgentCallInput{JobID: &id, Role: "filter", Runner: "claude", Input: "p", Output: "o", OK: true, DurationMS: 1}); callErr != nil {
+		t.Fatal(err)
+	}
+	attempts, err = store.ListLetterAttempts(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(attempts[0].Calls) != 2 {
+		t.Fatalf("calls = %d after an unrelated call, want 2", len(attempts[0].Calls))
 	}
 }
 
@@ -395,6 +460,70 @@ func TestUpsertJobMasksPIIInDescription(t *testing.T) {
 	}
 	if summary.Descriptions.Rows != 1 || summary.Descriptions.PIIMatches != 0 || summary.Descriptions.Masked != 1 {
 		t.Fatalf("description summary is invalid: %+v", summary.Descriptions)
+	}
+}
+
+// The columns describing how a letter was reached move to the attempt, so an
+// upgraded database has to end with one attempt per letter already written and
+// the letter pointing at it.
+func TestMigrationToVersionTenMovesLettersIntoAttempts(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "legacy.db")
+	created := openTestStore(t, path)
+	ctx := context.Background()
+	description := "Synthetic platform work"
+	job, err := created.UpsertJob(ctx, JobInput{Source: "yourator", ExternalID: "legacy-letter", URL: "https://example.test/jobs/legacy-letter", Title: "Platform Engineer", CompanyName: "Example Platform", CompanyInfo: "software", Description: &description, Location: "Taipei", RemoteType: "hybrid"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := job.Job.ID
+	statements := []string{
+		"DROP INDEX agent_calls_attempt_idx",
+		"ALTER TABLE agent_calls DROP COLUMN attempt_id",
+		"ALTER TABLE agent_calls DROP COLUMN round",
+		"ALTER TABLE letters DROP COLUMN attempt_id",
+		"ALTER TABLE letters ADD COLUMN rounds INTEGER NOT NULL DEFAULT 0",
+		"ALTER TABLE letters ADD COLUMN review_log TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE letters ADD COLUMN runner_draft TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE letters ADD COLUMN runner_review TEXT NOT NULL DEFAULT ''",
+		"DROP INDEX letter_attempts_job_idx",
+		"DROP TABLE letter_attempts",
+		fmt.Sprintf("INSERT INTO letters (job_id, content, status, rounds, review_log, runner_draft, runner_review, created_at) VALUES (%d, 'legacy letter', 'approved', 2, 'revise: too long', 'claude', 'codex', '2026-07-01T10:00:00Z')", id),
+		"PRAGMA user_version = 9",
+	}
+	for _, statement := range statements {
+		if _, execErr := created.db.ExecContext(ctx, statement); execErr != nil {
+			t.Fatalf("prepare v9 database: %v", execErr)
+		}
+	}
+	closeTestStore(t, created)
+
+	migrated := openTestStore(t, path)
+	defer closeTestStore(t, migrated)
+	attempts, err := migrated.ListLetterAttempts(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(attempts) != 1 {
+		t.Fatalf("attempts = %d, want 1", len(attempts))
+	}
+	attempt := attempts[0]
+	if attempt.Status != "approved" || attempt.Rounds != 2 || attempt.ReviewLog != "revise: too long" {
+		t.Fatalf("attempt = %+v, want the letter's own columns carried over", attempt)
+	}
+	if attempt.Content == nil || *attempt.Content != "legacy letter" {
+		t.Fatal("the migrated attempt lost its letter")
+	}
+	// An attempt built by migration has no calls to show: the rounds of a letter
+	// written before this version cannot be recovered from timestamps.
+	if len(attempt.Calls) != 0 {
+		t.Fatalf("calls = %d, want none for a migrated attempt", len(attempt.Calls))
+	}
+	detail, found, err := migrated.GetJobDetail(ctx, id)
+	if err != nil || !found {
+		t.Fatalf("get job detail: %v", err)
+	}
+	if detail.Letter == nil || detail.Letter.Rounds != 2 || detail.Letter.ReviewLog != "revise: too long" {
+		t.Fatalf("letter detail = %+v, want rounds and review log read through the attempt", detail.Letter)
 	}
 }
 

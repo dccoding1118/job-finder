@@ -60,6 +60,8 @@ func (s *Server) job(w http.ResponseWriter, r *http.Request) {
 		s.applyJob(w, r, id)
 	case len(parts) == 2 && parts[1] == "letter" && r.Method == http.MethodPost:
 		s.requestLetter(w, r, id)
+	case len(parts) == 2 && parts[1] == "letter-history" && r.Method == http.MethodGet:
+		s.letterHistory(w, r, id)
 	case len(parts) == 2 && parts[1] == "reprocess" && r.Method == http.MethodPost:
 		s.reprocessJob(w, r, id)
 	case len(parts) == 2 && parts[1] == "process" && r.Method == http.MethodPost:
@@ -99,6 +101,19 @@ func (s *Server) applyJob(w http.ResponseWriter, r *http.Request, id int64) {
 	}
 	detail, _, _ := s.store.GetJobDetail(r.Context(), id)
 	writeJSON(w, 200, s.jobViewWithGroup(r, detail))
+}
+
+// letterHistory reports every letter generation this job has been through, the
+// failed ones included, with the draft and the review of each round. It answers
+// what the letter alone cannot: what the reviewer asked for, and whether the
+// version that shipped acted on it.
+func (s *Server) letterHistory(w http.ResponseWriter, r *http.Request, id int64) {
+	attempts, err := s.store.ListLetterAttempts(r.Context(), id)
+	if err != nil {
+		writeError(w, 500, "internal", "unable to read letter history")
+		return
+	}
+	writeJSON(w, 200, map[string]any{"attempts": attempts})
 }
 
 // requestLetter is the only entry through which a letter is ever drafted: the

@@ -207,7 +207,9 @@ func (s *Store) SnapshotForVerification(ctx context.Context) (VerificationSnapsh
 		}
 		if detail.Letter != nil {
 			var draft, review string
-			if queryErr := s.db.QueryRowContext(ctx, `SELECT runner_draft, runner_review FROM letters WHERE job_id=? ORDER BY created_at DESC, id DESC LIMIT 1`, job.ID).Scan(&draft, &review); queryErr != nil {
+			if queryErr := s.db.QueryRowContext(ctx, `SELECT COALESCE(a.runner_draft, ''), COALESCE(a.runner_review, '')
+				FROM letters l LEFT JOIN letter_attempts a ON a.id = l.attempt_id
+				WHERE l.job_id=? ORDER BY l.created_at DESC, l.id DESC LIMIT 1`, job.ID).Scan(&draft, &review); queryErr != nil {
 				return out, fmt.Errorf("verification: read letter runners: %w", queryErr)
 			}
 			entries := 0

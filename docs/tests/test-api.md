@@ -49,6 +49,8 @@
 | AT-15 | 對 `letter_failed` Job 送出同一路由 | 同樣受理並轉為 `letter_requested`；既有 failed letter 保留 |
 | AT-16 | 對 `letter_requested` Job 重複送出 | 冪等回 `requested`；不重複呼叫 `RequestLetter`、不新增事件 |
 | AT-17 | 對 `scored`、`discovered`、`letter_ready` 或不存在的 Job 送出 | 回 4xx；不呼叫 pipeline、DB 狀態不變 |
+| AT-17A | 對跑過兩次產製（一次失敗、一次過審）的 Job 送出 `GET /jobs/{id}/letter-history` | 回兩次產製，新到舊；過審那次附信件內容，失敗那次 `content` 為 null 且保留審查摘要；每次附其逐輪呼叫的輪次、角色與輸出 |
+| AT-17B | 同一路由的回應內容 | 不含 `input`；升級前的產製回摘要且 `calls` 為空陣列 |
 | AT-20 | `POST /runs` 且 pipeline 閒置 | 立即回 `started`；fake triggerer 收到 `manual-extension`，handler 不等待工作完成 |
 | AT-21 | `POST /runs` 且抓取已在進行中 | 回 `already_running`；不建立第二次工作 |
 | AT-22 | Run 歷史 | 依時間新到舊回傳 trigger、抓取事實（fetched／new／queries／errors）與安全錯誤摘要 |

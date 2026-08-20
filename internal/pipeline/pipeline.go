@@ -262,8 +262,15 @@ func (p Pipeline) LetterWithStats(ctx context.Context, limit int) (StageStats, e
 			}
 		}
 		jobID := job.ID
-		audit := func(role, runner, model, input, output string, ok bool, duration time.Duration, usage agents.Usage) error {
-			return p.Store.SaveAgentCall(ctx, store.AgentCallInput{JobID: &jobID, Role: role, Runner: runner, Model: model, Input: input, Output: output, OK: ok, DurationMS: duration.Milliseconds(), Usage: storeUsage(usage), FilterRevision: snapshot.Revisions.Filter, ScoreRevision: snapshot.Revisions.Score})
+		// The attempt is opened before the first call so every audited call has a
+		// generation to belong to, including the calls of a generation that ends
+		// up producing nothing.
+		attemptID, attemptErr := p.Store.StartLetterAttempt(ctx, jobID, snapshot.Revisions.Filter, snapshot.Revisions.Score)
+		if attemptErr != nil {
+			return stats, attemptErr
+		}
+		audit := func(record agents.AuditRecord) error {
+			return p.Store.SaveAgentCall(ctx, agentCall(record, &jobID, &attemptID, store.AgentCallInput{FilterRevision: snapshot.Revisions.Filter, ScoreRevision: snapshot.Revisions.Score}))
 		}
 		drafter, reviewer := p.Drafter, p.Reviewer
 		drafter.Audit, reviewer.Audit = audit, audit
@@ -295,9 +302,20 @@ func (p Pipeline) LetterWithStats(ctx context.Context, limit int) (StageStats, e
 		// A run that produced no usable letter records no Letter at all: the state
 		// says it failed, the audited calls say why, and an empty row would only be
 		// a letter that is not one.
+		attemptStatus := result.Status
+		if attemptStatus != "approved" && attemptStatus != "finalized" {
+			attemptStatus = "failed"
+		}
+		failure := ""
+		if e != nil {
+			failure = e.Error()
+		}
+		if err := p.Store.FinishLetterAttempt(ctx, store.LetterAttemptInput{AttemptID: attemptID, Status: attemptStatus, Rounds: result.Rounds, ReviewLog: result.ReviewLog, RunnerDraft: result.DraftRunner, RunnerReview: result.ReviewRunner, Error: failure}); err != nil {
+			return stats, err
+		}
 		state := "letter_failed"
 		if result.Status == "approved" || result.Status == "finalized" {
-			if err := p.Store.SaveLetter(ctx, store.LetterInput{JobID: job.ID, Content: result.Content, Status: result.Status, ReviewLog: result.ReviewLog, Rounds: result.Rounds, RunnerDraft: result.DraftRunner, RunnerReview: result.ReviewRunner, FilterRevision: snapshot.Revisions.Filter, ScoreRevision: snapshot.Revisions.Score}); err != nil {
+			if err := p.Store.SaveLetter(ctx, store.LetterInput{JobID: job.ID, AttemptID: attemptID, Content: result.Content, Status: result.Status, FilterRevision: snapshot.Revisions.Filter, ScoreRevision: snapshot.Revisions.Score}); err != nil {
 				return stats, err
 			}
 			state = "letter_ready"
@@ -533,8 +551,8 @@ func (p Pipeline) screenJob(ctx context.Context, job store.Job, snapshot workPro
 	}
 	jobID := job.ID
 	screener := p.Screener
-	screener.Audit = func(role, runner, model, input, output string, ok bool, duration time.Duration, usage agents.Usage) error {
-		return p.Store.SaveAgentCall(ctx, store.AgentCallInput{JobID: &jobID, Role: role, Runner: runner, Model: model, Input: input, Output: output, OK: ok, DurationMS: duration.Milliseconds(), Usage: storeUsage(usage), FilterRevision: snapshot.Revisions.Filter})
+	screener.Audit = func(record agents.AuditRecord) error {
+		return p.Store.SaveAgentCall(ctx, agentCall(record, &jobID, nil, store.AgentCallInput{FilterRevision: snapshot.Revisions.Filter}))
 	}
 	description := ""
 	if job.Description != nil {
@@ -691,8 +709,8 @@ func (p Pipeline) scoreAndStore(ctx context.Context, job store.Job, snapshot wor
 	}
 	jobID := job.ID
 	scorer := p.Scorer
-	scorer.Audit = func(role, runner, model, input, output string, ok bool, duration time.Duration, usage agents.Usage) error {
-		return p.Store.SaveAgentCall(ctx, store.AgentCallInput{JobID: &jobID, Role: role, Runner: runner, Model: model, Input: input, Output: output, OK: ok, DurationMS: duration.Milliseconds(), Usage: storeUsage(usage), ScoreRevision: snapshot.Revisions.Score})
+	scorer.Audit = func(record agents.AuditRecord) error {
+		return p.Store.SaveAgentCall(ctx, agentCall(record, &jobID, nil, store.AgentCallInput{ScoreRevision: snapshot.Revisions.Score}))
 	}
 	// The bonus conditions the screening gate already extracted are handed over
 	// rather than re-derived: the JD is broken down once, by one gate.
@@ -788,4 +806,15 @@ func companyInfo(v string) string {
 		return "public listing"
 	}
 	return v
+}
+
+// agentCall turns one audited call into the row that records it. The revisions
+// come from the caller because only it knows which of the two the role used.
+func agentCall(record agents.AuditRecord, jobID, attemptID *int64, base store.AgentCallInput) store.AgentCallInput {
+	base.JobID, base.AttemptID, base.Round = jobID, attemptID, record.Round
+	base.Role, base.Runner, base.Model = record.Role, record.Runner, record.Model
+	base.Input, base.Output, base.OK = record.Input, record.Output, record.OK
+	base.DurationMS = record.Duration.Milliseconds()
+	base.Usage = storeUsage(record.Usage)
+	return base
 }

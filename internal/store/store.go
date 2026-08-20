@@ -20,7 +20,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const schemaVersion = 9
+const schemaVersion = 10
 
 //go:embed schema.sql
 var schemaSQL string
@@ -152,6 +152,41 @@ var upgrades = map[int]string{
 	// NULL, and only the heartbeat tells them apart. Existing rows carry NULL and
 	// are read as finished-or-abandoned, never as running.
 	8: `ALTER TABLE runs ADD COLUMN heartbeat_at TEXT;`,
+	// One letter generation becomes a row of its own, so a run that produced
+	// nothing is still visible and every audited call can say which generation
+	// and which round it belongs to. Existing letters each get an attempt built
+	// from the columns they already carry; existing calls keep NULL, because a
+	// round inferred from timestamps would be wrong wherever a runner retry or a
+	// guard failure put two drafter calls in a row.
+	9: `CREATE TABLE letter_attempts (
+		id INTEGER PRIMARY KEY,
+		job_id INTEGER NOT NULL REFERENCES jobs(id),
+		status TEXT NOT NULL,
+		rounds INTEGER NOT NULL DEFAULT 0,
+		review_log TEXT NOT NULL DEFAULT '',
+		runner_draft TEXT NOT NULL DEFAULT '',
+		runner_review TEXT NOT NULL DEFAULT '',
+		error TEXT,
+		filter_revision TEXT,
+		score_revision TEXT,
+		started_at TEXT NOT NULL,
+		finished_at TEXT
+	);
+	CREATE INDEX IF NOT EXISTS letter_attempts_job_idx ON letter_attempts(job_id, started_at);
+	ALTER TABLE agent_calls ADD COLUMN attempt_id INTEGER REFERENCES letter_attempts(id);
+	ALTER TABLE agent_calls ADD COLUMN round INTEGER;
+	CREATE INDEX IF NOT EXISTS agent_calls_attempt_idx ON agent_calls(attempt_id, id);
+	ALTER TABLE letters ADD COLUMN attempt_id INTEGER REFERENCES letter_attempts(id);
+	INSERT INTO letter_attempts (job_id, status, rounds, review_log, runner_draft, runner_review, filter_revision, score_revision, started_at, finished_at)
+		SELECT job_id, status, rounds, review_log, runner_draft, runner_review, filter_revision, score_revision, created_at, created_at FROM letters ORDER BY id;
+	UPDATE letters SET attempt_id = (
+		SELECT a.id FROM letter_attempts a
+		WHERE a.job_id = letters.job_id AND a.started_at = letters.created_at
+		ORDER BY a.id LIMIT 1);
+	ALTER TABLE letters DROP COLUMN rounds;
+	ALTER TABLE letters DROP COLUMN review_log;
+	ALTER TABLE letters DROP COLUMN runner_draft;
+	ALTER TABLE letters DROP COLUMN runner_review;`,
 }
 
 var piiPattern = regexp.MustCompile(`(?i)[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}`)
@@ -229,16 +264,28 @@ type ScoreInput struct {
 }
 
 type LetterInput struct {
-	JobID                      int64
-	Content, Status, ReviewLog string
-	Rounds                     int
-	RunnerDraft, RunnerReview  string
-	FilterRevision             string
-	ScoreRevision              string
+	JobID           int64
+	AttemptID       int64
+	Content, Status string
+	FilterRevision  string
+	ScoreRevision   string
+}
+
+// LetterAttemptInput closes one generation. Rounds, the review log and the two
+// runners describe how the letter was reached, so they belong to the attempt
+// rather than to the letter it may or may not have produced.
+type LetterAttemptInput struct {
+	AttemptID                 int64
+	Status, ReviewLog         string
+	Rounds                    int
+	RunnerDraft, RunnerReview string
+	Error                     string
 }
 
 type AgentCallInput struct {
 	JobID                              *int64
+	AttemptID                          *int64
+	Round                              int
 	Role, Runner, Model, Input, Output string
 	OK                                 bool
 	DurationMS                         int64
@@ -609,12 +656,9 @@ func (s *Store) SaveScore(ctx context.Context, input ScoreInput) error {
 }
 
 func (s *Store) SaveLetter(ctx context.Context, input LetterInput) error {
-	// Only a run that produced a letter writes one. A finalized letter carries no
-	// reviewer when the round limit leaves no round to review it in.
-	if input.JobID <= 0 || !validLetterStatus(input.Status) || input.Rounds < 1 || input.Content == "" || input.RunnerDraft == "" {
-		return errors.New("store: invalid letter")
-	}
-	if input.Status == "approved" && input.RunnerReview == "" {
+	// Only a generation that produced a letter writes one; the attempt it belongs
+	// to records the rest, including the generations that produced nothing.
+	if input.JobID <= 0 || input.AttemptID <= 0 || !validLetterStatus(input.Status) || input.Content == "" {
 		return errors.New("store: invalid letter")
 	}
 	if input.FilterRevision == "" {
@@ -623,7 +667,7 @@ func (s *Store) SaveLetter(ctx context.Context, input LetterInput) error {
 	if input.ScoreRevision == "" {
 		input.ScoreRevision = s.jobRevision(ctx, "score_revision", input.JobID)
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO letters (job_id, content, status, rounds, review_log, runner_draft, runner_review, filter_revision, score_revision, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, input.JobID, input.Content, input.Status, input.Rounds, input.ReviewLog, input.RunnerDraft, input.RunnerReview, nullableString(input.FilterRevision), nullableString(input.ScoreRevision), s.timestamp())
+	_, err := s.db.ExecContext(ctx, `INSERT INTO letters (job_id, attempt_id, content, status, filter_revision, score_revision, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`, input.JobID, input.AttemptID, input.Content, input.Status, nullableString(input.FilterRevision), nullableString(input.ScoreRevision), s.timestamp())
 	if err != nil {
 		return fmt.Errorf("save letter: %w", err)
 	}
@@ -636,6 +680,59 @@ func (s *Store) SaveLetter(ctx context.Context, input LetterInput) error {
 // `failed` survives only in rows written before that was the rule.
 func validLetterStatus(status string) bool {
 	return status == "approved" || status == "finalized"
+}
+
+// StartLetterAttempt opens one generation before the first Agent call, so every
+// call it makes has an attempt to belong to and a generation that produces
+// nothing is still on record.
+func (s *Store) StartLetterAttempt(ctx context.Context, jobID int64, filterRevision, scoreRevision string) (int64, error) {
+	if jobID <= 0 {
+		return 0, errors.New("store: invalid letter attempt")
+	}
+	if filterRevision == "" {
+		filterRevision = s.jobRevision(ctx, "filter_revision", jobID)
+	}
+	if scoreRevision == "" {
+		scoreRevision = s.jobRevision(ctx, "score_revision", jobID)
+	}
+	result, err := s.db.ExecContext(ctx, `INSERT INTO letter_attempts (job_id, status, filter_revision, score_revision, started_at) VALUES (?, ?, ?, ?, ?)`,
+		jobID, "running", nullableString(filterRevision), nullableString(scoreRevision), s.timestamp())
+	if err != nil {
+		return 0, fmt.Errorf("start letter attempt: %w", err)
+	}
+	id, err := result.LastInsertId()
+	if err != nil {
+		return 0, fmt.Errorf("start letter attempt: %w", err)
+	}
+	return id, nil
+}
+
+// FinishLetterAttempt records how the generation ended. `failed` is a legitimate
+// terminal status here: the attempt is the only row a generation that produced
+// no usable letter leaves behind.
+func (s *Store) FinishLetterAttempt(ctx context.Context, input LetterAttemptInput) error {
+	if input.AttemptID <= 0 || !validAttemptStatus(input.Status) || input.Rounds < 0 {
+		return errors.New("store: invalid letter attempt")
+	}
+	_, err := s.db.ExecContext(ctx, `UPDATE letter_attempts SET status=?, rounds=?, review_log=?, runner_draft=?, runner_review=?, error=?, finished_at=? WHERE id=? AND finished_at IS NULL`,
+		input.Status, input.Rounds, input.ReviewLog, input.RunnerDraft, input.RunnerReview, nullableString(input.Error), s.timestamp(), input.AttemptID)
+	if err != nil {
+		return fmt.Errorf("finish letter attempt: %w", err)
+	}
+	return nil
+}
+
+func validAttemptStatus(status string) bool {
+	return status == "approved" || status == "finalized" || status == "failed"
+}
+
+// nullableRound keeps the column NULL for every call that is not part of a
+// letter generation, so "no round" and "round zero" stay distinguishable.
+func nullableRound(round int) any {
+	if round <= 0 {
+		return nil
+	}
+	return round
 }
 
 func (s *Store) SaveAgentCall(ctx context.Context, input AgentCallInput) error {
@@ -666,8 +763,8 @@ func (s *Store) SaveAgentCall(ctx context.Context, input AgentCallInput) error {
 			input.ScoreRevision = s.jobRevision(ctx, "score_revision", *input.JobID)
 		}
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO agent_calls (job_id, role, runner, model, input, output, ok, duration_ms, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, reasoning_tokens, cost_usd, filter_revision, score_revision, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		input.JobID, input.Role, input.Runner, nullableString(input.Model), input.Input, input.Output, ok, input.DurationMS,
+	_, err := s.db.ExecContext(ctx, `INSERT INTO agent_calls (job_id, attempt_id, round, role, runner, model, input, output, ok, duration_ms, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, reasoning_tokens, cost_usd, filter_revision, score_revision, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		input.JobID, input.AttemptID, nullableRound(input.Round), input.Role, input.Runner, nullableString(input.Model), input.Input, input.Output, ok, input.DurationMS,
 		input.Usage.InputTokens, input.Usage.OutputTokens, input.Usage.CacheReadTokens, input.Usage.CacheWriteTokens, input.Usage.ReasoningTokens, input.Usage.CostUSD,
 		nullableString(input.FilterRevision), nullableString(input.ScoreRevision), s.timestamp())
 	if err != nil {

@@ -797,6 +797,123 @@ svg {
   white-space: pre-wrap;
 }
 
+.letter-history {
+  margin-top: 12px;
+  border: 1px solid #e6e9e4;
+  border-radius: 12px;
+}
+
+.letter-history .attempt-count {
+  margin-left: 8px;
+  color: var(--ink-muted);
+  font-weight: 600;
+}
+
+.attempt {
+  margin-top: 10px;
+  border: 1px solid #e6e9e4;
+  border-radius: 10px;
+  background: #fafbf9;
+}
+
+.attempt summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  padding: 10px 12px;
+  cursor: pointer;
+  color: #566074;
+  font-size: 12px;
+  list-style: none;
+}
+
+.attempt summary::-webkit-details-marker {
+  display: none;
+}
+
+.attempt-status {
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: var(--neutral-soft);
+  font-size: 10px;
+  font-weight: 720;
+}
+
+.attempt-status.is-approved,
+.attempt-status.is-finalized {
+  background: var(--positive-soft);
+  color: var(--positive);
+}
+
+.attempt-status.is-failed {
+  background: var(--negative-soft);
+  color: var(--negative);
+}
+
+.attempt-body {
+  padding: 0 12px 12px;
+}
+
+.attempt-log {
+  margin: 0 0 10px;
+  padding-left: 0;
+  list-style: none;
+}
+
+.attempt-log li {
+  margin-top: 6px;
+  color: #455067;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.attempt-round {
+  margin-right: 6px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: var(--neutral-soft);
+  color: #566074;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.attempt-call {
+  margin-top: 10px;
+}
+
+.attempt-call-heading {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  margin-bottom: 5px;
+  color: var(--ink-muted);
+  font-size: 11px;
+}
+
+.attempt-failed {
+  color: var(--negative);
+  font-weight: 700;
+}
+
+.attempt-output {
+  max-height: 220px;
+  margin: 0;
+  padding: 11px;
+  overflow: auto;
+  border: 1px solid #e6e9e4;
+  border-radius: 10px;
+  background: #fff;
+  color: #364157;
+  font: 12px/1.7 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  white-space: pre-wrap;
+}
+
+.letter-copy.is-negative {
+  color: var(--negative);
+}
+
 .select-row {
   gap: 12px;
   margin-top: 12px;
@@ -1484,9 +1601,20 @@ svg {
   border-color: var(--ink-muted);
 }
 
-:root[data-theme="dark"] .letter-content {
+:root[data-theme="dark"] .letter-content,
+:root[data-theme="dark"] .attempt-output {
   border-color: #2b3547;
   background: #121925;
+}
+
+:root[data-theme="dark"] .letter-history,
+:root[data-theme="dark"] .attempt {
+  border-color: #273143;
+  background: #141b28;
+}
+
+:root[data-theme="dark"] .attempt-log li {
+  color: #c7d0df;
 }
 
 :root[data-theme="dark"] .select-row select {

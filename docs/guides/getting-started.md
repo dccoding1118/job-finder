@@ -205,20 +205,24 @@ extension 是**獨立工件** `jobfinder-extension_<tag>.zip`，平台 zip／tar
 
 解壓到一個**常駐目錄**，未封裝的 extension 目錄不能刪除或搬移——Chrome 每次啟動都要從那裡讀檔。
 
+壓縮檔本身落在暫存目錄，與平台工件同一套路（§3.1、§4.1）：常駐目錄只放解壓出來的檔案，Chrome 讀的那一層不混入下載物。
+
 ```bash
 # Linux
+TMP=$(mktemp -d)
 DEST=~/.local/share/jobfinder/extension/$VER
 mkdir -p "$DEST"
-gh release download "$VER" -R "$REPO" -p "jobfinder-extension_${VER}.zip" -D "$(dirname "$DEST")"
-unzip -o "$(dirname "$DEST")/jobfinder-extension_${VER}.zip" -d "$DEST"
+gh release download "$VER" -R "$REPO" -p "jobfinder-extension_${VER}.zip" -D "$TMP"
+unzip -o "$TMP/jobfinder-extension_${VER}.zip" -d "$DEST"
 grep '"version"' "$DEST/manifest.json"
 ```
 
 ```powershell
 # Windows
-$dest = New-Item -ItemType Directory -Force -Path (Join-Path $env:LOCALAPPDATA "jobfinder\extension\$VER")
-gh release download $VER -R $REPO -p "jobfinder-extension_$VER.zip" --clobber
-Expand-Archive "jobfinder-extension_$VER.zip" -DestinationPath $dest -Force
+$tmp  = (New-Item -ItemType Directory -Force -Path (Join-Path $env:TEMP "jf-$VER")).FullName
+$dest = (New-Item -ItemType Directory -Force -Path (Join-Path $env:LOCALAPPDATA "jobfinder\extension\$VER")).FullName
+gh release download $VER -R $REPO -p "jobfinder-extension_$VER.zip" -D $tmp --clobber
+Expand-Archive (Join-Path $tmp "jobfinder-extension_$VER.zip") -DestinationPath $dest -Force
 Get-ChildItem -Recurse $dest | Unblock-File
 (Get-Content (Join-Path $dest "manifest.json") -Encoding UTF8 | ConvertFrom-Json).version
 ```

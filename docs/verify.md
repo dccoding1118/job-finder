@@ -227,6 +227,7 @@ mise run e2e-live
 | D3 排程實際觸發 | 手動觸發抓取工作（Linux `systemctl --user start jobfinder-run.service`；Windows `Start-ScheduledTask -TaskPath '\jobfinder\' -TaskName 'run'`） | 抓取實際執行並寫入 `runs`，該筆 `trigger` 為 `timer`；Linux 於 journald、Windows 於 `log.file` 看得到該趟記錄；Windows 上全程不出現主控台視窗 |
 | D4 Side Panel 直連 | extension Options 填 `http://127.0.0.1:8686` 與設定中的 token，開啟 Side Panel | 無任何通道即可讀寫；未帶 token 的請求回 401 |
 | D5 更新確實生效 | 對新版工件執行 `jobfinder update` | 執行中 process 的執行檔為新 binary 且啟動時間晚於替換點；`jobfinder version` 為新版號；Windows 上兩支執行檔皆為新版 |
+| D5A 更新不依賴服務當下是否在跑 | 停止 API 後對新版工件執行 `jobfinder update` | 服務被重新啟動並通過生效面驗證；同一份工件再跑一次 `update` 時 `jobfinder.prev` 仍為前一版 |
 | D6 回滾 | `jobfinder rollback` | 執行中 process 為前一版；資料庫未被更動；`.bad` 保留了被回滾掉的版本；Windows 上兩支一起回到前一版，不出現版本不一致 |
 | D7 PATH 與診斷（Windows） | 開新終端執行 `jobfinder paths` | 不需完整路徑即可執行；印出 `%LocalAppData%\jobfinder\` 下的位置，含 `jobfinderw.exe` 那列 |
 | D8 Agent CLI 可執行（Windows） | 讓一筆職缺實際走到評分 | npm 安裝的 `claude`／`codex` 可被叫起；失敗時錯誤指向 CLI 本身而非「不是有效的應用程式」；整段過程不彈出主控台視窗 |

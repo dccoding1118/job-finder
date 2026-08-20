@@ -37,6 +37,10 @@
 
   `v0.1.0`、`v0.1.1` 與 `v0.2.0` 已於 private 階段發出（工件與 checksum 齊備、版號注入正常），轉 public 後不需重打。
 
+- [ ] `update` 修正（`docs/changes/change-update-effect-surface.md`）的實機驗證：停掉 API 後跑 `update` 應完成重啟並通過生效面驗證；同一份工件再跑一次後 `jobfinder.prev` 仍為前一版。本機的 `.prev` 目前是 v0.2.0（已被覆蓋），要驗回滾需先下載 v0.1.1 工件重裝一次。
+
+- [ ] 求職信產製歷程（`docs/changes/change-letter-history.md`）的實機驗證：職缺頁「產製歷程」展開後逐次逐輪的 draft 全文與審查意見、失敗產製留有紀錄、升級前的產製只顯示摘要、資料庫升到 schema v10。
+
 **Roadmap（暫不實作，規劃見 `docs/roadmap.md`）**
 
 - [ ] S1：反向校準閉環（前端入口，不做 CLI 指令）、每日高分職缺推送、成效統計、深入評估、履歷匯入產生 Profile 草稿、多 Profile。

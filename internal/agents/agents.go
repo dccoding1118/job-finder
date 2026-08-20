@@ -268,7 +268,16 @@ type (
 		Reason   string `json:"reason"`
 		Runner   string
 	}
-	Audit  func(role, runner, model, input, output string, ok bool, duration time.Duration, usage Usage) error
+	// AuditRecord is one audited Agent call. Round is the letter round the call
+	// belongs to, and is 0 for every role that does not run in rounds.
+	AuditRecord struct {
+		Role, Runner, Model, Input, Output string
+		OK                                 bool
+		Duration                           time.Duration
+		Usage                              Usage
+		Round                              int
+	}
+	Audit  func(AuditRecord) error
 	Scorer struct {
 		Primary, Fallback Runner
 		Audit             Audit
@@ -291,7 +300,7 @@ func (s Scorer) Score(ctx context.Context, profileYAML string, job Job, baseline
 			lastErr = invocationError(err, parseErr)
 		}
 		if s.Audit != nil {
-			if auditErr := s.Audit("scorer", runner.Name(), runner.Model(), prompt, raw, ok, time.Since(start), reply.Usage); auditErr != nil {
+			if auditErr := s.Audit(AuditRecord{Role: "scorer", Runner: runner.Name(), Model: runner.Model(), Input: prompt, Output: raw, OK: ok, Duration: time.Since(start), Usage: reply.Usage}); auditErr != nil {
 				return ScoreResult{}, fmt.Errorf("agents: audit scorer call: %w", auditErr)
 			}
 		}
@@ -397,7 +406,7 @@ type LetterRound struct {
 	Issues []string
 }
 
-func (d Drafter) Draft(ctx context.Context, profileYAML string, job Job, history []LetterRound) (DraftResult, error) {
+func (d Drafter) Draft(ctx context.Context, profileYAML string, job Job, history []LetterRound, round int) (DraftResult, error) {
 	prompt := draftPrompt(profileYAML, job, history)
 	var lastErr error
 	for _, runner := range []Runner{d.Primary, d.Primary, d.Fallback} {
@@ -413,7 +422,7 @@ func (d Drafter) Draft(ctx context.Context, profileYAML string, job Job, history
 			lastErr = invocationError(err, parseErr)
 		}
 		if d.Audit != nil {
-			if auditErr := d.Audit("drafter", runner.Name(), runner.Model(), prompt, raw, ok, time.Since(start), reply.Usage); auditErr != nil {
+			if auditErr := d.Audit(AuditRecord{Role: "drafter", Runner: runner.Name(), Model: runner.Model(), Input: prompt, Output: raw, OK: ok, Duration: time.Since(start), Usage: reply.Usage, Round: round}); auditErr != nil {
 				return DraftResult{}, fmt.Errorf("agents: audit drafter call: %w", auditErr)
 			}
 		}
@@ -425,7 +434,7 @@ func (d Drafter) Draft(ctx context.Context, profileYAML string, job Job, history
 	return DraftResult{}, runnersFailed("drafter", lastErr)
 }
 
-func (r Reviewer) Review(ctx context.Context, profileYAML string, job Job, letter string) (ReviewResult, error) {
+func (r Reviewer) Review(ctx context.Context, profileYAML string, job Job, letter string, round int) (ReviewResult, error) {
 	prompt := reviewPrompt(profileYAML, job, letter)
 	var lastErr error
 	for _, runner := range []Runner{r.Primary, r.Primary, r.Fallback} {
@@ -441,7 +450,7 @@ func (r Reviewer) Review(ctx context.Context, profileYAML string, job Job, lette
 			lastErr = invocationError(err, parseErr)
 		}
 		if r.Audit != nil {
-			if auditErr := r.Audit("reviewer", runner.Name(), runner.Model(), prompt, raw, ok, time.Since(start), reply.Usage); auditErr != nil {
+			if auditErr := r.Audit(AuditRecord{Role: "reviewer", Runner: runner.Name(), Model: runner.Model(), Input: prompt, Output: raw, OK: ok, Duration: time.Since(start), Usage: reply.Usage, Round: round}); auditErr != nil {
 				return ReviewResult{}, fmt.Errorf("agents: audit reviewer call: %w", auditErr)
 			}
 		}
@@ -477,7 +486,7 @@ func GenerateLetter(ctx context.Context, drafter Drafter, reviewer Reviewer, pro
 		return LetterResult{Content: content, Status: status, ReviewLog: strings.Join(log, "\n"), Rounds: rounds, DraftRunner: draftRunner, ReviewRunner: reviewRunner}
 	}
 	for round := 1; round <= maxRounds; round++ {
-		draft, err := drafter.Draft(ctx, profileYAML, job, history)
+		draft, err := drafter.Draft(ctx, profileYAML, job, history, round)
 		if err != nil {
 			log = append(log, "error: "+err.Error())
 			return result("", "failed", round), err
@@ -497,7 +506,7 @@ func GenerateLetter(ctx context.Context, drafter Drafter, reviewer Reviewer, pro
 			history = append(history, LetterRound{Letter: draft.Letter, Issues: []string{guardErr.Error()}})
 			continue
 		}
-		review, err := reviewer.Review(ctx, profileYAML, job, draft.Letter)
+		review, err := reviewer.Review(ctx, profileYAML, job, draft.Letter, round)
 		if err != nil {
 			log = append(log, "error: "+err.Error())
 			return result("", "failed", round), err

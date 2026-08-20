@@ -294,6 +294,42 @@ func TestPlaceBinaryKeepsThePreviousCopyForRollback(t *testing.T) {
 	}
 }
 
+// Re-running an update with the artifact already installed must not touch the
+// rollback copy: overwriting it with the current build would leave rollback
+// pointing at the very version it is meant to undo.
+func TestPlaceBinaryKeepsTheRollbackCopyWhenTheBuildIsUnchanged(t *testing.T) {
+	dir := t.TempDir()
+	layout := linuxLayout(dir)
+	layout.Previous = filepath.Join(dir, "lib", "jobfinder.prev")
+	if err := os.MkdirAll(filepath.Dir(layout.Binary), 0o750); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(layout.Previous), 0o750); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	for path, contents := range map[string]string{layout.Binary: "new", layout.Previous: "old"} {
+		if err := os.WriteFile(path, []byte(contents), 0o755); err != nil { // #nosec G306 -- test fixture stands in for an executable.
+			t.Fatalf("write: %v", err)
+		}
+	}
+	source := filepath.Join(dir, "artifact", "jobfinder")
+	if err := os.MkdirAll(filepath.Dir(source), 0o750); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(source, []byte("new"), 0o755); err != nil { // #nosec G306 -- test fixture stands in for an executable.
+		t.Fatalf("write: %v", err)
+	}
+	if err := placeBinary(source, layout.Binary, layout.Previous, os.Stderr); err != nil {
+		t.Fatalf("place: %v", err)
+	}
+	if contents, err := os.ReadFile(layout.Previous); err != nil || string(contents) != "old" {
+		t.Fatalf("previous = %q, %v; the rollback copy was overwritten by the current build", contents, err)
+	}
+	if contents, err := os.ReadFile(layout.Binary); err != nil || string(contents) != "new" {
+		t.Fatalf("installed = %q, %v", contents, err)
+	}
+}
+
 // A platform that runs a different executable than the user types must install
 // both from the same artifact: two builds of different vintages would give the
 // user a `jobfinder version` that does not describe what is actually serving.

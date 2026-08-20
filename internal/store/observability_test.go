@@ -285,6 +285,16 @@ func TestAgentUsageColumnsArriveEmptyOnAnUpgradedDatabase(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, statement := range []string{
+		"DROP INDEX agent_calls_attempt_idx",
+		"ALTER TABLE agent_calls DROP COLUMN attempt_id",
+		"ALTER TABLE agent_calls DROP COLUMN round",
+		"ALTER TABLE letters DROP COLUMN attempt_id",
+		"ALTER TABLE letters ADD COLUMN rounds INTEGER NOT NULL DEFAULT 0",
+		"ALTER TABLE letters ADD COLUMN review_log TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE letters ADD COLUMN runner_draft TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE letters ADD COLUMN runner_review TEXT NOT NULL DEFAULT ''",
+		"DROP INDEX letter_attempts_job_idx",
+		"DROP TABLE letter_attempts",
 		"DROP INDEX agent_calls_runner_model_created_idx",
 		"ALTER TABLE agent_calls DROP COLUMN model",
 		"ALTER TABLE agent_calls DROP COLUMN input_tokens",
