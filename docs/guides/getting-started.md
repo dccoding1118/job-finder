@@ -414,7 +414,7 @@ Start-ScheduledTask -TaskPath '\jobfinder\' -TaskName 'api'
 
 ### 10.1 後端
 
-下載新版工件、驗 checksum、解壓（同 §3.1 或 §4.1），然後：
+下載新版工件、驗 checksum、解壓（同 §3.1 或 §4.1）。**跨 schema 版本的更新之前先備份資料庫**（見下方回滾段落），然後：
 
 ```bash
 ./jobfinder update       # Linux
@@ -432,7 +432,11 @@ jobfinder rollback
 jobfinder version    # 應為前一版
 ```
 
-回滾**不動資料庫**。被回滾掉的版本保留在 rollback 目錄的 `.bad` 檔，所以前滾還有得救。資料庫確認毀損才從備份目錄手動還原。
+回滾**不動資料庫**。被回滾掉的版本保留在 rollback 目錄的 `.bad` 檔，所以前滾還有得救。
+
+**跨 schema 版本回滾要連資料庫一起還原**：資料庫在升級時會自動升到新版 schema，而舊 binary 遇到比自己新的 schema 會拒絕啟動（`database schema version N is newer than supported version M`）。這種情況下 `rollback` 會換回舊 binary、重啟服務，然後服務起不來、驗證失敗——訊息會附上服務自己印的那一行原因。正確順序是先停服務、還原升級前的資料庫備份（連同 `-wal`、`-shm`），再跑 `rollback`。
+
+沒有升級前備份就沒有退路：舊 schema 無從由新資料庫重建。因此**跨版本更新之前先備份資料庫**，`update` 本身不會代為備份。
 
 ### 10.2 extension
 

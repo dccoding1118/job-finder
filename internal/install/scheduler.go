@@ -38,6 +38,10 @@ type scheduler interface {
 	// files — that the API is the binary just placed and that it started after
 	// the given marker, and that the scheduled fetch is armed.
 	assertEffective(ctx context.Context, layout paths.Layout, marker time.Time, out io.Writer) error
+	// diagnose returns what the service itself said as it failed, empty when
+	// nothing is available. A service that refuses to start reports the reason
+	// to its own output, which the verification result alone cannot carry.
+	diagnose(ctx context.Context, layout paths.Layout) string
 	// hints are the platform's day-to-day commands, printed after an install.
 	hints(layout paths.Layout) []string
 }
@@ -57,6 +61,13 @@ func verifyEffect(ctx context.Context, sched scheduler, layout paths.Layout, mar
 		return nil
 	}
 	if err := sched.assertEffective(ctx, layout, marker, opts.Out); err != nil {
+		// "the service is failed" names the symptom and stops there, which leaves
+		// the operator to go find the log themselves — and the reason is often
+		// something the command could have said outright, such as a database the
+		// binary being installed is too old to open.
+		if detail := sched.diagnose(ctx, layout); detail != "" {
+			return fmt.Errorf("%w\nservice output:\n%s", err, detail)
+		}
 		return err
 	}
 	return smokeAPI(ctx, layout, opts.Out)

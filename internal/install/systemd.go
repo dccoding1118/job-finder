@@ -144,6 +144,17 @@ func (s systemdScheduler) restart(ctx context.Context, layout paths.Layout, out 
 	return nil
 }
 
+// diagnose reads back what the unit printed on its way down. journalctl is the
+// only place a service that exits before it can open its own log file leaves a
+// reason at all.
+func (systemdScheduler) diagnose(ctx context.Context, _ paths.Layout) string {
+	output, err := run(ctx, "journalctl", "--user", "-u", apiService, "-n", "12", "--no-pager", "-o", "cat")
+	if err != nil {
+		return ""
+	}
+	return indentLines(output)
+}
+
 func (systemdScheduler) assertEffective(ctx context.Context, layout paths.Layout, marker time.Time, out io.Writer) error {
 	state, err := run(ctx, "systemctl", "--user", "show", apiService, "-p", "ActiveState", "--value")
 	if err != nil {

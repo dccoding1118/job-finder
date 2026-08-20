@@ -87,6 +87,10 @@ Agent 稽核資料保留在 SQLite 的 `agent_calls`。
 
 **所有驗證打在生效面（執行中的 process），而非安裝面**：「檔案複製了」與「服務 active」都可能同時為真而執行中的仍是舊 process。
 
+驗證失敗時附上服務自己的輸出（Linux 取 journal，Windows 取 `log.file`，取不到則附工作的 `LastTaskResult`）。「服務不是 active」只說得出症狀，而原因通常是服務啟動時已經印出來的一行——最典型的是回滾到跨 schema 版本的舊 binary，它拒絕開啟已升級的資料庫。
+
+**`rollback` 不動資料庫，因此跨 schema 版本的回滾必須先還原升級前的資料庫備份**，否則舊 binary 會因 `database schema version N is newer than supported version M` 而拒絕啟動。`update` 不代為備份。
+
 | 驗證 | Linux | Windows |
 |---|---|---|
 | 執行中的就是剛裝的 binary | API service `MainPID` 的 `/proc/<pid>/exe` | `jobfinderw.exe` 的 `Win32_Process` `ExecutablePath` |

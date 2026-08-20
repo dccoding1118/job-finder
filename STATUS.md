@@ -39,6 +39,8 @@
 
 - [ ] 求職信產製歷程（`docs/changes/change-letter-history.md`）的實機驗證：職缺頁「產製歷程」展開後逐次逐輪的 draft 全文與審查意見、失敗產製留有紀錄、升級前的產製只顯示摘要、資料庫升到 schema v10。
 
+- [ ] 生效面驗證失敗時附上服務輸出（`docs/changes/change-update-effect-surface.md` §2 D3）的實機驗證：跨 schema 版本回滾時，錯誤訊息應在「服務不是 active」之後附上 `database schema version N is newer than supported version M`。
+
 - [ ] 兩台機器升級到 `v0.3.0`：後端與 extension 同版一起換。升級前備份 SQLite——schema 9→10 移除了 `letters` 的四個欄位，回滾到 v0.2.0 必須連同資料庫一起還原。
 
 **Roadmap（暫不實作，規劃見 `docs/roadmap.md`）**

@@ -23,6 +23,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/dccoding1118/job-finder/internal/paths"
@@ -420,6 +421,37 @@ func copyFile(src, dst string, mode os.FileMode) error {
 		return fmt.Errorf("install: place %s: %w", dst, err)
 	}
 	return nil
+}
+
+// indentLines makes borrowed output visibly borrowed, so a multi-line reason
+// reads as one block under the error rather than as more errors.
+func indentLines(text string) string {
+	lines := []string(nil)
+	for _, line := range strings.Split(strings.TrimSpace(text), "\n") {
+		if trimmed := strings.TrimSpace(line); trimmed != "" {
+			lines = append(lines, "  "+trimmed)
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+// tailFile returns the last n non-empty lines of a file, or empty when it
+// cannot be read. It is best-effort diagnosis, never a reason to fail.
+func tailFile(path string, n int) string {
+	contents, err := os.ReadFile(path) // #nosec G304 -- path comes from the resolved layout.
+	if err != nil {
+		return ""
+	}
+	lines := []string(nil)
+	for _, line := range strings.Split(string(contents), "\n") {
+		if trimmed := strings.TrimSpace(line); trimmed != "" {
+			lines = append(lines, trimmed)
+		}
+	}
+	if len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	return strings.Join(lines, "\n")
 }
 
 // sameContent compares two executables by digest, which is what separates
