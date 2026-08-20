@@ -258,19 +258,22 @@ func TestRollbackRefusesWithoutAPreviousBinary(t *testing.T) {
 // version the first rollback undid — while reporting success.
 func TestRollbackRefusesWhenThePreviousBuildIsAlreadyInstalled(t *testing.T) {
 	layout := sandbox(t)
-	for _, dir := range []string{filepath.Dir(layout.Binary), filepath.Dir(layout.Previous)} {
-		if err := os.MkdirAll(dir, 0o750); err != nil {
-			t.Fatalf("mkdir: %v", err)
+	// Every executable of the platform is prepared, because rollback checks the
+	// whole set before it touches any of it: a Windows layout carries two.
+	targets := rollbackSet(layout)
+	for _, target := range targets {
+		for path, contents := range map[string]string{
+			target.current:  "same build",
+			target.previous: "same build",
+			target.bad:      "the build being undone",
+		} {
+			if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+				t.Fatalf("mkdir: %v", err)
+			}
+			if err := os.WriteFile(path, []byte(contents), 0o755); err != nil { // #nosec G306 -- test fixture stands in for an executable.
+				t.Fatalf("write: %v", err)
+			}
 		}
-	}
-	for _, path := range []string{layout.Binary, layout.Previous} {
-		if err := os.WriteFile(path, []byte("same build"), 0o755); err != nil { // #nosec G306 -- test fixture stands in for an executable.
-			t.Fatalf("write: %v", err)
-		}
-	}
-	bad := filepath.Join(filepath.Dir(layout.Previous), "jobfinder.bad")
-	if err := os.WriteFile(bad, []byte("the build being undone"), 0o755); err != nil { // #nosec G306 -- test fixture stands in for an executable.
-		t.Fatalf("write: %v", err)
 	}
 	sched := &recordingScheduler{}
 	err := Rollback(context.Background(), Options{Out: io.Discard, SkipVerify: true, scheduler: sched})
@@ -280,8 +283,11 @@ func TestRollbackRefusesWhenThePreviousBuildIsAlreadyInstalled(t *testing.T) {
 	if len(sched.calls) != 0 {
 		t.Fatalf("scheduler calls = %v, want none — the refusal must come before anything is touched", sched.calls)
 	}
-	if contents, readErr := os.ReadFile(bad); readErr != nil || string(contents) != "the build being undone" { // #nosec G304 -- path built by the test itself.
-		t.Fatalf("bad copy = %q, %v; the forward-roll copy was overwritten", contents, readErr)
+	for _, target := range targets {
+		contents, readErr := os.ReadFile(target.bad) // #nosec G304 -- path built by the test itself.
+		if readErr != nil || string(contents) != "the build being undone" {
+			t.Fatalf("bad copy %s = %q, %v; the forward-roll copy was overwritten", target.bad, contents, readErr)
+		}
 	}
 }
 
