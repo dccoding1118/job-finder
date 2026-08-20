@@ -10,20 +10,9 @@
 
 **公開前置（依序完成後才轉 public）**
 
-- [ ] 部署人工 gate：`docs/verify.md` §6.1 的 D1–D9。
-
-  | 平台 | 通過 | 剩餘 |
-  |---|---|---|
-  | Linux | D1／D2／D3／D5／D6（release v0.1.0 工件實測）、D4（`runbook-extension.md` §8 的 tunnel 形態，Windows Chrome 經 IAP 通道連本機 API） | 無 |
-  | Windows | D1／D2／D3／D4／D7／D8（release v0.1.1 工件實測，含 extension v0.1.1 實裝與重裝） | D5／D6／D9 |
-
-  Windows D5／D6 需要前後兩個都含 `jobfinderw.exe` 的版本。`v0.1.1` 之後的工件皆含該執行檔，前置條件已成立，可排入實測。D5／D6／D9 由使用者決定延後到有對應情境時再驗。
-
-  bootstrap 腳本路徑仍待驗（見 §1，須待轉 public）。
+- [ ] bootstrap 腳本路徑的實測：`install.sh` 與 `install.ps1` 的匿名下載路徑，以及 `getting-started.md` §3.1 的 `raw.githubusercontent.com` 單行安裝。須待轉 public（見 §1）。`docs/verify.md` §6.1 的 D1–D9 與 D5A／D6A／D6B 已於兩平台全數通過，只剩這一項。
 
 - [ ] 可觀測性改動（`v0.2.0`）的實機驗證：抓取進行中的「進行中」區塊與已耗時、批次歷程的中文用語與執行狀態、Agent 呼叫進行中的顯示、閒置時不發請求、資料庫升級到 schema v9。驗收步驟見 PR #36 的「驗收方式」。升級後本次改動之前的未收尾批次會顯示為「已中斷」，屬預期行為。
-
-- [ ] 求職信修正上版後的現場收尾：使用者 Windows 機器的 `worker.paused` 改回 false 並重啟服務；job 154 仍停在 `letter_requested`，取件後會依新規則得到結果（過審、跑滿輪數的最終版，或呼叫失敗即 `letter_failed`）。
 
 - [ ] 公開 GitHub repo。多數資安與對外可見度設定被 private＋免費方案擋住，須依下列**硬順序**在轉 public 當天一次做完（Dependabot alerts 與 automated security fixes 已於 private 階段開啟）：
   1. 本地備妥 `.github/workflows/codeql.yml`（**先別推**——private repo 的 `analyze` job 會恆紅）。
@@ -33,19 +22,16 @@
   5. 全綠合併 → 設 main 分支保護（required status checks 填 `check`、`windows`、`analyze`；solo dev 不設 required reviews，會卡死自己）。
   6. 轉 public 後補驗 bootstrap 腳本：`install.sh` 與 `install.ps1` 的匿名下載路徑，以及 `getting-started.md` §3.1 的 `raw.githubusercontent.com` 單行安裝（見 §1）。
 
-  `v0.1.0` 至 `v0.3.0` 已於 private 階段發出（工件與 checksum 齊備、版號注入正常），轉 public 後不需重打。
+  `v0.1.0` 至 `v0.3.1` 已於 private 階段發出（工件與 checksum 齊備、版號注入正常），轉 public 後不需重打。
 
-- [ ] `update` 修正（`docs/changes/change-update-effect-surface.md`）的實機驗證，以 `v0.3.0` 工件進行：停掉 API 後跑 `update` 應完成重啟並通過生效面驗證；同一份工件再跑一次後 `jobfinder.prev` 仍為 `v0.2.0`。此修正在**新** binary 內，所以由 v0.3.0 的工件執行才有作用。
+- [ ] 產製歷程的 UI 修正（功能已驗證，只剩呈現層）：
+  1. 每次產製的「已達輪數上限」標籤拿掉——外層求職信卡片已經有同一個標籤，同一件事在同一畫面說兩次。
+  2. 收合箭頭的方向失效，展開與收合都是向上箭頭。成因未查（`.details-card summary::after` 的 45／225 度旋轉在巢狀的 `.attempt` 上未生效，或外層一直帶著 `open`），修正前先確認。
+  3. 逐輪只顯示審查意見，沒有顯示該輪 drafter 產出的信件原文，要補上。
 
-- [ ] 求職信產製歷程（`docs/changes/change-letter-history.md`）的實機驗證：職缺頁「產製歷程」展開後逐次逐輪的 draft 全文與審查意見、失敗產製留有紀錄、升級前的產製只顯示摘要、資料庫升到 schema v10。
-
-- [ ] 無條件重啟（`docs/changes/change-update-effect-surface.md` §2 D1）的實機驗證，`update` 與 `rollback` 各一次：停掉 API 後執行，服務應被啟動並通過生效面驗證。對應 `docs/verify.md` 的 D5A 與 D6A。
+- [ ] `fix/single-step-rollback`（PR #41，同版回滾拒絕執行）待合併並發 `v0.3.2`：該修正已於分支建置實測通過，但尚未進 release 工件。
 
 - [ ] 生效面驗證失敗時附上服務輸出（`docs/changes/change-update-effect-surface.md` §2 D3）的實機驗證：以 `v0.2.0` 工件對 schema 10 的資料庫跑 `update`，錯誤訊息應在「服務不是 active」之後附上 `database schema version 10 is newer than supported version 9`。此情境不能用連續兩次 `rollback` 製造——回滾只退一版。
-
-- [ ] 同版回滾拒絕執行（同文件 §2 D4）的實機驗證：回滾後再跑一次 `rollback`，應被拒絕且 `.bad` 不被覆蓋。
-
-- [ ] 兩台機器升級到最新 release：後端與 extension 同版一起換。Windows 仍在 v0.3.0 之前的版本，升級跨 schema 9→10，升級前必須備份 SQLite——該 migration 移除了 `letters` 的四個欄位，回滾必須連同資料庫一起還原。這台 Linux 目前因連續兩次回滾停在 `v0.3.0`，需以最新工件跑 `update` 回到最新版。
 
 **Roadmap（暫不實作，規劃見 `docs/roadmap.md`）**
 
