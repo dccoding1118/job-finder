@@ -24,12 +24,7 @@
 
   `v0.1.0` 至 `v0.3.1` 已於 private 階段發出（工件與 checksum 齊備、版號注入正常），轉 public 後不需重打。
 
-- [ ] 產製歷程的 UI 修正（功能已驗證，只剩呈現層）：
-  1. 每次產製的「已達輪數上限」標籤拿掉——外層求職信卡片已經有同一個標籤，同一件事在同一畫面說兩次。
-  2. 收合箭頭的方向失效，展開與收合都是向上箭頭。成因未查（`.details-card summary::after` 的 45／225 度旋轉在巢狀的 `.attempt` 上未生效，或外層一直帶著 `open`），修正前先確認。
-  3. 逐輪只顯示審查意見，沒有顯示該輪 drafter 產出的信件原文，要補上。
-
-- [ ] `fix/single-step-rollback`（PR #41，同版回滾拒絕執行）待合併並發 `v0.3.2`：該修正已於分支建置實測通過，但尚未進 release 工件。
+- [ ] 發 `v0.3.2`：同版回滾拒絕執行的修正已進 main，但尚未進 release 工件。
 
 - [ ] 生效面驗證失敗時附上服務輸出（`docs/changes/change-update-effect-surface.md` §2 D3）的實機驗證：以 `v0.2.0` 工件對 schema 10 的資料庫跑 `update`，錯誤訊息應在「服務不是 active」之後附上 `database schema version 10 is newer than supported version 9`。此情境不能用連續兩次 `rollback` 製造——回滾只退一版。
 

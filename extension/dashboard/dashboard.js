@@ -266,7 +266,10 @@
       </section>`;
   }
 
-  const ATTEMPT_STATUS = { approved: "已過審", finalized: "已達輪數上限", failed: "未產出信件", running: "產生中" };
+  // A finalized generation carries no chip of its own: the letter card above the
+  // history already says the letter is the last round's version, and repeating it
+  // on every entry says the same thing twice on one screen.
+  const ATTEMPT_STATUS = { approved: "已過審", failed: "未產出信件", running: "產生中" };
   const CALL_ROLE = { drafter: "起草", reviewer: "審查" };
 
   // letterHistoryBlock is the only place a past round is readable. It stays shut
@@ -289,7 +292,7 @@
   }
 
   function attemptEntry(attempt) {
-    const status = ATTEMPT_STATUS[attempt.status] || attempt.status;
+    const status = attempt.status === "finalized" ? "" : ATTEMPT_STATUS[attempt.status] || attempt.status;
     const when = attempt.started_at ? new Date(attempt.started_at).toLocaleString("zh-TW", { hour12: false }) : "";
     const runners = [attempt.runner_draft && `起草 ${attempt.runner_draft}`, attempt.runner_review && `審查 ${attempt.runner_review}`].filter(Boolean).join("・");
     const failure = attempt.error ? `<p class="letter-copy is-negative">${escapeHTML(attempt.error)}</p>` : "";
@@ -297,9 +300,34 @@
     // Calls are absent for a generation that predates this record, so the entry
     // falls back to the summary it does have rather than showing an empty shell.
     const rounds = attempt.calls?.length
-      ? attempt.calls.map((call) => `<div class="attempt-call"><div class="attempt-call-heading"><span class="attempt-round">第 ${call.round || "?"} 輪</span><span>${escapeHTML(CALL_ROLE[call.role] || call.role)}</span><span>${escapeHTML(call.runner)}${call.model ? `・${escapeHTML(call.model)}` : ""}</span>${call.ok ? "" : '<span class="attempt-failed">呼叫未通過</span>'}</div><pre class="attempt-output">${escapeHTML(call.output)}</pre></div>`).join("")
+      ? attempt.calls.map((call) => `<div class="attempt-call"><div class="attempt-call-heading"><span class="attempt-round">第 ${call.round || "?"} 輪</span><span>${escapeHTML(CALL_ROLE[call.role] || call.role)}</span><span>${escapeHTML(call.runner)}${call.model ? `・${escapeHTML(call.model)}` : ""}</span>${call.ok ? "" : '<span class="attempt-failed">呼叫未通過</span>'}</div><pre class="attempt-output">${escapeHTML(callText(call))}</pre></div>`).join("")
       : '<p class="letter-copy">這次產製早於逐輪紀錄，只留下上面的審查摘要。</p>';
-    return `<details class="attempt"><summary><span class="attempt-status is-${escapeHTML(attempt.status)}">${escapeHTML(status)}</span><span>${escapeHTML(when)}</span><span>${attempt.rounds} 輪</span><span>${escapeHTML(runners)}</span></summary><div class="attempt-body">${failure}${log}${rounds}</div></details>`;
+    // The letter this generation produced is the thing the rounds were arguing
+    // about, so it is read here next to them rather than only in the card above,
+    // which holds the current letter and not the one an older generation wrote.
+    const letter = attempt.content
+      ? `<div class="attempt-call"><div class="attempt-call-heading"><span>這次產出的信件</span></div><pre class="attempt-output">${escapeHTML(attempt.content)}</pre></div>`
+      : "";
+    const chip = status ? `<span class="attempt-status is-${escapeHTML(attempt.status)}">${escapeHTML(status)}</span>` : "";
+    return `<details class="attempt"><summary>${chip}<span>${escapeHTML(when)}</span><span>${attempt.rounds} 輪</span><span>${escapeHTML(runners)}</span></summary><div class="attempt-body">${failure}${log}${rounds}${letter}</div></details>`;
+  }
+
+  // A drafter call answers with the letter wrapped in the contract's JSON, which
+  // reads as an escaped one-line blob. The letter itself is what the round is
+  // about, so it is unwrapped. A runner may wrap that JSON in prose or a code
+  // fence, so the object is taken from the first brace to the last; whatever
+  // fails to parse is shown exactly as the runner sent it.
+  function callText(call) {
+    if (call.role !== "drafter") return call.output;
+    const start = call.output.indexOf("{");
+    const end = call.output.lastIndexOf("}");
+    if (start < 0 || end <= start) return call.output;
+    try {
+      const parsed = JSON.parse(call.output.slice(start, end + 1));
+      return typeof parsed?.letter === "string" && parsed.letter.trim() ? parsed.letter : call.output;
+    } catch {
+      return call.output;
+    }
   }
 
   // The review log is written for the audit trail, so its prefixes are read back

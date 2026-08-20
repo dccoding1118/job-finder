@@ -711,7 +711,7 @@ svg {
   overflow: hidden;
 }
 
-.details-card summary {
+.details-card > summary {
   position: relative;
   padding: 14px 42px 14px 15px;
   cursor: pointer;
@@ -720,11 +720,11 @@ svg {
   list-style: none;
 }
 
-.details-card summary::-webkit-details-marker {
+.details-card > summary::-webkit-details-marker {
   display: none;
 }
 
-.details-card summary::after {
+.details-card > summary::after {
   position: absolute;
   top: 50%;
   right: 17px;
@@ -737,7 +737,7 @@ svg {
   transition: transform 0.18s ease;
 }
 
-.details-card[open] summary::after {
+.details-card[open] > summary::after {
   transform: translateY(-30%) rotate(225deg);
 }
 
@@ -816,20 +816,38 @@ svg {
   background: #fafbf9;
 }
 
-.attempt summary {
+.attempt > summary {
+  position: relative;
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
   align-items: center;
-  padding: 10px 12px;
+  padding: 10px 32px 10px 12px;
   cursor: pointer;
   color: #566074;
   font-size: 12px;
   list-style: none;
 }
 
-.attempt summary::-webkit-details-marker {
+.attempt > summary::-webkit-details-marker {
   display: none;
+}
+
+.attempt > summary::after {
+  position: absolute;
+  top: 50%;
+  right: 13px;
+  width: 6px;
+  height: 6px;
+  border-right: 2px solid var(--ink-muted);
+  border-bottom: 2px solid var(--ink-muted);
+  content: "";
+  transform: translateY(-65%) rotate(45deg);
+  transition: transform 0.18s ease;
+}
+
+.attempt[open] > summary::after {
+  transform: translateY(-30%) rotate(225deg);
 }
 
 .attempt-status {
@@ -840,8 +858,7 @@ svg {
   font-weight: 720;
 }
 
-.attempt-status.is-approved,
-.attempt-status.is-finalized {
+.attempt-status.is-approved {
   background: var(--positive-soft);
   color: var(--positive);
 }
@@ -1597,7 +1614,8 @@ svg {
   border-color: #273143;
 }
 
-:root[data-theme="dark"] .details-card summary::after {
+:root[data-theme="dark"] .details-card > summary::after,
+:root[data-theme="dark"] .attempt > summary::after {
   border-color: var(--ink-muted);
 }
 
