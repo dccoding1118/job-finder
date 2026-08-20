@@ -17,7 +17,7 @@
 
 | # | 決策 |
 |---|---|
-| D1 | Linux 的重啟改用 `systemctl --user restart`：無條件重啟，停止中的服務會被啟動。 |
+| D1 | Linux 的重啟改用 `systemctl --user restart`：無條件重啟，停止中的服務會被啟動。`update` 與 `rollback` 共用這條路徑，兩者同時修好。 |
 | D2 | `placeBinary` 於來源與目標的 SHA256 相同時保留既有的 `.prev`，只替換 binary 本身並回報一行。 |
 | D3 | 生效面驗證失敗時附上服務自己的輸出：Linux 取 journal，Windows 取 `log.file`，取不到則附工作的 `LastTaskResult`。 |
 | D4 | 來源與現行為同一份建置時 `rollback` 拒絕執行，不動任何檔案。 |
@@ -41,7 +41,7 @@ D2 以內容摘要判斷而非檔案識別：來源與目標本來就是不同�
 |---|---|---|
 | `docs/deploy.md` | §4 | `update` 的 `.prev` 保留條件；重啟一律無條件的理由；驗證失敗附服務輸出；跨 schema 版本回滾須先還原資料庫 |
 | `docs/guides/getting-started.md` | §10.1 | 跨 schema 版本的更新前備份與回滾順序；回滾只退一個版本 |
-| `docs/verify.md` | §6.1 | D6A：連續第二次回滾被拒絕 |
+| `docs/verify.md` | §6.1 | D6A：服務停止時的回滾；D6B：連續第二次回滾被拒絕 |
 | `docs/verify.md` | §6.1 | D5A：服務停止時的更新與同版重跑後的 `.prev` |
 
 ## 5. 待實作進度

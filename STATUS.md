@@ -39,6 +39,8 @@
 
 - [ ] 求職信產製歷程（`docs/changes/change-letter-history.md`）的實機驗證：職缺頁「產製歷程」展開後逐次逐輪的 draft 全文與審查意見、失敗產製留有紀錄、升級前的產製只顯示摘要、資料庫升到 schema v10。
 
+- [ ] 無條件重啟（`docs/changes/change-update-effect-surface.md` §2 D1）的實機驗證，`update` 與 `rollback` 各一次：停掉 API 後執行，服務應被啟動並通過生效面驗證。對應 `docs/verify.md` 的 D5A 與 D6A。
+
 - [ ] 生效面驗證失敗時附上服務輸出（`docs/changes/change-update-effect-surface.md` §2 D3）的實機驗證：以 `v0.2.0` 工件對 schema 10 的資料庫跑 `update`，錯誤訊息應在「服務不是 active」之後附上 `database schema version 10 is newer than supported version 9`。此情境不能用連續兩次 `rollback` 製造——回滾只退一版。
 
 - [ ] 同版回滾拒絕執行（同文件 §2 D4）的實機驗證：回滾後再跑一次 `rollback`，應被拒絕且 `.bad` 不被覆蓋。
