@@ -203,6 +203,23 @@ func (taskScheduler) taskState(ctx context.Context, name string) (string, error)
 	))
 }
 
+// diagnose falls back to the configured log file: Task Scheduler discards a
+// task's stdout and stderr, so the log is the only Windows record of a service
+// that started and exited. A failure that happens before logging is attached
+// leaves nothing but the task's exit code, which is reported instead.
+func (t taskScheduler) diagnose(ctx context.Context, layout paths.Layout) string {
+	if tail := tailFile(layout.LogFile, 12); tail != "" {
+		return indentLines(tail)
+	}
+	result, err := powershell(ctx, fmt.Sprintf(
+		"(Get-ScheduledTaskInfo -TaskPath '%s' -TaskName '%s').LastTaskResult", taskFolder, apiTask,
+	))
+	if err != nil || strings.TrimSpace(result) == "" {
+		return ""
+	}
+	return indentLines("LastTaskResult=" + strings.TrimSpace(result))
+}
+
 func (t taskScheduler) assertEffective(ctx context.Context, layout paths.Layout, marker time.Time, out io.Writer) error {
 	state, err := t.taskState(ctx, apiTask)
 	if err != nil {

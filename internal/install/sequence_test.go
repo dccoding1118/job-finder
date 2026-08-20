@@ -2,6 +2,7 @@ package install
 
 import (
 	"context"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -20,6 +21,10 @@ import (
 // restart, would each pass their own check and still leave a broken install.
 type recordingScheduler struct {
 	calls []string
+	// assertErr and diagnosis stand in for a service that comes up broken: the
+	// verification fails and the platform has the service's own reason for it.
+	assertErr error
+	diagnosis string
 }
 
 func (r *recordingScheduler) note(call string) error {
@@ -48,7 +53,12 @@ func (r *recordingScheduler) restart(_ context.Context, _ paths.Layout, _ io.Wri
 }
 
 func (r *recordingScheduler) assertEffective(_ context.Context, _ paths.Layout, _ time.Time, _ io.Writer) error {
-	return r.note("assert")
+	_ = r.note("assert")
+	return r.assertErr
+}
+
+func (r *recordingScheduler) diagnose(_ context.Context, _ paths.Layout) string {
+	return r.diagnosis
 }
 
 // sandbox points the layout at a temporary home so the sequence tests never
@@ -263,5 +273,26 @@ func TestInstallStopsOnAProfileThatFailsTheLintGate(t *testing.T) {
 	}
 	if _, statErr := os.Stat(layout.Binary); statErr == nil {
 		t.Fatal("the binary was placed despite the profile gate failing")
+	}
+}
+
+// A service that comes up and dies reports why to its own output; the
+// verification result alone says only that it is not active, which sends the
+// operator hunting for a log that already holds the answer.
+func TestVerifyEffectCarriesTheServiceReasonIntoTheError(t *testing.T) {
+	layout := sandbox(t)
+	sched := &recordingScheduler{
+		assertErr: errors.New("install: jobfinder-api.service is failed, want active"),
+		diagnosis: "  database schema version 10 is newer than supported version 9",
+	}
+	err := verifyEffect(context.Background(), sched, layout, time.Now(), Options{Out: io.Discard})
+	if err == nil {
+		t.Fatal("a failed verification reported success")
+	}
+	if !strings.Contains(err.Error(), "want active") {
+		t.Fatalf("error = %q, want the verification failure kept", err)
+	}
+	if !strings.Contains(err.Error(), "schema version 10 is newer") {
+		t.Fatalf("error = %q, want the service's own reason attached", err)
 	}
 }
