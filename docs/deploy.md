@@ -89,6 +89,8 @@ Agent 稽核資料保留在 SQLite 的 `agent_calls`。
 
 驗證失敗時附上服務自己的輸出（Linux 取 journal，Windows 取 `log.file`，取不到則附工作的 `LastTaskResult`）。「服務不是 active」只說得出症狀，而原因通常是服務啟動時已經印出來的一行——最典型的是回滾到跨 schema 版本的舊 binary，它拒絕開啟已升級的資料庫。
 
+**`rollback` 只退一個版本**：rollback 目錄保留的前一版恰好一份，回滾不會把它往前推。因此連續執行兩次 rollback 不會退到再前一版——第二次的來源與現行是同一份建置，一律拒絕執行，否則它會把保留前滾可能的 `.bad` 覆蓋成同一版，銷毀第一次剛撤下來的那一版。要退超過一版只能取得該版工件跑 `update`。
+
 **`rollback` 不動資料庫，因此跨 schema 版本的回滾必須先還原升級前的資料庫備份**，否則舊 binary 會因 `database schema version N is newer than supported version M` 而拒絕啟動。`update` 不代為備份。
 
 | 驗證 | Linux | Windows |
