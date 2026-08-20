@@ -17,11 +17,9 @@
   | Linux | D1／D2／D3／D5／D6（release v0.1.0 工件實測）、D4（`runbook-extension.md` §8 的 tunnel 形態，Windows Chrome 經 IAP 通道連本機 API） | 無 |
   | Windows | D1／D2／D3／D4／D7／D8（release v0.1.1 工件實測，含 extension v0.1.1 實裝與重裝） | D5／D6／D9 |
 
-  Windows D5／D6 需要前後兩個都含 `jobfinderw.exe` 的版本。`v0.1.1` 與 `v0.2.0` 的工件皆含該執行檔，前置條件已成立，可排入實測。D5／D6／D9 由使用者決定延後到有對應情境時再驗。
+  Windows D5／D6 需要前後兩個都含 `jobfinderw.exe` 的版本。`v0.1.1` 之後的工件皆含該執行檔，前置條件已成立，可排入實測。D5／D6／D9 由使用者決定延後到有對應情境時再驗。
 
   bootstrap 腳本路徑仍待驗（見 §1，須待轉 public）。
-
-- [ ] 這台 Linux 機器目前跑的是 dev 建置（`mise run deploy-update`），不是 release。以 `v0.2.0` 的 release 工件重裝，才回到「跑的是正式版」的狀態。
 
 - [ ] 可觀測性改動（`v0.2.0`）的實機驗證：抓取進行中的「進行中」區塊與已耗時、批次歷程的中文用語與執行狀態、Agent 呼叫進行中的顯示、閒置時不發請求、資料庫升級到 schema v9。驗收步驟見 PR #36 的「驗收方式」。升級後本次改動之前的未收尾批次會顯示為「已中斷」，屬預期行為。
 
@@ -35,11 +33,13 @@
   5. 全綠合併 → 設 main 分支保護（required status checks 填 `check`、`windows`、`analyze`；solo dev 不設 required reviews，會卡死自己）。
   6. 轉 public 後補驗 bootstrap 腳本：`install.sh` 與 `install.ps1` 的匿名下載路徑，以及 `getting-started.md` §3.1 的 `raw.githubusercontent.com` 單行安裝（見 §1）。
 
-  `v0.1.0`、`v0.1.1` 與 `v0.2.0` 已於 private 階段發出（工件與 checksum 齊備、版號注入正常），轉 public 後不需重打。
+  `v0.1.0` 至 `v0.3.0` 已於 private 階段發出（工件與 checksum 齊備、版號注入正常），轉 public 後不需重打。
 
-- [ ] `update` 修正（`docs/changes/change-update-effect-surface.md`）的實機驗證：停掉 API 後跑 `update` 應完成重啟並通過生效面驗證；同一份工件再跑一次後 `jobfinder.prev` 仍為前一版。本機的 `.prev` 目前是 v0.2.0（已被覆蓋），要驗回滾需先下載 v0.1.1 工件重裝一次。
+- [ ] `update` 修正（`docs/changes/change-update-effect-surface.md`）的實機驗證，以 `v0.3.0` 工件進行：停掉 API 後跑 `update` 應完成重啟並通過生效面驗證；同一份工件再跑一次後 `jobfinder.prev` 仍為 `v0.2.0`。此修正在**新** binary 內，所以由 v0.3.0 的工件執行才有作用。
 
 - [ ] 求職信產製歷程（`docs/changes/change-letter-history.md`）的實機驗證：職缺頁「產製歷程」展開後逐次逐輪的 draft 全文與審查意見、失敗產製留有紀錄、升級前的產製只顯示摘要、資料庫升到 schema v10。
+
+- [ ] 兩台機器升級到 `v0.3.0`：後端與 extension 同版一起換。升級前備份 SQLite——schema 9→10 移除了 `letters` 的四個欄位，回滾到 v0.2.0 必須連同資料庫一起還原。
 
 **Roadmap（暫不實作，規劃見 `docs/roadmap.md`）**
 
