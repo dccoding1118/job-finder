@@ -414,7 +414,9 @@ Start-ScheduledTask -TaskPath '\jobfinder\' -TaskName 'api'
 
 ### 10.1 後端
 
-下載新版工件、驗 checksum、解壓（同 §3.1 或 §4.1）。**跨 schema 版本的更新之前先備份資料庫**（見下方回滾段落），然後：
+逐步指令（下載、驗 checksum、解壓、換版、驗收）見 [換版部署 runbook](runbook-upgrade.md)；本節說明這些動作的語意與規則。
+
+**跨 schema 版本的更新之前先備份資料庫**（見下方回滾段落）。換版本身是一個子命令：
 
 ```bash
 ./jobfinder update       # Linux
@@ -442,12 +444,7 @@ jobfinder version    # 應為前一版
 
 ### 10.2 extension
 
-後端換版時 extension 一起換，兩者同版是使用前提（見 §5.1）。
-
-1. 依 §5.1 把新版工件解壓到新的版本目錄
-2. `chrome://extensions` 移除舊的 jobfinder 卡片
-3. 「載入未封裝項目」→ 選新的版本目錄
-4. 依 §5.4 重填 Options
+後端換版時 extension 一起換，兩者同版是使用前提（見 §5.1）。逐步指令見 [換版部署 runbook](runbook-upgrade.md) §4：解壓到新的版本目錄、移除舊卡片、載入新目錄、重填 Options。
 
 移除 extension 會清掉它的 `chrome.storage.local`，endpoint 與 token 必須重填。ID 由固定 `key` 決定，換版不變，所以 `api.extension_origin` 不必動。舊的版本目錄確認新版正常後才刪。
 
