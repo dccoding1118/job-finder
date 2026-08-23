@@ -118,8 +118,8 @@ Profile 輸入一律來自 provider snapshot，且**各角色只取自己該看�
 |---|---|---|
 | Filter | `qualifications`（學歷、技能、證照、語言）＋`experiences[]` 的 `industry` key 清單＋Job（title/company/JD/薪資/地點/remote） | 先把 JD 拆成逐條條件並標記必備／加分與選言分組；再逐條比對 Profile 給 `pass`／`fail`／`unknown`；**判不出來一律 `unknown`，不得猜測為 `fail`**；學歷須同一筆同時滿足級別與科系；年資與產業年資只回要求數值與對應的 `industry` key，不自行比較；不給分數 |
 | Scorer | `intents`＋`qualifications` 的 `skills`／`certifications`／`languages`＋`requirements.remote`／`locations`＋篩選關保存的加分條件＋Job（title/company/JD/薪資/地點/remote/福利與工時敘述） | 四維以門檻分為基準加減；`content_fit` 對照 `content_likes`／`content_dislikes`；`benefit_fit` 對照 `salary_target` 與優於勞基法的休假、彈性工時、額外獎金，遠端形式的加分級距見 [design-pipeline](design-pipeline.md) §3.3；`bonus_fit` **只加不減**；`industry_fit` 對照 `industry_interests`；無資訊可判時回基準分；理由 40~60 字（字數規則見 §3.2）。**輸入不含 `experiences` 的 `role`／`org_type`／`achievements` 與 `honesty_bounds`** |
-| Drafter | `experiences`＋`qualifications`＋`honesty_bounds`＋Job＋（重寫輪）歷輪草稿與其對應意見 | 只可使用 Profile 存在的技能與成就；引用量化數據；遵守 `honesty_bounds`；精煉（300–450 字）；佔位符落款；繁體中文（JD 為英文則英文） |
-| Reviewer | 同 Drafter 的子集＋Job＋草稿 | 毒舌審查：任何 Profile 無根據的技能/經歷/數字＝幻覺必挑；空泛形容詞（「熱情」「抗壓」等無實據修飾）要求刪除；可直接給 `edited_letter`；`issues` 為字串陣列，每則一句具體問題；落款的 `[你的姓名]` 與 `[你的聯絡方式]` 是刻意保留的成品形態，要求填入真實個資屬錯誤意見 |
+| Drafter | `experiences`＋`qualifications`＋`honesty_bounds`＋Job＋（重寫輪）歷輪草稿與其對應意見 | 只可使用 Profile 存在的技能與成就；引用量化數據；遵守 `honesty_bounds`；精煉（300–450 字）；佔位符落款；繁體中文（JD 為英文則英文）；**不得出現承諾性敘述**——不保證未來的作為或成果（面試時說明什麼、到職後完成哪個專案或系統、將取得或更新哪張證照），資格與能力以既成事實與現況陳述，投入意願最多寫到以既有經驗參與 |
+| Reviewer | 同 Drafter 的子集＋Job＋草稿 | 毒舌審查：任何 Profile 無根據的技能/經歷/數字＝幻覺必挑；空泛形容詞（「熱情」「抗壓」等無實據修飾）要求刪除；承諾性敘述必挑，要求改為既成事實與現況的陳述；可直接給 `edited_letter`；`issues` 為字串陣列，每則一句具體問題；落款的 `[你的姓名]` 與 `[你的聯絡方式]` 是刻意保留的成品形態，要求填入真實個資屬錯誤意見 |
 | Calibrator | Profile 的 `search`／`requirements`／`intents`＋成功樣本（JD、職稱、產業、地區、薪資、四維分數）＋對照樣本 | 只比較兩組樣本的共同與差異特徵，依 [design-profile](design-profile.md) §7.2 的維度作答；只得建議 `search`／`requirements`／`intents` 欄位；證據不足時回空 `suggestions`，不得臆測；不得輸出任何履歷事實的修改建議 |
 
 Scorer 的輸入排除履歷敘事：成就敘事會被讀成「擅長 ⇒ 適配高」，使「做過但不想再做」的內容只加不減，適配判斷因此失真。

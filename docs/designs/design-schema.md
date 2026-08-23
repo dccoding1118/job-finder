@@ -214,11 +214,12 @@
 | `letter_requested` | `letter_ready` | Reviewer 過審，或跑滿輪數產出最終版 |
 | `letter_requested` | `letter_failed` | Agent 呼叫失敗，或最終版未通過 guard；不寫入 Letter，原因見 `agent_calls` |
 | `letter_failed` | `letter_requested` | 使用者再次要求生成（Side Panel／CLI） |
+| `letter_ready` | `letter_requested` | 使用者要求重新產製（Side Panel／CLI）；既有 Letter 與其產製紀錄保留為歷史 |
 | 任一非終態 | `new` | JD 內容雜湊變更（重新走流程；既有 scores/letters 保留為歷史） |
 | 任一狀態 | `merged` | 該筆被判定為其他 Job 的重複刊登，成為 alias（§4.2）；事件 note 記錄合併前狀態與 canonical job id |
 | `merged` | 合併前狀態 | 使用者取消合併，依合併事件還原 |
 
-終態：`filtered_out`、`letter_ready`（處理軸而言）、`merged`（僅由使用者取消合併離開）。`filtered_out` 對來源內容變更是終局的——列表摘要與 JD 全文用的是同一組硬規則，摘要階段的 `fail` 是「已陳述事實不符」的結論，補到全文並不推翻它，因此補全文只更新內容不重開判定，也不再付一次 Filter Agent；推翻它是使用者的權利，經單筆重新處理行使。`discovered` 是**停留狀態**：不被任何階段取件，只由使用者點開原始頁面補全文後離開。`merged` 的 Job 不被任何階段取件、不導出 verdict、不出現在任何清單，因此不產生 LLM 費用。`scored` 只由使用者明確要求的單筆重新處理離開。`shortlisted` 與 `letter_failed` 是**停留狀態**——系統不會自行推進，只有使用者要求才轉入 `letter_requested`（PRD R5.0）。`letter_requested` 是 letter 階段的唯一取件狀態。
+終態：`filtered_out`、`merged`（僅由使用者取消合併離開）。`filtered_out` 對來源內容變更是終局的——列表摘要與 JD 全文用的是同一組硬規則，摘要階段的 `fail` 是「已陳述事實不符」的結論，補到全文並不推翻它，因此補全文只更新內容不重開判定，也不再付一次 Filter Agent；推翻它是使用者的權利，經單筆重新處理行使。`discovered` 是**停留狀態**：不被任何階段取件，只由使用者點開原始頁面補全文後離開。`merged` 的 Job 不被任何階段取件、不導出 verdict、不出現在任何清單，因此不產生 LLM 費用。`scored` 只由使用者明確要求的單筆重新處理離開。`shortlisted`、`letter_failed` 與 `letter_ready` 是**停留狀態**——系統不會自行推進，只有使用者要求才轉入 `letter_requested`（PRD R5.0）。已有 Letter 者重新產製寫入新的一列 Letter 與新的一次產製，舊的都留著。`letter_requested` 是 letter 階段的唯一取件狀態。
 
 ### 3.2 Profile activation 專用轉換
 

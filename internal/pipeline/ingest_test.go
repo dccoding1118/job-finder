@@ -198,6 +198,31 @@ func TestRequestLetterIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestRequestLetterRerunsAReadyLetter(t *testing.T) {
+	p, db := openPipeline(t, filterFor(profile.Requirements{Remote: "acceptable"}))
+	ctx := context.Background()
+	row := crawler.RawJob{Source: "104", ExternalID: "again", URL: "https://www.104.com.tw/job/again", Title: "Engineer", CompanyName: "Example", CompanyInfo: "software", Description: "Go platform work", Location: "Taipei", RemoteType: "hybrid"}
+	result, err := p.IngestJob(ctx, row)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = p.FilterJobsWithStats(ctx, 0); err != nil {
+		t.Fatal(err)
+	}
+	for _, state := range []string{"shortlisted", "letter_requested", "letter_ready"} {
+		if err = db.TransitionProcess(ctx, result.JobID, state); err != nil {
+			t.Fatalf("transition to %s: %v", state, err)
+		}
+	}
+	if err = p.RequestLetter(ctx, result.JobID); err != nil {
+		t.Fatalf("a ready letter could not be requested again: %v", err)
+	}
+	detail, _, err := db.GetJobDetail(ctx, result.JobID)
+	if err != nil || detail.Job.ProcessState != "letter_requested" {
+		t.Fatalf("job state = %q, %v", detail.Job.ProcessState, err)
+	}
+}
+
 func TestScoreBudgetStopsAtDailyLimit(t *testing.T) {
 	p, db := openPipeline(t, filterFor(profile.Requirements{Remote: "acceptable"}))
 	day := time.Date(2026, 7, 14, 9, 0, 0, 0, taipei)

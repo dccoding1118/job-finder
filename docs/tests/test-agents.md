@@ -57,6 +57,7 @@
 
 | 編號 | 測試情境 | 預期結果 |
 |---|---|---|
+| AT-19A | 以合成 Profile 與 Job 產生 Drafter 與 Reviewer prompt | Drafter prompt 含承諾性敘述的禁令與其例示（面試時說明什麼、到職後完成哪個專案、將取得或更新哪張證照）與「以既成事實與現況陳述」的要求；Reviewer prompt 要求把承諾性敘述列為必挑項 |
 | AT-20 | Drafter 回傳含兩個指定落款佔位符的合法 `letter` | 解析成功；信件文字可送入防線與 Reviewer |
 | AT-21 | Drafter 缺少 `letter`、`letter` 非字串或回傳無法解析 JSON | 拒絕輸出，依呼叫策略重試或 fallback |
 | AT-22 | Reviewer 回傳 `approve`，未提供 `edited_letter` | 採用原草稿為最終稿 |

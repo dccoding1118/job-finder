@@ -891,6 +891,10 @@ func validProcessTransition(from, to string) bool {
 		"shortlisted":      {"letter_requested": true, "queued": true},
 		"letter_requested": {"letter_ready": true, "letter_failed": true},
 		"letter_failed":    {"letter_requested": true},
+		// A letter that exists can be asked for again. The reviewer's verdict is
+		// not the user's, and the letter the run produced may simply be the wrong
+		// pitch; the earlier letters and their generations are kept either way.
+		"letter_ready": {"letter_requested": true},
 	}[from][to]
 }
 

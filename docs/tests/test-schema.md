@@ -51,7 +51,7 @@
 
 | 編號 | 測試情境 | 預期結果 |
 |---|---|---|
-| ST-20 | 依設計表執行各合法轉換 | `discovered→filtered_out/new`、`new→filtered_out/queued/discovered`、`queued→scored/shortlisted`、`shortlisted→letter_requested`、`letter_requested→letter_ready/letter_failed`、`letter_failed→letter_requested` 成功 |
+| ST-20 | 依設計表執行各合法轉換 | `discovered→filtered_out/new`、`new→filtered_out/queued/discovered`、`queued→scored/shortlisted`、`shortlisted→letter_requested`、`letter_requested→letter_ready/letter_failed`、`letter_failed→letter_requested`、`letter_ready→letter_requested` 成功 |
 | ST-25 | 嘗試 `shortlisted→letter_ready`／`letter_failed`，即跳過使用者要求直接生成 | 回傳非法轉換錯誤；`letter_requested` 是進入 letter 終態的唯一前置狀態 |
 | ST-21 | 有全文的任一非終態 Job 因內容雜湊變更而轉為 `new` | 狀態重置成功，並寫入一筆 process event |
 | ST-22 | 嘗試跳過流程、回退或自終態轉換 | 回傳非法轉換錯誤；Job 狀態與事件數均不變 |

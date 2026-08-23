@@ -1,6 +1,6 @@
 # STATUS — job-finder（MVP 開發）
 
-> 最後更新：2026-08-20。規劃文件見 `docs/PRD.md`、`docs/design.md`、`docs/roadmap.md`、`docs/deploy.md`、`docs/designs/`。
+> 最後更新：2026-08-23。規劃文件見 `docs/PRD.md`、`docs/design.md`、`docs/roadmap.md`、`docs/deploy.md`、`docs/designs/`。
 
 ## §1 未歸檔結論
 
@@ -22,9 +22,9 @@
   5. 全綠合併 → 設 main 分支保護（required status checks 填 `check`、`windows`、`analyze`；solo dev 不設 required reviews，會卡死自己）。
   6. 轉 public 後補驗 bootstrap 腳本：`install.sh` 與 `install.ps1` 的匿名下載路徑，以及 `getting-started.md` §3.1 的 `raw.githubusercontent.com` 單行安裝（見 §1）。
 
-  `v0.1.0` 至 `v0.3.1` 已於 private 階段發出（工件與 checksum 齊備、版號注入正常），轉 public 後不需重打。
+  `v0.1.0` 至 `v0.3.2` 已於 private 階段發出（工件與 checksum 齊備、版號注入正常），轉 public 後不需重打。
 
-- [ ] 發 `v0.3.2`：同版回滾拒絕執行的修正已進 main，但尚未進 release 工件。
+- [ ] 發 `v0.3.3`：求職信重新產製、產製歷程的重新讀取與承諾性敘述禁令（`docs/changes/change-letter-regeneration.md`）已進 main，但尚未進 release 工件。後端與 extension 都有改動，兩者都要換版。
 
 - [ ] 生效面驗證失敗時附上服務輸出（`docs/changes/change-update-effect-surface.md` §2 D3）的實機驗證：以 `v0.2.0` 工件對 schema 10 的資料庫跑 `update`，錯誤訊息應在「服務不是 active」之後附上 `database schema version 10 is newer than supported version 9`。此情境不能用連續兩次 `rollback` 製造——回滾只退一版。
 
