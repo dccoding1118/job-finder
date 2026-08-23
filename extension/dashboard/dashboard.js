@@ -385,7 +385,7 @@
   function actionDock(job) {
     const source = `<a id="source" class="button is-secondary" href="${escapeHTML(job.url || "#")}" target="_blank" rel="noreferrer" aria-label="開啟原始職缺">${icon("external")}</a>`;
     if (state.connected === false) return `<div class="action-dock">${source}<button class="button is-primary" type="button" disabled>${icon("cloud")}等待重新連線</button></div>`;
-    if (job.letter_state === "ready" && (job.letter?.status === "approved" || job.letter?.status === "finalized")) return `<div class="action-dock">${source}<button id="copy" class="button is-primary" type="button">${icon("copy")}複製求職信</button></div>`;
+    if (job.letter_state === "ready" && (job.letter?.status === "approved" || job.letter?.status === "finalized")) return `<div class="action-dock">${source}<button id="request-letter" class="button is-secondary" type="button" ${state.busy.has("letter") ? "disabled" : ""} aria-label="重新產製這封求職信">${state.busy.has("letter") ? '<span class="spinner" aria-hidden="true"></span>' : icon("refresh")}重新產製</button><button id="copy" class="button is-primary" type="button">${icon("copy")}複製求職信</button></div>`;
     if (job.letter_state === "requested") return `<div class="action-dock">${source}<button id="request-letter" class="button is-primary" type="button" disabled><span class="spinner" aria-hidden="true"></span>求職信產生中</button></div>`;
     if (job.verdict === "recommended") return `<div class="action-dock">${source}${reprocessButton(job)}<button id="request-letter" class="button is-primary" type="button" ${state.busy.has("letter") ? "disabled" : ""}>${icon("spark")}${job.letter_state === "failed" ? "再次產生求職信" : "產生求職信"}</button></div>`;
     if (job.verdict === "pending_screen" || job.verdict === "pending_score") return `<div class="action-dock">${source}${processNowButton(job)}</div>`;
@@ -909,10 +909,12 @@
       return;
     }
     event.preventDefault();
+    // What was read a moment ago is not what the section is for: a generation
+    // requested since then, or one still running, only shows up on a fresh read.
+    // The cached copy is painted first so the section opens without a blank.
     const cached = history.jobID === jobID ? history.attempts : null;
     state.letterHistory = { jobID, attempts: cached, open: true };
     renderAll();
-    if (cached) return;
     const result = await api(`/api/v1/jobs/${jobID}/letter-history`);
     if (!result?.ok) {
       state.letterHistory = { jobID: null, attempts: null, open: false };
@@ -985,6 +987,9 @@
       return showToast(result?.error || "求職信要求失敗");
     }
     state.currentJob = result.data.job;
+    // The history now has a generation the cached copy does not know about, so
+    // the section starts closed and reads afresh when it is next opened.
+    state.letterHistory = { jobID: null, attempts: null, open: false };
     renderAll();
     showToast("已受理求職信生成要求");
   }

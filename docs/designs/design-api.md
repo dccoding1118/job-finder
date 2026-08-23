@@ -61,7 +61,7 @@ Job viewmodel 另回四組 revision：`current_filter_revision`／`current_score
 |---|---|---|---|
 | `GET /api/v1/jobs` | 選填 `process_state`、`verdict`、`apply_state`、`source`、`limit`、`cursor` | 分數降冪的 Job page（含 verdict 與 group），只含各群組的 canonical | 非法篩選或分頁回 400 |
 | `GET /api/v1/jobs/{id}` | Job ID | Job、verdict、現行 Score、核准 Letter、StatusEvent | ID 非法 400；不存在 404 |
-| `POST /api/v1/jobs/{id}/letter` | Job ID | `shortlisted` 或 `letter_failed` 經 store 轉為 `letter_requested`；回 `{ "status": "requested" }` 與更新後 Job | 非法來源狀態或不存在 4xx |
+| `POST /api/v1/jobs/{id}/letter` | Job ID | `shortlisted`、`letter_failed` 或 `letter_ready` 經 store 轉為 `letter_requested`；回 `{ "status": "requested" }` 與更新後 Job | 非法來源狀態或不存在 4xx |
 | `GET /api/v1/jobs/{id}/letter-history` | Job ID | `attempts`：該職缺的每一次求職信產製，新到舊 | ID 非法 400；讀取失敗 500 |
 | `POST /api/v1/jobs/{id}/reprocess` | Job ID | 經 store 回到管線起點（有 JD 全文者 `new`，只有摘要者 `discovered`）並採用 active revision；回 `{ "status": "<新 process_state>" }` 與更新後 Job | 有求職信歷史或 `merged` 409 `reprocess_not_allowed`；不存在 404；Profile 未 ready 409 |
 | `POST /api/v1/jobs/{id}/process` | Job ID | 受理後回 `202` `{ "status": "processing" }` 與當下 Job；該筆插隊完成篩選（通過者續評分） | 非 `new`／`queued` 409 `not_waiting`；本服務未帶常駐 worker 409 `worker_not_resident`；不存在 404；Profile 未 ready 409 |
@@ -88,7 +88,7 @@ Job viewmodel 另回四組 revision：`current_filter_revision`／`current_score
 
 `PUT` 必須先通過 ETag、strict schema 與 PII 驗證，再原子寫入並切換 active snapshot；不得修改既有 Job revision 或呼叫 activation。回應分別以 `filter_changed`／`score_changed` 表達兩個 revision 是否改變，兩者皆為偽即語意 no-op；只改 `search`、`achievements` 等不進 hash 的欄位時兩者皆為偽（ETag 仍會變）。`POST /api/v1/profile/reprocess` 取得當下 ready snapshot，經 pipeline 專用入口將可更新的 stale Job 切至該 revision，重跑範圍依變更的 revision 決定（見 [design-pipeline](design-pipeline.md) §4）；求職信狀態與投遞歷史受保護。Profile 未 ready 時，手動 run、reprocess 與 capture 等處理型 route 回 `409 profile_not_ready`；Profile API 與既有 Job／Run 讀取仍可用。
 
-`POST /api/v1/jobs/{id}/letter` 是使用者表達投遞意願的唯一 API 入口（PRD R5.0），對 `shortlisted` 與 `letter_failed` 皆適用——因此它同時取代了「重試求職信」這個獨立動作。handler 只呼叫 pipeline 的 `RequestLetter`，立即回應且不等待 Agent 完成；對已是 `letter_requested` 的 Job 重複呼叫為冪等（回 `requested`，不重複啟動工作）。
+`POST /api/v1/jobs/{id}/letter` 是使用者表達投遞意願的唯一 API 入口（PRD R5.0），對 `shortlisted`、`letter_failed` 與 `letter_ready` 皆適用——因此它同時承接了「重試求職信」與「重新產製」這兩個動作。已有 Letter 者重新產製不動既有 Letter：新的一次產製寫入新的一列，讀取面取最新一列，先前各版留在產製歷程。handler 只呼叫 pipeline 的 `RequestLetter`，立即回應且不等待 Agent 完成；對已是 `letter_requested` 的 Job 重複呼叫為冪等（回 `requested`，不重複啟動工作）。
 
 `GET /api/v1/jobs/{id}/letter-history` 是求職信產製過程的唯一讀取面。每次產製回 `status`、`rounds`、`review_log`、兩個角色的 runner、`error`、`started_at`／`finished_at`、成功者的信件內容，以及 `calls`——該次產製的每一筆 drafter 與 reviewer 呼叫，含 `round`、`role`、`runner`、`model`、`ok`、`duration_ms`、`output` 與 `created_at`。它回答最終信件回答不了的問題：每一版 draft 的原文、審查提了什麼、下一版有沒有改。
 

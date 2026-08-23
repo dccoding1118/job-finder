@@ -114,6 +114,24 @@ func TestPartialJobCompletesWithoutBeingOverwritten(t *testing.T) {
 	}
 }
 
+// A letter that exists can be asked for again: the reviewer's verdict is not the
+// user's, and the letter a run produced may simply be the wrong pitch.
+func TestReadyLetterCanBeRequestedAgain(t *testing.T) {
+	t.Parallel()
+	store := openTestStore(t, filepath.Join(t.TempDir(), "jobs.db"))
+	defer closeTestStore(t, store)
+	ctx := context.Background()
+	result, err := store.UpsertJob(ctx, fullJob("description"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, state := range []string{"queued", "shortlisted", "letter_requested", "letter_ready", "letter_requested", "letter_ready"} {
+		if err := store.TransitionProcess(ctx, result.Job.ID, state); err != nil {
+			t.Fatalf("transition to %s: %v", state, err)
+		}
+	}
+}
+
 func TestTransitionsWriteEventsAndRejectIllegalTransitions(t *testing.T) {
 	t.Parallel()
 	store := openTestStore(t, filepath.Join(t.TempDir(), "jobs.db"))

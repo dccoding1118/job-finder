@@ -73,7 +73,7 @@ letter 階段在第一次 Agent 呼叫之前經 store 開一列 `letter_attempts
 
 **letter 階段只處理使用者已要求的職缺**（PRD R5.0）：`shortlisted` 不是取件狀態，達閾值的推薦職缺停留在該狀態直到使用者要求。使用者的要求由 API（[design-api](design-api.md)）或 `jobfinder letter request --job ID` 經 store 轉為 `letter_requested`，worker 才取件。無待處理要求時，letter 階段自然是零筆、零 Agent 呼叫、零費用。
 
-`RequestLetter(jobID)`：pipeline 提供此入口供 API 呼叫——經 store 將 `shortlisted` 或 `letter_failed` 轉為 `letter_requested` 後即回。worker 自然取件，呼叫端不等待 Agent 完成。
+`RequestLetter(jobID)`：pipeline 提供此入口供 API 呼叫——經 store 將 `shortlisted`、`letter_failed` 或 `letter_ready` 轉為 `letter_requested` 後即回。worker 自然取件，呼叫端不等待 Agent 完成。
 
 
 `RequestReprocess(jobID)`：pipeline 提供此入口供 API 呼叫——取當下 active snapshot，經 store 把該筆送回管線起點（有 JD 全文者 `new`、只有摘要者 `discovered`）、寫入 active `filter_revision`、清除舊命中與舊篩選結果後即回，worker 隨後以最新 Profile 重新篩選，通過者再評分。scores 為 append-only，舊 score 保留為歷史，新 score 寫入後才成為現行分數。求職信階段與 `merged` 的職缺不得重新處理，因此它不改寫求職信、投遞歷史與合併裁決。它的成本至多是該筆的一次 Filter 與一次 Scorer 呼叫，與整批 activation 重新處理互不取代——後者依 revision 決定範圍，前者是使用者對單一判定的異議。

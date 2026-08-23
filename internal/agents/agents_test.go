@@ -128,6 +128,18 @@ func TestDraftPromptCarriesEveryPastRound(t *testing.T) {
 	}
 }
 
+func TestDraftAndReviewPromptsRuleOutCommitments(t *testing.T) {
+	draft := draftPrompt("profile", Job{Title: "Backend"}, nil)
+	for _, want := range []string{"承諾性敘述", "取得或更新哪張證照", "既成事實與現況"} {
+		if !strings.Contains(draft, want) {
+			t.Fatalf("draft prompt is missing %q", want)
+		}
+	}
+	if !strings.Contains(reviewPrompt("profile", Job{Title: "Backend"}, "draft"), "承諾性敘述必挑") {
+		t.Fatal("review prompt does not ask for commitments to be raised")
+	}
+}
+
 func TestReviewPromptStatesTheOutputContractAndPlaceholders(t *testing.T) {
 	prompt := reviewPrompt("profile", Job{Title: "Backend"}, "draft")
 	for _, want := range []string{"字串陣列", "[你的姓名]", "不得為物件"} {

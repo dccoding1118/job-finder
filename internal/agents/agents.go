@@ -560,6 +560,8 @@ func Guard(letter string, p profile.Profile, description string, denylist []stri
 func draftPrompt(profileText string, j Job, history []LetterRound) string {
 	return "你是求職信起草器。僅輸出單一 JSON 物件。只可使用 Profile 中的事實，遵守 honesty_bounds，300-450字，結尾必含 [你的姓名] 與 [你的聯絡方式]。\n" +
 		"[你的姓名] 與 [你的聯絡方式] 是刻意保留的落款佔位符，原樣輸出，不得替換為任何真實姓名或聯絡方式，也不得出現其他 [ ] 佔位符。\n" +
+		"不得出現承諾性敘述：不向對方保證未來的作為或成果——不寫將於面試說明什麼、到職後完成哪個專案或系統、將取得或更新哪張證照。\n" +
+		"資格與能力一律以既成事實與現況陳述（例：曾取得某證照、目前規劃更新），投入意願最多寫到以既有經驗參與，不指名特定專案的完成或成果。\n" +
 		"Profile YAML:\n" + profileText + "\nJob:\n" + j.Title + "\n" + j.Description + "\n" + draftHistory(history) + "回傳 letter。"
 }
 
@@ -581,6 +583,7 @@ func draftHistory(history []LetterRound) string {
 func reviewPrompt(profileText string, j Job, letter string) string {
 	return "你是嚴格的求職信審查器。僅輸出單一 JSON 物件。檢查 Profile 無依據的技能、經歷、數字，以及空泛或誇大的文字。\n" +
 		"落款的 [你的姓名] 與 [你的聯絡方式] 是刻意保留的成品形態，由使用者投遞前自行填寫；要求以真實姓名或聯絡方式取代它們屬於錯誤意見，不得提出。應檢查的是這兩個佔位符是否完整存在，以及是否出現其他未解析的 [ ] 佔位符。\n" +
+		"承諾性敘述必挑：向對方保證未來作為或成果的句子——將於面試說明什麼、到職後完成哪個專案或系統、將取得或更新哪張證照——一律要求改為既成事實與現況的陳述。\n" +
 		"輸出格式：verdict 為 approve 或 revise；issues 為字串陣列，每個元素是一個完整句子、描述一項具體問題，不得為物件或巢狀結構；verdict 為 revise 時 issues 不得為空；approve 時可回傳 edited_letter（字串），revise 時不得回傳 edited_letter。\n" +
 		"Profile YAML:\n" + profileText + "\nJob:\n" + j.Title + "\n" + j.Description + "\nDraft:\n" + letter
 }
