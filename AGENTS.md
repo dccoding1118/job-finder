@@ -106,7 +106,7 @@ Go 不保證在裸 PATH；以 `mise run <task>` 或 `mise exec -- go <args>` 執
 | 版號解析與注入 | `docs/deploy.md` §7 | `internal/version/` |
 | CLI 命令樹 | 各模組的 CLI 介面節 | `cmd/jobfinder/cli/` |
 
-**頂層文件**：`docs/PRD.md`（需求與範圍）、`docs/design.md`（系統架構、關鍵技術決策與開發順序）、`docs/roadmap.md`（產品定位與階段規劃）、`docs/deploy.md`（部署契約）、`docs/verify.md`（累加式整合與驗收）、`docs/guides/getting-started.md`（上手與操作）。各模組實作契約在 `docs/designs/design-<module>.md`、單元測試規劃在 `docs/tests/test-<module>.md`。
+**頂層文件**：`docs/PRD.md`（需求與範圍）、`docs/design.md`（系統架構、關鍵技術決策與開發順序）、`docs/roadmap.md`（產品定位與階段規劃）、`docs/deploy.md`（部署契約）、`docs/verify.md`（累加式整合與驗收）、`docs/guides/getting-started.md`（上手與操作）、`docs/guides/runbook-upgrade.md`（發版後三條 lane 的換版步驟）、`docs/guides/runbook-extension.md`（遠端後端的通道）。各模組實作契約在 `docs/designs/design-<module>.md`、單元測試規劃在 `docs/tests/test-<module>.md`。
 
 **變更紀錄**：`docs/changes/change-<slug>.md`——記某次變更的動機、決策與落點（**非 canonical**，最新狀態一律讀被覆蓋的 canonical 文件本身）。既有主題的變更先寫此檔、再就地更新 canonical。
 
@@ -206,4 +206,5 @@ MVP 以 `jobfinder run` 作為 one-shot 的批次更新，由每日排程觸發�
 - 上版前執行 `mise run fmt`、`mise run lint` 與 `mise run test`；PR 與 `main` 另由 `.github/workflows/ci.yml` 的 `check`（ubuntu）與 `windows` 兩個 job 把關。
 - 標準「開發完成後上版並開 PR」流程使用 `/ship` skill。
 - 發佈版本：推 tag `v<MAJOR>.<MINOR>.<PATCH>`，由 `.github/workflows/release.yml` 產出帶版號與 checksum 的 binary 與 extension zip（見 `docs/deploy.md` §7）。版號不寫進原始碼。
+- **發版後必附部署步驟**：推完 tag、確認工件無誤之後，回報除了 Release 連結，還要附上 `docs/guides/runbook-upgrade.md` 的三條 lane（Linux 後端、Windows 後端、Windows Chrome extension），版號填實際 tag、指令可直接複製。步驟的最新狀態一律以該 runbook 為準，不即席重編。
 - 版號的唯一決策點是 `internal/version`：release 以 `-ldflags "-X github.com/dccoding1118/job-finder/internal/version.tag=<tag>"` 注入。**該符號路徑是字串綁定**——package 搬家或變數 `tag` 改名會讓注入靜默失效（不報錯，版號悄悄變回 `dev`），改動時必須同步 `release.yml`。

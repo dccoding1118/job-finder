@@ -39,7 +39,7 @@
   - **測試資料**：資料庫取正式庫的副本，不共用檔案；預設不掛抓取排程——抓取與 Agent 呼叫共用同一組外部額度，兩套同時自動跑會重複消耗。要跑抓取時以 `run --config` 手動觸發。
   - **測試 extension**：本機打包腳本（複製 `extension/`、改寫 `manifest.json` 的 `version` 與名稱、移除固定 `key`、輸出到固定目錄），產物可直接載入 Chrome，與正式 extension 並存；測試後端設定的 `api.extension_origin` 填該測試 ID。
   - **Windows 連線**：另開一條通往測試埠的通道，測試 extension 的 Options 指向它。
-  - **待決**：`jobfinder install` 是否要支援 `--instance <name>`（讓測試實例也有正式的安裝、更新與回滾語意），或維持「測試實例只由腳本掛載、不進安裝流程」。傾向後者——測試環境不該把安裝流程本身當成待測物。
+  - **binary 隔離（已定案）**：`jobfinder install` 不加 `--instance`。安裝流程服務的是正式環境，測試實例的執行檔放自己的目錄、以完整路徑執行、不進 PATH，也不經 `install`／`update`／`rollback`——否則測試用的建置會覆蓋掉正式環境的 binary，正是要避免的事。
   - **文件**：`docs/changes/change-test-environment.md` 記動機與決策，`docs/deploy.md`、`docs/verify.md`、`docs/guides/runbook-extension.md` 落最新狀態。
 
 **Roadmap（暫不實作，規劃見 `docs/roadmap.md`）**
