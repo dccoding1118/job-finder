@@ -6,6 +6,12 @@
 
 - private repo 下 `scripts/bootstrap/install.sh`／`install.ps1` 無法驗證：兩者以匿名 `curl`／`Invoke-WebRequest` 打 `api.github.com/releases/latest` 與 `releases/download`，private repo 一律 404；`getting-started.md` §3.1 的 `raw.githubusercontent.com` 單行安裝同理。這是設計取捨（bootstrap 服務的是公開使用者），不是缺陷，但實測只能排在轉 public 之後。
 
+- 目前只有正式環境，沒有測試環境：實機驗收只能把 checkout 建置或 release 工件裝進正式安裝位置（`mise run deploy-install`／`deploy-update`），代價是正式服務短暫停機、版號變成 `dev (<commit>)`、且與正式資料庫共用同一份資料。過渡期照這個方式跑，額外守則兩條——動到 schema 的改動實測前先備份 `~/.local/share/jobfinder/jobs.db`（連同 `-wal`、`-shm`）；驗完以 `mise run deploy-rollback` 或 release 工件的 `update` 回到正式版。測試環境建立之前不改這個作法。
+
+- 測試 extension 不必經 GitHub 或發版：`release.yml` 的打包步驟就是「複製 `extension/`、改寫 `manifest.json` 的 `version`、壓成 zip」，本機以 `python3` 的 `zipfile` 即可重現（這台沒有 `zip` 指令）。要讓測試版與正式版**同時**存在於同一個 Chrome，關鍵是 `manifest.json` 內的固定 `key` 必須移除或改掉——ID 由它決定，兩個同 ID 的未封裝 extension 無法並存。移除 `key` 後 ID 改由載入目錄路徑決定，固定目錄即得到固定的測試 ID，該 ID 要填進測試後端設定的 `api.extension_origin`。
+
+- 隔離的測試後端不需要動 `internal/paths`：`serve`、`run` 都收 `--config`，而 `db.path`、`profile.path`、`log.file`、`api.addr`、`api.token`、`api.extension_origin` 全在設定檔內，因此第二份設定檔就足以撐起一個獨立實例。服務掛載走 `systemd-run --user --unit=<name>`（`scripts/verify/run-live.sh` 已用這個方式跑 transient 單元），不寫進 `~/.config/systemd/user/`，正式的 `jobfinder-api.service` 不受影響。
+
 ## §2 未完成任務
 
 **公開前置（依序完成後才轉 public）**
@@ -27,6 +33,14 @@
 - [ ] 發 `v0.3.3`：求職信重新產製、產製歷程的重新讀取與承諾性敘述禁令（`docs/changes/change-letter-regeneration.md`）已進 main，但尚未進 release 工件。後端與 extension 都有改動，兩者都要換版。
 
 - [ ] 生效面驗證失敗時附上服務輸出（`docs/changes/change-update-effect-surface.md` §2 D3）的實機驗證：以 `v0.2.0` 工件對 schema 10 的資料庫跑 `update`，錯誤訊息應在「服務不是 active」之後附上 `database schema version 10 is newer than supported version 9`。此情境不能用連續兩次 `rollback` 製造——回滾只退一版。
+
+- [ ] 建立隔離的測試環境（本次需求改完之後才動工）。目標是同一台 Linux 同時跑正式與測試兩套、Windows Chrome 同時掛正式與測試兩個 extension，兩邊互不影響。落點與範圍：
+  - **測試後端**：獨立設定檔（自己的 `api.addr` 埠、`db.path`、`profile.path`、`log.file`、`api.token`），以 `systemd-run --user` 掛 transient 單元跑 `serve --config`，正式服務不停機也不改動。
+  - **測試資料**：資料庫取正式庫的副本，不共用檔案；預設不掛抓取排程——抓取與 Agent 呼叫共用同一組外部額度，兩套同時自動跑會重複消耗。要跑抓取時以 `run --config` 手動觸發。
+  - **測試 extension**：本機打包腳本（複製 `extension/`、改寫 `manifest.json` 的 `version` 與名稱、移除固定 `key`、輸出到固定目錄），產物可直接載入 Chrome，與正式 extension 並存；測試後端設定的 `api.extension_origin` 填該測試 ID。
+  - **Windows 連線**：另開一條通往測試埠的通道，測試 extension 的 Options 指向它。
+  - **待決**：`jobfinder install` 是否要支援 `--instance <name>`（讓測試實例也有正式的安裝、更新與回滾語意），或維持「測試實例只由腳本掛載、不進安裝流程」。傾向後者——測試環境不該把安裝流程本身當成待測物。
+  - **文件**：`docs/changes/change-test-environment.md` 記動機與決策，`docs/deploy.md`、`docs/verify.md`、`docs/guides/runbook-extension.md` 落最新狀態。
 
 **Roadmap（暫不實作，規劃見 `docs/roadmap.md`）**
 
