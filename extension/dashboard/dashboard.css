@@ -872,17 +872,20 @@ svg {
   padding: 0 12px 12px;
 }
 
-.attempt-log {
-  margin: 0 0 10px;
-  padding-left: 0;
-  list-style: none;
+.attempt-round-block + .attempt-round-block {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid #e6e9e4;
 }
 
-.attempt-log li {
-  margin-top: 6px;
-  color: #455067;
-  font-size: 12px;
-  line-height: 1.6;
+.attempt-round-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  margin-bottom: 6px;
+  color: var(--ink-muted);
+  font-size: 11px;
 }
 
 .attempt-round {
@@ -895,23 +898,33 @@ svg {
   font-weight: 700;
 }
 
-.attempt-call {
-  margin-top: 10px;
-}
-
-.attempt-call-heading {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  align-items: center;
-  margin-bottom: 5px;
-  color: var(--ink-muted);
-  font-size: 11px;
-}
-
-.attempt-failed {
-  color: var(--negative);
+.attempt-verdict {
+  margin: 8px 0 0;
+  color: #455067;
+  font-size: 12px;
   font-weight: 700;
+  line-height: 1.6;
+}
+
+.attempt-verdict.is-final {
+  color: var(--positive);
+}
+
+.attempt-verdict.is-negative {
+  color: var(--negative);
+  font-weight: 400;
+}
+
+.attempt-issues {
+  margin: 4px 0 0;
+  padding-left: 18px;
+}
+
+.attempt-issues li {
+  margin-top: 4px;
+  color: #455067;
+  font-size: 12px;
+  line-height: 1.6;
 }
 
 .attempt-output {
@@ -1631,7 +1644,8 @@ svg {
   background: #141b28;
 }
 
-:root[data-theme="dark"] .attempt-log li {
+:root[data-theme="dark"] .attempt-verdict:not(.is-final):not(.is-negative),
+:root[data-theme="dark"] .attempt-issues li {
   color: #c7d0df;
 }
 

@@ -295,38 +295,99 @@
     const status = attempt.status === "finalized" ? "" : ATTEMPT_STATUS[attempt.status] || attempt.status;
     const when = attempt.started_at ? new Date(attempt.started_at).toLocaleString("zh-TW", { hour12: false }) : "";
     const runners = [attempt.runner_draft && `起草 ${attempt.runner_draft}`, attempt.runner_review && `審查 ${attempt.runner_review}`].filter(Boolean).join("・");
-    const failure = attempt.error ? `<p class="letter-copy is-negative">${escapeHTML(attempt.error)}</p>` : "";
-    const log = attempt.review_log ? `<ul class="attempt-log">${attempt.review_log.split("\n").filter(Boolean).map((line, index) => `<li><span class="attempt-round">第 ${index + 1} 輪</span>${escapeHTML(reviewLogLine(line))}</li>`).join("")}</ul>` : "";
-    // Calls are absent for a generation that predates this record, so the entry
-    // falls back to the summary it does have rather than showing an empty shell.
-    const rounds = attempt.calls?.length
-      ? attempt.calls.map((call) => `<div class="attempt-call"><div class="attempt-call-heading"><span class="attempt-round">第 ${call.round || "?"} 輪</span><span>${escapeHTML(CALL_ROLE[call.role] || call.role)}</span><span>${escapeHTML(call.runner)}${call.model ? `・${escapeHTML(call.model)}` : ""}</span>${call.ok ? "" : '<span class="attempt-failed">呼叫未通過</span>'}</div><pre class="attempt-output">${escapeHTML(callText(call))}</pre></div>`).join("")
-      : '<p class="letter-copy">這次產製早於逐輪紀錄，只留下上面的審查摘要。</p>';
-    // The letter this generation produced is the thing the rounds were arguing
-    // about, so it is read here next to them rather than only in the card above,
-    // which holds the current letter and not the one an older generation wrote.
-    const letter = attempt.content
-      ? `<div class="attempt-call"><div class="attempt-call-heading"><span>這次產出的信件</span></div><pre class="attempt-output">${escapeHTML(attempt.content)}</pre></div>`
-      : "";
     const chip = status ? `<span class="attempt-status is-${escapeHTML(attempt.status)}">${escapeHTML(status)}</span>` : "";
-    return `<details class="attempt"><summary>${chip}<span>${escapeHTML(when)}</span><span>${attempt.rounds} 輪</span><span>${escapeHTML(runners)}</span></summary><div class="attempt-body">${failure}${log}${rounds}${letter}</div></details>`;
+    return `<details class="attempt"><summary>${chip}<span>${escapeHTML(when)}</span><span>${attempt.rounds} 輪</span><span>${escapeHTML(runners)}</span></summary><div class="attempt-body">${attemptRounds(attempt)}</div></details>`;
+  }
+
+  // A generation reads as the argument it was: each round is the letter that
+  // round's drafter wrote followed by what was said about it, and the last round
+  // ends with the reason the argument stopped. The letter this generation
+  // produced closes the entry, because it is not always the last round's draft:
+  // an approving reviewer may hand back an edited version, and that edit is what
+  // was saved.
+  function attemptRounds(attempt) {
+    const outcomes = (attempt.review_log || "").split("\n").filter(Boolean);
+    const calls = attempt.calls || [];
+    const total = Math.max(outcomes.length, attempt.rounds || 0, ...calls.map((call) => call.round || 0));
+    if (!total) return `<p class="letter-copy">${attempt.status === "running" ? "產製進行中，完成後這裡會列出每一輪。" : "這次產製沒有留下任何一輪的紀錄。"}</p>`;
+    const blocks = [];
+    for (let round = 1; round <= total; round += 1) {
+      blocks.push(`<div class="attempt-round-block"><div class="attempt-round-head"><span class="attempt-round">第 ${round} 輪</span>${roundRunners(calls, round)}</div>${roundLetter(calls, round)}${roundOutcome(outcomes[round - 1], calls, round)}</div>`);
+    }
+    if (attempt.content) {
+      const edited = attempt.content !== lastDraft(calls, total);
+      blocks.push(`<div class="attempt-round-block"><div class="attempt-round-head"><span class="attempt-round">這次產出的信件</span>${edited ? "<span>審查時經過編輯</span>" : ""}</div><pre class="attempt-output">${escapeHTML(attempt.content)}</pre></div>`);
+    }
+    return blocks.join("");
+  }
+
+  function roundLetter(calls, round) {
+    const draft = draftOfRound(calls, round);
+    if (!draft) return '<p class="letter-copy">這次產製早於逐輪紀錄，沒有留下這一輪的信件原文。</p>';
+    return `<pre class="attempt-output">${escapeHTML(callText(draft))}</pre>`;
+  }
+
+  function draftOfRound(calls, round) {
+    const drafts = calls.filter((call) => call.role === "drafter" && (call.round || 0) === round);
+    return drafts.find((call) => call.ok) || drafts[drafts.length - 1];
+  }
+
+  function lastDraft(calls, round) {
+    const draft = draftOfRound(calls, round);
+    return draft ? callText(draft) : null;
+  }
+
+  function roundRunners(calls, round) {
+    const runners = [];
+    for (const call of calls) {
+      if ((call.round || 0) !== round) continue;
+      const label = `${CALL_ROLE[call.role] || call.role} ${call.runner}${call.model ? `・${call.model}` : ""}${call.ok ? "" : "（呼叫未通過）"}`;
+      if (!runners.includes(label)) runners.push(label);
+    }
+    return runners.map((label) => `<span>${escapeHTML(label)}</span>`).join("");
+  }
+
+  // Each round's verdict comes from the review log, which holds exactly one line
+  // per round. The reviewer's own call carries the same verdict as a list of
+  // separate issues, so it is preferred where it exists — one issue per line
+  // reads as the list of changes it is.
+  function roundOutcome(line, calls, round) {
+    if (!line) return "";
+    if (line === "approve") return '<p class="attempt-verdict is-final">審核通過。</p>';
+    if (line === "finalized") return '<p class="attempt-verdict is-final">輪數用完，直接定稿。</p>';
+    if (line.startsWith("error: ")) return `<p class="attempt-verdict is-negative">呼叫失敗：${escapeHTML(line.slice(7))}</p>`;
+    if (line.startsWith("guard: ")) return `<p class="attempt-verdict is-negative">未通過保護規則：${escapeHTML(line.slice(7))}</p>`;
+    const issues = reviewIssues(calls, round);
+    if (!issues.length) return `<p class="attempt-verdict">${escapeHTML(reviewLogLine(line))}</p>`;
+    return `<p class="attempt-verdict">修改建議</p><ul class="attempt-issues">${issues.map((issue) => `<li>${escapeHTML(issue)}</li>`).join("")}</ul>`;
+  }
+
+  function reviewIssues(calls, round) {
+    const review = calls.filter((call) => call.role === "reviewer" && (call.round || 0) === round && call.ok).pop();
+    if (!review) return [];
+    const parsed = parseJSONObject(review.output);
+    if (!Array.isArray(parsed?.issues)) return [];
+    return parsed.issues.map((issue) => (typeof issue === "string" ? issue : JSON.stringify(issue))).filter(Boolean);
   }
 
   // A drafter call answers with the letter wrapped in the contract's JSON, which
   // reads as an escaped one-line blob. The letter itself is what the round is
-  // about, so it is unwrapped. A runner may wrap that JSON in prose or a code
-  // fence, so the object is taken from the first brace to the last; whatever
-  // fails to parse is shown exactly as the runner sent it.
+  // about, so it is unwrapped; whatever fails to parse is shown as it came.
   function callText(call) {
-    if (call.role !== "drafter") return call.output;
-    const start = call.output.indexOf("{");
-    const end = call.output.lastIndexOf("}");
-    if (start < 0 || end <= start) return call.output;
+    const parsed = parseJSONObject(call.output);
+    return typeof parsed?.letter === "string" && parsed.letter.trim() ? parsed.letter : call.output;
+  }
+
+  // A runner may wrap its JSON in prose or a code fence, so the object is taken
+  // from the first brace to the last, the same leniency the server parses with.
+  function parseJSONObject(output) {
+    const start = (output || "").indexOf("{");
+    const end = (output || "").lastIndexOf("}");
+    if (start < 0 || end <= start) return null;
     try {
-      const parsed = JSON.parse(call.output.slice(start, end + 1));
-      return typeof parsed?.letter === "string" && parsed.letter.trim() ? parsed.letter : call.output;
+      return JSON.parse(output.slice(start, end + 1));
     } catch {
-      return call.output;
+      return null;
     }
   }
 
