@@ -32,9 +32,9 @@
   5. 全綠合併 → 設 main 分支保護（required status checks 填 `check`、`windows`、`analyze`；solo dev 不設 required reviews，會卡死自己）。
   6. 轉 public 後補驗 bootstrap 腳本：`install.sh` 與 `install.ps1` 的匿名下載路徑，以及 `getting-started.md` §3.1 的 `raw.githubusercontent.com` 單行安裝（見 §1）。
 
-  `v0.1.0` 至 `v0.3.3` 已於 private 階段發出（工件與 checksum 齊備、版號注入正常），轉 public 後不需重打。
+  `v0.1.0` 至 `v0.3.4` 已於 private 階段發出（工件與 checksum 齊備、版號注入正常），轉 public 後不需重打。
 
-- [ ] 發 `v0.3.4`：產製歷程改為逐輪呈現。只動 extension，後端程式碼與 `v0.3.3` 相同；同版原則仍要求兩邊都換到 `v0.3.4`。
+- [ ] 兩台機器升級到 `v0.3.4`：後端與 extension 同版一起換。本版只動 extension，後端 binary 與 `v0.3.3` 相同、資料庫 schema 不變。升級後在職缺頁確認產製歷程逐輪呈現，每輪的信件與審查結果排在一起。
 
 - [ ] 生效面驗證失敗時附上服務輸出（`docs/changes/change-update-effect-surface.md` §2 D3）的實機驗證：以 `v0.2.0` 工件對 schema 10 的資料庫跑 `update`，錯誤訊息應在「服務不是 active」之後附上 `database schema version 10 is newer than supported version 9`。此情境不能用連續兩次 `rollback` 製造——回滾只退一版。
 
