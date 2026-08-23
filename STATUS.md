@@ -12,6 +12,10 @@
 
 - 隔離的測試後端不需要動 `internal/paths`：`serve`、`run` 都收 `--config`，而 `db.path`、`profile.path`、`log.file`、`api.addr`、`api.token`、`api.extension_origin` 全在設定檔內，因此第二份設定檔就足以撐起一個獨立實例。服務掛載走 `systemd-run --user --unit=<name>`（`scripts/verify/run-live.sh` 已用這個方式跑 transient 單元），不寫進 `~/.config/systemd/user/`，正式的 `jobfinder-api.service` 不受影響。
 
+- 安裝腳本的現況與缺口：`scripts/bootstrap/install.sh` 與 `install.ps1` 已經存在，也已經收 `--version`／`-Version`，做的正是「下載工件 → 驗 `SHA256SUMS` → 解壓 → 交棒 `jobfinder install`」。要讓「每次發版只說跑哪支腳本、裝哪個版號」成立，缺的是三件事：(1) 兩者走匿名 `curl`／`Invoke-WebRequest`，private repo 一律 404，得補一條 `gh` CLI 下載路徑才跑得動；(2) 交棒的是 `install` 而非 `update`——雖然兩者共用同一組 `placeBinaries`（`.prev` 一樣會留），但命令語意與換版文件不一致，宜依現場是否已有安裝自動選；(3) extension 沒有對應腳本。另外 `install.ps1` 解壓後沒有對工件 `Unblock-File`，MOTW 會傳到解出來的 exe。
+
+- Chrome 載入未封裝 extension 沒有 CLI 入口（`docs/verify.md` 明列為整套流程中唯一必須人工完成的部分），所以 extension 的安裝腳本最多做到「下載、驗 checksum、解壓到版本目錄、`Unblock-File`、印出後續步驟與 token」，移除舊卡片、載入新目錄、重填 Options 這四步永遠是手動。
+
 ## §2 未完成任務
 
 **公開前置（依序完成後才轉 public）**
