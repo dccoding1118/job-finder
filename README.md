@@ -66,7 +66,7 @@ macOS binaries are published, but macOS is not a supported deployment platform.
 
 ## Install
 
-The bootstrap script only downloads and verifies checksums; the installation itself is performed by `jobfinder install`, which sets up every location, generates an access token, mounts scheduling and confirms the service is actually running. Your existing configuration and profile are never overwritten.
+The bootstrap script only downloads and verifies checksums; the installation itself is performed by `jobfinder install`, which sets up every location, generates an access token, mounts scheduling and confirms the service is actually running. Your existing configuration and profile are never overwritten. Where an installation is already present, the script hands over to `jobfinder update` instead, which keeps a rollback copy.
 
 **Linux**
 
@@ -79,6 +79,21 @@ curl -fsSL https://raw.githubusercontent.com/dccoding1118/job-finder/main/script
 ```powershell
 irm https://raw.githubusercontent.com/dccoding1118/job-finder/main/scripts/bootstrap/install.ps1 | iex
 ```
+
+The script installs the backend by default. It can also fetch the extension — `--extension` / `-Extension` downloads it, verifies it and unpacks it into a per-tag directory ready for Chrome, and `--all` / `-All` does the backend and the extension in one run. That is what a browser machine with no backend of its own uses.
+
+```bash
+# Linux; the pipe needs `-s --` before the flag
+curl -fsSL https://raw.githubusercontent.com/dccoding1118/job-finder/main/scripts/bootstrap/install.sh | bash -s -- --extension
+```
+
+```powershell
+# Windows; `iex` cannot take arguments, so save the script first
+irm https://raw.githubusercontent.com/dccoding1118/job-finder/main/scripts/bootstrap/install.ps1 -OutFile install.ps1
+powershell -ExecutionPolicy Bypass -File .\install.ps1 -Extension
+```
+
+Loading the unpacked directory into Chrome stays manual — Chrome has no command-line entry point for it.
 
 <details>
 <summary>Or download the artifact and install manually (identical result)</summary>
@@ -152,7 +167,7 @@ Work from the side panel. Scheduled matching runs daily at 08:30 (Asia/Taipei), 
 | Restart the service | `systemctl --user restart jobfinder-api.service` | `Stop-ScheduledTask`, wait for the process to exit, then `Start-ScheduledTask` (guide §9) |
 | Read logs | `journalctl --user -u jobfinder-api.service` | The rotating file pointed at by `log.file` |
 
-To update, re-run the bootstrap script or run `jobfinder update` against a newer artifact; `jobfinder rollback` reverts it. Replace the extension in the same pass, so the two stay on one version.
+To update, re-run the bootstrap script or run `jobfinder update` against a newer artifact; `jobfinder rollback` reverts it. Replace the extension in the same pass, so the two stay on one version — `--all` / `-All` covers both halves of that pass.
 
 Running the backend on a different machine from the browser is possible but optional; see [the remote backend runbook](docs/guides/runbook-extension.md).
 

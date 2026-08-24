@@ -78,6 +78,14 @@ sha256sum -c --ignore-missing SHA256SUMS
 curl -fsSL https://raw.githubusercontent.com/dccoding1118/job-finder/main/scripts/bootstrap/install.sh | bash
 ```
 
+腳本有三種模式，不帶旗標即只裝後端。`--extension` 只取 extension（見 §5.1），`--all` 兩者都裝；經管線執行時旗標要走 `bash -s --`：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/dccoding1118/job-finder/main/scripts/bootstrap/install.sh | bash -s -- --all
+```
+
+後端模式看常駐 binary 是否已存在：沒有就交棒 `jobfinder install`，有就交棒 `jobfinder update`（保留回滾點，見 §10.1）。
+
 ### 3.2 解壓並安裝
 
 ```bash
@@ -144,6 +152,15 @@ bootstrap 版本（走匿名下載，前提是 release 可公開取得）：
 irm https://raw.githubusercontent.com/dccoding1118/job-finder/main/scripts/bootstrap/install.ps1 | iex
 ```
 
+腳本有三種模式，不帶旗標即只裝後端。要改模式就先存檔再執行，`iex` 收不了參數：
+
+```powershell
+irm https://raw.githubusercontent.com/dccoding1118/job-finder/main/scripts/bootstrap/install.ps1 -OutFile install.ps1
+powershell -ExecutionPolicy Bypass -File .\install.ps1 -All   # -Extension 只裝 extension，-All 兩者都裝
+```
+
+後端模式看常駐 binary 是否已存在：沒有就交棒 `jobfinder install`，有就交棒 `jobfinder update`（保留回滾點，見 §10.1）。解壓出來的檔案由腳本解除 Mark of the Web。
+
 ### 4.2 解壓並安裝
 
 ```powershell
@@ -206,6 +223,21 @@ extension 是**獨立工件** `jobfinder-extension_<tag>.zip`，平台 zip／tar
 解壓到一個**常駐目錄**，未封裝的 extension 目錄不能刪除或搬移——Chrome 每次啟動都要從那裡讀檔。
 
 壓縮檔本身落在暫存目錄，與平台工件同一套路（§3.1、§4.1）：常駐目錄只放解壓出來的檔案，Chrome 讀的那一層不混入下載物。
+
+bootstrap 腳本的 extension 模式做的就是下面這幾行——下載、驗 checksum、解壓到版本目錄（Windows 另解除 Mark of the Web），最後印出目錄位置與 Chrome 步驟：
+
+```bash
+# Linux
+curl -fsSL https://raw.githubusercontent.com/dccoding1118/job-finder/main/scripts/bootstrap/install.sh | bash -s -- --extension
+```
+
+```powershell
+# Windows
+irm https://raw.githubusercontent.com/dccoding1118/job-finder/main/scripts/bootstrap/install.ps1 -OutFile install.ps1
+powershell -ExecutionPolicy Bypass -File .\install.ps1 -Extension
+```
+
+跑 Chrome 的機器不必有後端：extension 模式不安裝任何服務，也不寫設定檔。手動路徑如下。
 
 ```bash
 # Linux
@@ -444,7 +476,7 @@ jobfinder version    # 應為前一版
 
 ### 10.2 extension
 
-後端換版時 extension 一起換，兩者同版是使用前提（見 §5.1）。逐步指令見 [換版部署 runbook](runbook-upgrade.md) §4：解壓到新的版本目錄、移除舊卡片、載入新目錄、重填 Options。
+後端換版時 extension 一起換，兩者同版是使用前提（見 §5.1）。逐步指令見 [換版部署 runbook](runbook-upgrade.md) §4：解壓到新的版本目錄、移除舊卡片、載入新目錄、重填 Options。前一步（取得新版並解壓到新的版本目錄）可交給 bootstrap 腳本的 extension 模式；後三步在 Chrome 內完成，沒有命令列入口。
 
 移除 extension 會清掉它的 `chrome.storage.local`，endpoint 與 token 必須重填。ID 由固定 `key` 決定，換版不變，所以 `api.extension_origin` 不必動。舊的版本目錄確認新版正常後才刪。
 

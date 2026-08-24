@@ -71,9 +71,11 @@ Agent 稽核資料保留在 SQLite 的 `agent_calls`。
 
 | 取得方式 | 動作 |
 |---|---|
-| `install.sh`／`install.ps1` | 解析版本 → 下載工件與 `SHA256SUMS` → 驗 checksum → 解壓到暫存 → 執行解壓出的 `jobfinder install` |
+| `install.sh`／`install.ps1` | 解析版本 → 下載工件與 `SHA256SUMS` → 驗 checksum → 解壓到暫存 → 執行解壓出的 `jobfinder install`，常駐 binary 已存在時改執行 `update` |
 | 手動下載工件 | 自行比對 `SHA256SUMS`，解壓後直接執行 `jobfinder install` |
 | 開發 checkout | `scripts/deploy/*.sh`（`mise run deploy-*`）：跑 `fmt`／`lint`／`test`／`build`，再把剛建置的 binary 交給同一組子命令，並以 checkout 為 `--assets` |
+
+**bootstrap 腳本另有 extension 模式**：不帶旗標即只裝後端；`--extension`（`install.sh`）／`-Extension`（`install.ps1`）只裝 extension，`--all`／`-All` 兩者都裝。extension 模式下載 `jobfinder-extension_<tag>.zip`、驗 checksum、解壓到 `<資料目錄>/jobfinder/extension/<tag>`（Linux `~/.local/share/…`、Windows `%LocalAppData%\jobfinder\extension\<tag>`），Windows 另解除 Mark of the Web，終點是目錄就緒與印出 Chrome 的手動步驟。extension 沒有安裝語意——無設定渲染、無 token、無排程、無生效面驗證——因此這條路留在腳本內，不進 `jobfinder install`、不併進平台工件。遠端拓撲靠它成立：跑 Chrome 的那台機器不需要、也不該被裝出一個後端服務。
 
 解壓出的執行檔是**安裝媒介**，不是安裝本身：它把自己複製到 §2 的常駐位置，排程執行的是那份副本，安裝完下載目錄即可刪除。安裝流程會拒絕「拿常駐副本安裝到自己身上」。Windows 另從同一份工件取出 `jobfinderw.exe` 一併放置；工件缺少它時安裝直接失敗，不會裝出一個排程指向不存在檔案的組合。
 
@@ -162,7 +164,7 @@ release 工件：
 
 工件內容即安裝流程所需的全部素材：`configs/` 供設定渲染、平台目錄供排程掛載、bootstrap 腳本供下載路徑使用。安裝流程在開發 checkout 下改讀 `deploy/production/<平台>/`，因此兩種來源共用同一份實作。
 
-**extension 與後端必須同版**。兩者由同一個 tag 一起發出，但執行期沒有版本協商或相容性檢查：舊版 extension 連新版 API 一樣通過認證、Side Panel 一樣載入，只在個別功能上安靜地行為不對。extension 不由安裝流程取得——它是獨立工件，平台工件內不含它，載入 Chrome 是人工步驟，後端換版時一併更換。
+**extension 與後端必須同版**。兩者由同一個 tag 一起發出，但執行期沒有版本協商或相容性檢查：舊版 extension 連新版 API 一樣通過認證、Side Panel 一樣載入，只在個別功能上安靜地行為不對。extension 不由 `jobfinder install` 取得——它是獨立工件，平台工件內不含它；bootstrap 腳本的 extension 模式負責下載與解壓，載入 Chrome 仍是人工步驟，後端換版時一併更換。
 
 extension zip 需人工上傳至 Chrome Web Store 並送審——審查結果有變數，不納入自動發佈。
 

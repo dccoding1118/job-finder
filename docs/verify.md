@@ -222,11 +222,11 @@ mise run e2e-live
 
 | 步驟 | 動作 | 標準答案（字面預期） |
 |---|---|---|
-| D1 全新安裝 | 在無既有安裝的環境執行 bootstrap 腳本（或解壓工件後跑 `jobfinder install`） | 印出的路徑與 `jobfinder paths` 一致；設定含隨機 token 且無 `CHANGE_ME`、無 `.local-dev/`；Linux 上設定為 `0600`；Windows 上 `bin\` 同時有 `jobfinder.exe` 與 `jobfinderw.exe`；生效面驗證全過 |
+| D1 全新安裝 | 在無既有安裝的環境執行 bootstrap 腳本（不帶旗標，即只裝後端；或解壓工件後跑 `jobfinder install`） | 印出的路徑與 `jobfinder paths` 一致；設定含隨機 token 且無 `CHANGE_ME`、無 `.local-dev/`；Linux 上設定為 `0600`；Windows 上 `bin\` 同時有 `jobfinder.exe` 與 `jobfinderw.exe`；生效面驗證全過 |
 | D2 既有設定不覆寫 | 改動 `api.extension_origin` 後重跑安裝 | 設定內容逐字不變，安裝仍成功 |
 | D3 排程實際觸發 | 手動觸發抓取工作（Linux `systemctl --user start jobfinder-run.service`；Windows `Start-ScheduledTask -TaskPath '\jobfinder\' -TaskName 'run'`） | 抓取實際執行並寫入 `runs`，該筆 `trigger` 為 `timer`；Linux 於 journald、Windows 於 `log.file` 看得到該趟記錄；Windows 上全程不出現主控台視窗 |
 | D4 Side Panel 直連 | extension Options 填 `http://127.0.0.1:8686` 與設定中的 token，開啟 Side Panel | 無任何通道即可讀寫；未帶 token 的請求回 401 |
-| D5 更新確實生效 | 對新版工件執行 `jobfinder update` | 執行中 process 的執行檔為新 binary 且啟動時間晚於替換點；`jobfinder version` 為新版號；Windows 上兩支執行檔皆為新版 |
+| D5 更新確實生效 | 對新版工件執行 `jobfinder update`，或在已有安裝的環境重跑 bootstrap 腳本（後端模式應自行改走 `update`） | 執行中 process 的執行檔為新 binary 且啟動時間晚於替換點；`jobfinder version` 為新版號；Windows 上兩支執行檔皆為新版 |
 | D5A 更新不依賴服務當下是否在跑 | 停止 API 後對新版工件執行 `jobfinder update` | 服務被重新啟動並通過生效面驗證；同一份工件再跑一次 `update` 時 `jobfinder.prev` 仍為前一版 |
 | D6 回滾 | `jobfinder rollback` | 執行中 process 為前一版；資料庫未被更動；`.bad` 保留了被回滾掉的版本；Windows 上兩支一起回到前一版，不出現版本不一致 |
 | D6A 回滾不依賴服務當下是否在跑 | 停止 API 後執行 `jobfinder rollback` | 服務被啟動並通過生效面驗證，執行中 process 為前一版 |
@@ -234,6 +234,7 @@ mise run e2e-live
 | D7 PATH 與診斷（Windows） | 開新終端執行 `jobfinder paths` | 不需完整路徑即可執行；印出 `%LocalAppData%\jobfinder\` 下的位置，含 `jobfinderw.exe` 那列 |
 | D8 Agent CLI 可執行（Windows） | 讓一筆職缺實際走到評分 | npm 安裝的 `claude`／`codex` 可被叫起；失敗時錯誤指向 CLI 本身而非「不是有效的應用程式」；整段過程不彈出主控台視窗 |
 | D9 服務重啟不卡死（Windows） | 停止 api 工作，等 process 消失，再啟動 | 工作回到 `Running` 且 API 有回應。停止是直接終止行程，殘留的 worker 鎖檔不得阻擋下一次啟動 |
+| D10 bootstrap 的 extension 模式 | 以 `--extension`／`-Extension` 執行 bootstrap 腳本 | extension 解壓於 `<資料目錄>/jobfinder/extension/<tag>` 且含 `manifest.json`；其 `version` 與 `jobfinder version` 對得上；Windows 上解出的檔案無 Mark of the Web；不建立任何服務、不寫入設定檔；印出的目錄可直接被 Chrome 載入 |
 
 `--skip-verify` 不得用於本 gate：未經生效面驗證的安裝不算通過。
 

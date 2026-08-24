@@ -1,6 +1,6 @@
 # STATUS — job-finder（MVP 開發）
 
-> 最後更新：2026-08-23。規劃文件見 `docs/PRD.md`、`docs/design.md`、`docs/roadmap.md`、`docs/deploy.md`、`docs/designs/`。
+> 最後更新：2026-08-24。規劃文件見 `docs/PRD.md`、`docs/design.md`、`docs/roadmap.md`、`docs/deploy.md`、`docs/designs/`。
 
 ## §1 未歸檔結論
 
@@ -16,15 +16,7 @@
 
 **公開前置（依序完成後才轉 public）**
 
-- [ ] bootstrap 腳本路徑的實測：`install.sh` 與 `install.ps1` 三種模式的匿名下載路徑，以及 `getting-started.md` §3.1 的 `raw.githubusercontent.com` 單行安裝。須待轉 public（見 §1）。`docs/verify.md` §6.1 的 D1–D9 與 D5A／D6A／D6B 已於兩平台全數通過，只剩這一項。
-
-- [ ] `install.sh` 與 `install.ps1` 改為三種模式：**只裝後端**（現行行為：下載平台工件、驗 `SHA256SUMS`、解壓、交棒 `jobfinder install`／`update`）、**只裝 extension**、**兩者都裝**。轉 public 只解決匿名下載 404，不會補上 extension 這條 lane——兩支腳本從頭到尾只下載該平台的工件，extension zip 沒有任何腳本會去拿。實作要點：
-  - extension 模式：下載 `jobfinder-extension_<tag>.zip`、驗 checksum、解壓到 `getting-started.md` §5.1 已定的版本目錄（Linux `~/.local/share/jobfinder/extension/<tag>`、Windows `%LOCALAPPDATA%\jobfinder\extension\<tag>`）、Windows 另跑 `Unblock-File`，然後印出 Chrome 的四個手動步驟與 extension ID。extension 沒有任何安裝語意（無設定渲染、無 token、無排程、無生效面驗證），所以整條路留在腳本內，不進 `jobfinder install`、不併進平台工件。
-  - 預設維持只裝後端：`getting-started.md` §3.1 的單行安裝目前承諾的就是裝後端，改預設會讓已寫進文件的那一行行為變樣。另外兩種走明確旗標。
-  - 遠端拓撲靠 extension 模式成立：那台 Windows 沒有後端也不該被裝出一個後端服務。
-  - 同批修掉 `install.ps1` 解壓後未 `Unblock-File` 的缺口（MOTW 會傳給解出來的 exe），並讓後端模式依現場有無既有安裝自動選 `install` 或 `update`。
-  - **不補 `gh` 下載路徑**：公開後匿名路徑就通了，補了只為了在 private 下先測一次，之後即是死碼。因此這項是「先寫、轉 public 當天隨即實測」。
-  - Chrome 的「載入未封裝項目」沒有 CLI 入口（`docs/verify.md` 明列為整套流程中唯一必須人工完成的部分），腳本的終點是把目錄準備好並印出後續步驟；移除舊卡片、載入新目錄、重填 Options 這四步永遠是手動。
+- [ ] bootstrap 腳本路徑的實測：`install.sh` 與 `install.ps1` 三種模式（只裝後端／只裝 extension／兩者）的匿名下載路徑，以及 `getting-started.md` §3.1 的 `raw.githubusercontent.com` 單行安裝。須待轉 public（見 §1）。`docs/verify.md` §6.1 的 D1–D9 與 D5A／D6A／D6B 已於兩平台全數通過；三模式改動後須重跑 D1、D5 與新增的 D10。
 
 - [ ] 公開 GitHub repo。多數資安與對外可見度設定被 private＋免費方案擋住，須依下列**硬順序**在轉 public 當天一次做完（Dependabot alerts 與 automated security fixes 已於 private 階段開啟）：
   1. 本地備妥 `.github/workflows/codeql.yml`（**先別推**——private repo 的 `analyze` job 會恆紅）。
