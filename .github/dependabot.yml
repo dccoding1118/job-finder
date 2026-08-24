@@ -5,6 +5,16 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    # go.mod 的 `go` directive 釘在 1.23.0。抬高它的代價落在靜態分析工具層而非編譯器：
+    # golangci-lint、staticcheck、gopls 各自內建一個綁死的可解析 Go 版本，directive 超前
+    # 工具支援版本時本機 lint 與 IDE 直接無法 typecheck。相依套件會把自身的 go directive
+    # 逐步抬到 1.24／1.25，升級它們會連帶改寫本專案的 directive，因此擋在仍相容的版本上緣。
+    # directive 要往上調時，連同 mise.toml 與 AGENTS.md §2 一併放寬。
+    ignore:
+      - dependency-name: modernc.org/sqlite
+        versions: [">= 1.39.1"]
+      - dependency-name: golang.org/x/sys
+        versions: [">= 0.36.0"]
   - package-ecosystem: github-actions
     directory: /
     schedule:
