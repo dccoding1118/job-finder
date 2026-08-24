@@ -18,7 +18,7 @@
 
 - [ ] bootstrap 腳本路徑的實測：`install.sh` 與 `install.ps1` 三種模式（只裝後端／只裝 extension／兩者）的匿名下載路徑，以及 `getting-started.md` §3.1 的 `raw.githubusercontent.com` 單行安裝。須待轉 public（見 §1）。`docs/verify.md` §6.1 的 D1–D9 與 D5A／D6A／D6B 已於兩平台全數通過；三模式改動後須重跑 D1、D5 與新增的 D10。
 
-- [ ] 收掉未合併的 dependabot PR。#26、#30、#25、#23、#27（`checkout`、`setup-go`、`mise-action`、`upload-artifact`、`playwright`）依此順序合併，本機試合無衝突；#24（`cobra` 1.10.2）需先在 PR 留言 `@dependabot rebase`；#31、#32 直接關閉——兩者都把 `go.mod` 的 `go` directive 抬到 1.25.0，而本專案釘在 1.23.0（理由見 `AGENTS.md` §6 已知雷）。關閉後 dependabot 會依 `.github/dependabot.yml` 的 ignore 規則改送 `modernc.org/sqlite` 1.39.0 與 `golang.org/x/sys` 0.35.0，屆時一併合併。
+- [ ] 收掉剩下的 dependabot PR。三個都改 `go.mod` 與 `go.sum`，任一合併都會讓另外兩個變衝突，須逐個合併、中間對後續兩個留言 `@dependabot rebase`。順序：#52（`sqlite` 1.39.0，連帶帶進 `x/sys` 0.34.0）→ #51（`x/sys` 0.35.0）→ #24（`cobra` 1.10.2）。三者皆維持 `go 1.23.0`。
 
 - [ ] 補上 repo 的對外門面：`description`、`topics`、`homepageUrl` 目前皆為空（`gh repo edit --description … --add-topic …`），並關掉沒在用的 Projects 分頁（`gh repo edit --enable-projects=false`）。Wiki 已關閉。
 
