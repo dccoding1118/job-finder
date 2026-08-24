@@ -20,11 +20,12 @@
 # install`, unzipping the extension — is equivalent; this only saves those
 # steps.
 #
-# Usage: install.sh [--mode backend|extension|both] [--version v1.2.3]
+# Usage: install.sh [--extension | --all] [--version v1.2.3]
 #                   [--repo owner/name] [--keep]
-#   --mode     what to install; default backend
-#   --version  install a specific release instead of the latest
-#   --keep     leave the downloads in place and print where they are
+#   --extension  install only the extension, not the backend
+#   --all        install the backend and the extension
+#   --version    install a specific release instead of the latest
+#   --keep       leave the downloads in place and print where they are
 
 set -euo pipefail
 
@@ -40,23 +41,26 @@ EXTENSION_ID="oddnhajjhmgogefocnljofeahniodiei"
 die() { printf '\033[31mbootstrap failed:\033[0m %s\n' "$*" >&2; exit 1; }
 log() { printf '\033[1m==>\033[0m %s\n' "$*"; }
 
-usage() { sed -n '3,27p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '3,28p' "$0" | sed 's/^# \{0,1\}//'; }
+
+# The two mode flags select one mode between them, so asking for both at once
+# is a contradiction rather than a last-one-wins.
+set_mode() {
+  [[ "${MODE}" == backend || "${MODE}" == "$1" ]] || die "--extension and --all cannot be combined"
+  MODE="$1"
+}
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --mode)    MODE="${2:-}"; shift 2 ;;
-    --version) VERSION="${2:-}"; shift 2 ;;
-    --repo)    REPO="${2:-}"; shift 2 ;;
-    --keep)    KEEP=true; shift ;;
-    -h|--help) usage; exit 0 ;;
+    --extension) set_mode extension; shift ;;
+    --all)       set_mode both; shift ;;
+    --version)   VERSION="${2:-}"; shift 2 ;;
+    --repo)      REPO="${2:-}"; shift 2 ;;
+    --keep)      KEEP=true; shift ;;
+    -h|--help)   usage; exit 0 ;;
     *) printf 'unknown argument: %s\n' "$1" >&2; exit 2 ;;
   esac
 done
-
-case "${MODE}" in
-  backend|extension|both) ;;
-  *) die "unknown mode: ${MODE} (expected backend, extension or both)" ;;
-esac
 
 need() { command -v "$1" >/dev/null 2>&1 || die "missing required command: $1"; }
 need curl

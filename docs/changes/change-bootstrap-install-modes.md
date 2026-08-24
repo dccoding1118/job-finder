@@ -17,7 +17,7 @@
 
 | # | 決策 |
 |---|---|
-| D1 | 兩支腳本各增一個模式選項（`--mode`／`-Mode`），值為 `backend`、`extension`、`both`，預設 `backend`。 |
+| D1 | 兩支腳本各增兩個模式旗標：`--extension`／`-Extension` 只裝 extension，`--all`／`-All` 兩者都裝，不帶旗標即只裝後端。兩個旗標同時給是矛盾，直接拒絕。 |
 | D2 | extension 的整條路留在腳本內：下載 `jobfinder-extension_<tag>.zip`、驗 `SHA256SUMS`、解壓到版本目錄、Windows 另跑 `Unblock-File`，然後印出 Chrome 的手動步驟與固定 extension ID。 |
 | D3 | 後端模式依常駐 binary 是否存在自動選 `install` 或 `update`。 |
 | D4 | `install.ps1` 對解壓出的後端工件跑 `Unblock-File`。 |
@@ -35,7 +35,7 @@ D3 的判準是常駐 binary（Linux `~/.local/bin/jobfinder`、Windows `%LocalA
 | 面向 | 舊 | 新 |
 |---|---|---|
 | 腳本涵蓋範圍 | 只有後端工件 | 後端、extension，或兩者 |
-| extension 取得 | 全手動（下載、驗 checksum、解壓、Windows 解封鎖） | `--mode extension`／`-Mode extension` 代勞至目錄就緒 |
+| extension 取得 | 全手動（下載、驗 checksum、解壓、Windows 解封鎖） | `--extension`／`-Extension` 代勞至目錄就緒 |
 | 已有安裝時重跑腳本 | 一律 `install` | 自動改走 `update`，保留回滾點 |
 | Windows 解壓後的 MOTW | 未解除，執行檔可能被 SmartScreen 擋 | 解壓後遞迴 `Unblock-File` |
 
@@ -46,7 +46,7 @@ D3 的判準是常駐 binary（Linux `~/.local/bin/jobfinder`、Windows `%LocalA
 | `docs/deploy.md` | §4、§7 | bootstrap 腳本的職責改述為三種模式，含後端子命令的自動選擇與 extension 的解壓落點 |
 | `docs/guides/getting-started.md` | §3.1、§4.1 | 單行安裝標註其為後端模式，並列出另外兩種模式的呼叫方式 |
 | `docs/guides/getting-started.md` | §5.1、§10.2 | extension 取得與換版改列腳本路徑，手動步驟保留為對照 |
-| `README.md` | Installation、Updating | 三種模式的旗標；換版時腳本自動走 `update` |
+| `README.md` | Installation、Updating | 兩個模式旗標；換版時腳本自動走 `update` |
 | `AGENTS.md` | §6 | bootstrap 腳本職責的一行描述 |
 | `docs/guides/runbook-upgrade.md` | §4.1 | Windows 換版取得 extension 的腳本路徑 |
 | `docs/verify.md` | §6.1 | D1 標明預設模式；D5 納入重跑腳本；新增 D10：extension 模式的目錄與版本一致性 |

@@ -78,10 +78,10 @@ sha256sum -c --ignore-missing SHA256SUMS
 curl -fsSL https://raw.githubusercontent.com/dccoding1118/job-finder/main/scripts/bootstrap/install.sh | bash
 ```
 
-腳本有三種模式，預設只裝後端。`--mode extension` 只取 extension（見 §5.1），`--mode both` 兩者都裝；經管線執行時旗標要走 `bash -s --`：
+腳本有三種模式，不帶旗標即只裝後端。`--extension` 只取 extension（見 §5.1），`--all` 兩者都裝；經管線執行時旗標要走 `bash -s --`：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/dccoding1118/job-finder/main/scripts/bootstrap/install.sh | bash -s -- --mode both
+curl -fsSL https://raw.githubusercontent.com/dccoding1118/job-finder/main/scripts/bootstrap/install.sh | bash -s -- --all
 ```
 
 後端模式看常駐 binary 是否已存在：沒有就交棒 `jobfinder install`，有就交棒 `jobfinder update`（保留回滾點，見 §10.1）。
@@ -152,11 +152,11 @@ bootstrap 版本（走匿名下載，前提是 release 可公開取得）：
 irm https://raw.githubusercontent.com/dccoding1118/job-finder/main/scripts/bootstrap/install.ps1 | iex
 ```
 
-腳本有三種模式，預設只裝後端。要改模式就先存檔再執行，`iex` 收不了參數：
+腳本有三種模式，不帶旗標即只裝後端。要改模式就先存檔再執行，`iex` 收不了參數：
 
 ```powershell
 irm https://raw.githubusercontent.com/dccoding1118/job-finder/main/scripts/bootstrap/install.ps1 -OutFile install.ps1
-powershell -ExecutionPolicy Bypass -File .\install.ps1 -Mode both   # backend / extension / both
+powershell -ExecutionPolicy Bypass -File .\install.ps1 -All   # -Extension 只裝 extension，-All 兩者都裝
 ```
 
 後端模式看常駐 binary 是否已存在：沒有就交棒 `jobfinder install`，有就交棒 `jobfinder update`（保留回滾點，見 §10.1）。解壓出來的檔案由腳本解除 Mark of the Web。
@@ -228,13 +228,13 @@ bootstrap 腳本的 extension 模式做的就是下面這幾行——下載、�
 
 ```bash
 # Linux
-curl -fsSL https://raw.githubusercontent.com/dccoding1118/job-finder/main/scripts/bootstrap/install.sh | bash -s -- --mode extension
+curl -fsSL https://raw.githubusercontent.com/dccoding1118/job-finder/main/scripts/bootstrap/install.sh | bash -s -- --extension
 ```
 
 ```powershell
 # Windows
 irm https://raw.githubusercontent.com/dccoding1118/job-finder/main/scripts/bootstrap/install.ps1 -OutFile install.ps1
-powershell -ExecutionPolicy Bypass -File .\install.ps1 -Mode extension
+powershell -ExecutionPolicy Bypass -File .\install.ps1 -Extension
 ```
 
 跑 Chrome 的機器不必有後端：extension 模式不安裝任何服務，也不寫設定檔。手動路徑如下。

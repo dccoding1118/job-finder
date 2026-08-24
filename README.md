@@ -80,17 +80,17 @@ curl -fsSL https://raw.githubusercontent.com/dccoding1118/job-finder/main/script
 irm https://raw.githubusercontent.com/dccoding1118/job-finder/main/scripts/bootstrap/install.ps1 | iex
 ```
 
-The script installs the backend by default. It can also fetch the extension — `--mode extension` / `-Mode extension` downloads it, verifies it and unpacks it into a per-tag directory ready for Chrome, and `both` does the backend and the extension in one run. That is what a browser machine with no backend of its own uses.
+The script installs the backend by default. It can also fetch the extension — `--extension` / `-Extension` downloads it, verifies it and unpacks it into a per-tag directory ready for Chrome, and `--all` / `-All` does the backend and the extension in one run. That is what a browser machine with no backend of its own uses.
 
 ```bash
 # Linux; the pipe needs `-s --` before the flag
-curl -fsSL https://raw.githubusercontent.com/dccoding1118/job-finder/main/scripts/bootstrap/install.sh | bash -s -- --mode extension
+curl -fsSL https://raw.githubusercontent.com/dccoding1118/job-finder/main/scripts/bootstrap/install.sh | bash -s -- --extension
 ```
 
 ```powershell
 # Windows; `iex` cannot take arguments, so save the script first
 irm https://raw.githubusercontent.com/dccoding1118/job-finder/main/scripts/bootstrap/install.ps1 -OutFile install.ps1
-powershell -ExecutionPolicy Bypass -File .\install.ps1 -Mode extension
+powershell -ExecutionPolicy Bypass -File .\install.ps1 -Extension
 ```
 
 Loading the unpacked directory into Chrome stays manual — Chrome has no command-line entry point for it.
@@ -167,7 +167,7 @@ Work from the side panel. Scheduled matching runs daily at 08:30 (Asia/Taipei), 
 | Restart the service | `systemctl --user restart jobfinder-api.service` | `Stop-ScheduledTask`, wait for the process to exit, then `Start-ScheduledTask` (guide §9) |
 | Read logs | `journalctl --user -u jobfinder-api.service` | The rotating file pointed at by `log.file` |
 
-To update, re-run the bootstrap script or run `jobfinder update` against a newer artifact; `jobfinder rollback` reverts it. Replace the extension in the same pass, so the two stay on one version — `--mode both` covers both halves of that pass.
+To update, re-run the bootstrap script or run `jobfinder update` against a newer artifact; `jobfinder rollback` reverts it. Replace the extension in the same pass, so the two stay on one version — `--all` / `-All` covers both halves of that pass.
 
 Running the backend on a different machine from the browser is possible but optional; see [the remote backend runbook](docs/guides/runbook-extension.md).
 

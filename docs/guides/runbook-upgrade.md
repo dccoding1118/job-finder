@@ -119,7 +119,7 @@ release 可公開取得時，這一步可交給 bootstrap 腳本的 extension �
 
 ```powershell
 irm https://raw.githubusercontent.com/dccoding1118/job-finder/main/scripts/bootstrap/install.ps1 -OutFile install.ps1
-powershell -ExecutionPolicy Bypass -File .\install.ps1 -Mode extension -Version $VER
+powershell -ExecutionPolicy Bypass -File .\install.ps1 -Extension -Version $VER
 ```
 
 它做的是同一件事：下載、驗 `SHA256SUMS`、解壓到同一個版本目錄、解除 Mark of the Web，最後印出目錄位置。4.2 起的步驟不變。

@@ -75,7 +75,7 @@ Agent 稽核資料保留在 SQLite 的 `agent_calls`。
 | 手動下載工件 | 自行比對 `SHA256SUMS`，解壓後直接執行 `jobfinder install` |
 | 開發 checkout | `scripts/deploy/*.sh`（`mise run deploy-*`）：跑 `fmt`／`lint`／`test`／`build`，再把剛建置的 binary 交給同一組子命令，並以 checkout 為 `--assets` |
 
-**bootstrap 腳本另有 extension 模式**：`--mode`（`install.sh`）／`-Mode`（`install.ps1`）取 `backend`、`extension`、`both`，預設 `backend`。extension 模式下載 `jobfinder-extension_<tag>.zip`、驗 checksum、解壓到 `<資料目錄>/jobfinder/extension/<tag>`（Linux `~/.local/share/…`、Windows `%LocalAppData%\jobfinder\extension\<tag>`），Windows 另解除 Mark of the Web，終點是目錄就緒與印出 Chrome 的手動步驟。extension 沒有安裝語意——無設定渲染、無 token、無排程、無生效面驗證——因此這條路留在腳本內，不進 `jobfinder install`、不併進平台工件。遠端拓撲靠它成立：跑 Chrome 的那台機器不需要、也不該被裝出一個後端服務。
+**bootstrap 腳本另有 extension 模式**：不帶旗標即只裝後端；`--extension`（`install.sh`）／`-Extension`（`install.ps1`）只裝 extension，`--all`／`-All` 兩者都裝。extension 模式下載 `jobfinder-extension_<tag>.zip`、驗 checksum、解壓到 `<資料目錄>/jobfinder/extension/<tag>`（Linux `~/.local/share/…`、Windows `%LocalAppData%\jobfinder\extension\<tag>`），Windows 另解除 Mark of the Web，終點是目錄就緒與印出 Chrome 的手動步驟。extension 沒有安裝語意——無設定渲染、無 token、無排程、無生效面驗證——因此這條路留在腳本內，不進 `jobfinder install`、不併進平台工件。遠端拓撲靠它成立：跑 Chrome 的那台機器不需要、也不該被裝出一個後端服務。
 
 解壓出的執行檔是**安裝媒介**，不是安裝本身：它把自己複製到 §2 的常駐位置，排程執行的是那份副本，安裝完下載目錄即可刪除。安裝流程會拒絕「拿常駐副本安裝到自己身上」。Windows 另從同一份工件取出 `jobfinderw.exe` 一併放置；工件缺少它時安裝直接失敗，不會裝出一個排程指向不存在檔案的組合。
 

@@ -21,8 +21,11 @@
   `.\jobfinder.exe install`, expanding the extension zip — is equivalent; this
   only saves those steps.
 
-.PARAMETER Mode
-  What to install: backend (default), extension, or both.
+.PARAMETER Extension
+  Install only the extension, not the backend.
+
+.PARAMETER All
+  Install the backend and the extension.
 
 .PARAMETER Version
   Install a specific release instead of the latest.
@@ -34,12 +37,12 @@
   powershell -ExecutionPolicy Bypass -File install.ps1
 
 .EXAMPLE
-  powershell -ExecutionPolicy Bypass -File install.ps1 -Mode extension
+  powershell -ExecutionPolicy Bypass -File install.ps1 -Extension
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet("backend", "extension", "both")]
-    [string]$Mode = "backend",
+    [switch]$Extension,
+    [switch]$All,
     [string]$Version = "",
     [string]$Repo = "dccoding1118/job-finder",
     [switch]$Keep
@@ -54,6 +57,11 @@ Set-StrictMode -Version Latest
 # The extension ID is a constant: manifest.json carries a fixed key, so Chrome
 # derives the same ID on every machine and for every version.
 $extensionId = "oddnhajjhmgogefocnljofeahniodiei"
+
+# The two mode switches select one mode between them, so asking for both at
+# once is a contradiction rather than a last-one-wins.
+if ($Extension -and $All) { throw "-Extension and -All cannot be combined" }
+$mode = if ($Extension) { "extension" } elseif ($All) { "both" } else { "backend" }
 
 function Write-Step([string]$Message) { Write-Host "==> $Message" -ForegroundColor Cyan }
 
@@ -158,8 +166,8 @@ The backend only answers requests from it once its config carries
 try {
     Invoke-WebRequest -Uri "$base/SHA256SUMS" -OutFile (Join-Path $work "SHA256SUMS") -UseBasicParsing
 
-    if ($Mode -ne "extension") { Install-Backend }
-    if ($Mode -ne "backend") { Install-Extension }
+    if ($mode -ne "extension") { Install-Backend }
+    if ($mode -ne "backend") { Install-Extension }
 }
 finally {
     if (-not $Keep) { Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue }
