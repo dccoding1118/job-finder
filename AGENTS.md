@@ -198,6 +198,7 @@ MVP 以 `jobfinder run` 作為 one-shot 的批次更新，由每日排程觸發�
 - Windows PowerShell 5.1 的 `Set-Content`／`>`／`Out-File` 預設不是 UTF-8（分別是 ANSI code page 與 UTF-16）。改 `config.yaml` 一律用 `[System.IO.File]::WriteAllText(..., UTF8Encoding($false))`；寫壞的設定會讓 `serve` 在掛上日誌前就失敗，Windows 上看不到任何錯誤。
 - extension Options 接受的 host 必須與 `manifest.json` 的 `host_permissions` 一致（`127.0.0.1`、`[::1]`）。多接受一個 `localhost` 會存得進去卻在 fetch 被擋，症狀是「存好了但離線」；IPv6 從 URL 解析出來帶方括號。
 - 排程狀態不得靠 `schtasks` 的文字輸出判定——那是安裝語系相依的；一律走 PowerShell 的 ScheduledTasks cmdlet 取物件屬性。
+- `go.mod` 的 `go` directive 釘在 1.23.0；升相依套件時必看 `git diff go.mod` 的 `go` 行。`go get` 會為了滿足新相依悄悄改寫 directive 且不發警告，本機因 Go 自動下載對應 toolchain 而毫無症狀，到 `GOTOOLCHAIN=local` 的環境才編不動。抬高 directive 的代價落在靜態分析工具層而非編譯器：golangci-lint、staticcheck、gopls 各自綁死一個可解析的 Go 版本，directive 超前時本機 lint 與 IDE 無法 typecheck。要維持原版本用 `go mod edit -go=1.23.0 -toolchain=none` 再挑相容的相依版本，各版本的 directive 以 `grep -m1 "^go " $(go env GOMODCACHE)/<module>@<ver>/go.mod` 查。仍相容的上緣為 `modernc.org/sqlite` 1.39.0 與 `golang.org/x/sys` 0.35.0，更高版已由 `.github/dependabot.yml` 擋下。
 
 ## 7. 怎麼上版
 
