@@ -115,6 +115,15 @@ Get-ChildItem -Recurse $dest | Unblock-File
 
 印出的 `version` 是 tag 去掉 `v` 的語意版號，要與 `jobfinder version` 對得上。壓縮檔留在暫存目錄；版本目錄是**常駐**的，Chrome 每次啟動都要從那裡讀檔，不能刪也不能搬。
 
+release 可公開取得時，這一步可交給 bootstrap 腳本的 extension 模式（走匿名下載，不需 `gh`）：
+
+```powershell
+irm https://raw.githubusercontent.com/dccoding1118/job-finder/main/scripts/bootstrap/install.ps1 -OutFile install.ps1
+powershell -ExecutionPolicy Bypass -File .\install.ps1 -Mode extension -Version $VER
+```
+
+它做的是同一件事：下載、驗 `SHA256SUMS`、解壓到同一個版本目錄、解除 Mark of the Web，最後印出目錄位置。4.2 起的步驟不變。
+
 **4.2 換掉 Chrome 裡的卡片**
 
 1. Chrome 開 `chrome://extensions`，右上「開發人員模式」保持開啟

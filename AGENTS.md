@@ -181,7 +181,7 @@ mise run lint         # 執行 golangci-lint
 
 MVP 以 `jobfinder run` 作為 one-shot 的批次更新，由每日排程觸發（Linux systemd user timer、Windows Task Scheduler）；API service 只綁 loopback 並承載常駐 worker，Side Panel 透過其設定的 loopback endpoint 存取。預設形態是後端與瀏覽器同機；後端在遠端機器時需自行把遠端 loopback 轉送到本機 loopback，屬選配路徑，見 `docs/guides/runbook-extension.md`。
 
-**安裝語意集中在 binary 的 `install`／`update`／`rollback` 子命令**（`internal/install`），Linux 與 Windows 共用同一份實作，平台差異只剩排程掛載與執行檔數量：Windows 另裝一支 GUI subsystem 的 `jobfinderw.exe` 給排程執行（否則常駐服務會在桌面留一個主控台視窗），兩支同版、一起更新與回滾。`scripts/bootstrap/install.sh`／`install.ps1` 只負責下載工件、驗 `SHA256SUMS`、解壓並交棒；`scripts/deploy/*.sh`（`mise run deploy-*`）是開發 checkout 的 wrapper，跑完 `fmt`／`lint`／`test`／`build` 後把剛建置的 binary 交給同一組子命令。這些入口與 `scripts/verify/` 的驗收 harness 分離、**不由任何 `e2e-*` 任務呼叫**、不碰 `.local-dev/`。驗證一律打在生效面（執行中 process 的執行檔與啟動時間），非安裝面。完整步驟與契約見 `docs/deploy.md` §2–§4。
+**安裝語意集中在 binary 的 `install`／`update`／`rollback` 子命令**（`internal/install`），Linux 與 Windows 共用同一份實作，平台差異只剩排程掛載與執行檔數量：Windows 另裝一支 GUI subsystem 的 `jobfinderw.exe` 給排程執行（否則常駐服務會在桌面留一個主控台視窗），兩支同版、一起更新與回滾。`scripts/bootstrap/install.sh`／`install.ps1` 只負責下載、驗 `SHA256SUMS` 與解壓，分三種模式（`backend`／`extension`／`both`，預設 `backend`）：後端模式解壓後依常駐 binary 是否存在交棒 `install` 或 `update`；extension 模式把 extension zip 解壓到 `<資料目錄>/jobfinder/extension/<tag>` 並印出 Chrome 的人工步驟——extension 沒有任何安裝語意，所以這條路只在腳本內，不進子命令；`scripts/deploy/*.sh`（`mise run deploy-*`）是開發 checkout 的 wrapper，跑完 `fmt`／`lint`／`test`／`build` 後把剛建置的 binary 交給同一組子命令。這些入口與 `scripts/verify/` 的驗收 harness 分離、**不由任何 `e2e-*` 任務呼叫**、不碰 `.local-dev/`。驗證一律打在生效面（執行中 process 的執行檔與啟動時間），非安裝面。完整步驟與契約見 `docs/deploy.md` §2–§4。
 
 ### 已知雷
 
