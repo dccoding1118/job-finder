@@ -12,17 +12,19 @@
 
 - 隔離的測試後端不需要動 `internal/paths`：`serve`、`run` 都收 `--config`，而 `db.path`、`profile.path`、`log.file`、`api.addr`、`api.token`、`api.extension_origin` 全在設定檔內，因此第二份設定檔就足以撐起一個獨立實例。服務掛載走 `systemd-run --user --unit=<name>`（`scripts/verify/run-live.sh` 已用這個方式跑 transient 單元），不寫進 `~/.config/systemd/user/`，正式的 `jobfinder-api.service` 不受影響。
 
-- 安裝腳本的現況與缺口：`scripts/bootstrap/install.sh` 與 `install.ps1` 已經存在，也已經收 `--version`／`-Version`，做的正是「下載工件 → 驗 `SHA256SUMS` → 解壓 → 交棒 `jobfinder install`」。要讓「每次發版只說跑哪支腳本、裝哪個版號」成立，缺的是三件事：(1) 兩者走匿名 `curl`／`Invoke-WebRequest`，private repo 一律 404，得補一條 `gh` CLI 下載路徑才跑得動；(2) 交棒的是 `install` 而非 `update`——雖然兩者共用同一組 `placeBinaries`（`.prev` 一樣會留），但命令語意與換版文件不一致，宜依現場是否已有安裝自動選；(3) extension 沒有對應腳本。另外 `install.ps1` 解壓後沒有對工件 `Unblock-File`，MOTW 會傳到解出來的 exe。
-
-- Chrome 載入未封裝 extension 沒有 CLI 入口（`docs/verify.md` 明列為整套流程中唯一必須人工完成的部分），所以 extension 的安裝腳本最多做到「下載、驗 checksum、解壓到版本目錄、`Unblock-File`、印出後續步驟與 token」，移除舊卡片、載入新目錄、重填 Options 這四步永遠是手動。
-
 ## §2 未完成任務
 
 **公開前置（依序完成後才轉 public）**
 
-- [ ] bootstrap 腳本路徑的實測：`install.sh` 與 `install.ps1` 的匿名下載路徑，以及 `getting-started.md` §3.1 的 `raw.githubusercontent.com` 單行安裝。須待轉 public（見 §1）。`docs/verify.md` §6.1 的 D1–D9 與 D5A／D6A／D6B 已於兩平台全數通過，只剩這一項。
+- [ ] bootstrap 腳本路徑的實測：`install.sh` 與 `install.ps1` 三種模式的匿名下載路徑，以及 `getting-started.md` §3.1 的 `raw.githubusercontent.com` 單行安裝。須待轉 public（見 §1）。`docs/verify.md` §6.1 的 D1–D9 與 D5A／D6A／D6B 已於兩平台全數通過，只剩這一項。
 
-- [ ] 可觀測性改動（`v0.2.0`）的實機驗證：抓取進行中的「進行中」區塊與已耗時、批次歷程的中文用語與執行狀態、Agent 呼叫進行中的顯示、閒置時不發請求、資料庫升級到 schema v9。驗收步驟見 PR #36 的「驗收方式」。升級後本次改動之前的未收尾批次會顯示為「已中斷」，屬預期行為。
+- [ ] `install.sh` 與 `install.ps1` 改為三種模式：**只裝後端**（現行行為：下載平台工件、驗 `SHA256SUMS`、解壓、交棒 `jobfinder install`／`update`）、**只裝 extension**、**兩者都裝**。轉 public 只解決匿名下載 404，不會補上 extension 這條 lane——兩支腳本從頭到尾只下載該平台的工件，extension zip 沒有任何腳本會去拿。實作要點：
+  - extension 模式：下載 `jobfinder-extension_<tag>.zip`、驗 checksum、解壓到 `getting-started.md` §5.1 已定的版本目錄（Linux `~/.local/share/jobfinder/extension/<tag>`、Windows `%LOCALAPPDATA%\jobfinder\extension\<tag>`）、Windows 另跑 `Unblock-File`，然後印出 Chrome 的四個手動步驟與 extension ID。extension 沒有任何安裝語意（無設定渲染、無 token、無排程、無生效面驗證），所以整條路留在腳本內，不進 `jobfinder install`、不併進平台工件。
+  - 預設維持只裝後端：`getting-started.md` §3.1 的單行安裝目前承諾的就是裝後端，改預設會讓已寫進文件的那一行行為變樣。另外兩種走明確旗標。
+  - 遠端拓撲靠 extension 模式成立：那台 Windows 沒有後端也不該被裝出一個後端服務。
+  - 同批修掉 `install.ps1` 解壓後未 `Unblock-File` 的缺口（MOTW 會傳給解出來的 exe），並讓後端模式依現場有無既有安裝自動選 `install` 或 `update`。
+  - **不補 `gh` 下載路徑**：公開後匿名路徑就通了，補了只為了在 private 下先測一次，之後即是死碼。因此這項是「先寫、轉 public 當天隨即實測」。
+  - Chrome 的「載入未封裝項目」沒有 CLI 入口（`docs/verify.md` 明列為整套流程中唯一必須人工完成的部分），腳本的終點是把目錄準備好並印出後續步驟；移除舊卡片、載入新目錄、重填 Options 這四步永遠是手動。
 
 - [ ] 公開 GitHub repo。多數資安與對外可見度設定被 private＋免費方案擋住，須依下列**硬順序**在轉 public 當天一次做完（Dependabot alerts 與 automated security fixes 已於 private 階段開啟）：
   1. 本地備妥 `.github/workflows/codeql.yml`（**先別推**——private repo 的 `analyze` job 會恆紅）。
@@ -30,15 +32,15 @@
   3. 開啟 secret scanning ＋ push protection、Private vulnerability reporting（`SECURITY.md` 指向後者）。
   4. 推 codeql 分支並開 PR，讓 CI ＋ codeql 在**已 public** 的 repo 上首跑；README 補上 CodeQL badge。
   5. 全綠合併 → 設 main 分支保護（required status checks 填 `check`、`windows`、`analyze`；solo dev 不設 required reviews，會卡死自己）。
-  6. 轉 public 後補驗 bootstrap 腳本：`install.sh` 與 `install.ps1` 的匿名下載路徑，以及 `getting-started.md` §3.1 的 `raw.githubusercontent.com` 單行安裝（見 §1）。
+  6. 轉 public 後補驗 bootstrap 腳本：`install.sh` 與 `install.ps1` 三種模式（只裝後端／只裝 extension／兩者）的匿名下載路徑，以及 `getting-started.md` §3.1 的 `raw.githubusercontent.com` 單行安裝（見 §1）。
 
   `v0.1.0` 至 `v0.3.4` 已於 private 階段發出（工件與 checksum 齊備、版號注入正常），轉 public 後不需重打。
 
-- [ ] 兩台機器升級到 `v0.3.4`：後端與 extension 同版一起換。本版只動 extension，後端 binary 與 `v0.3.3` 相同、資料庫 schema 不變。升級後在職缺頁確認產製歷程逐輪呈現，每輪的信件與審查結果排在一起。
+**與公開無關（可獨立進行）**
 
 - [ ] 生效面驗證失敗時附上服務輸出（`docs/changes/change-update-effect-surface.md` §2 D3）的實機驗證：以 `v0.2.0` 工件對 schema 10 的資料庫跑 `update`，錯誤訊息應在「服務不是 active」之後附上 `database schema version 10 is newer than supported version 9`。此情境不能用連續兩次 `rollback` 製造——回滾只退一版。
 
-- [ ] 建立隔離的測試環境（本次需求改完之後才動工）。目標是同一台 Linux 同時跑正式與測試兩套、Windows Chrome 同時掛正式與測試兩個 extension，兩邊互不影響。落點與範圍：
+- [ ] 建立隔離的測試環境。目標是同一台 Linux 同時跑正式與測試兩套、Windows Chrome 同時掛正式與測試兩個 extension，兩邊互不影響。落點與範圍：
   - **測試後端**：獨立設定檔（自己的 `api.addr` 埠、`db.path`、`profile.path`、`log.file`、`api.token`），以 `systemd-run --user` 掛 transient 單元跑 `serve --config`，正式服務不停機也不改動。
   - **測試資料**：資料庫取正式庫的副本，不共用檔案；預設不掛抓取排程——抓取與 Agent 呼叫共用同一組外部額度，兩套同時自動跑會重複消耗。要跑抓取時以 `run --config` 手動觸發。
   - **測試 extension**：本機打包腳本（複製 `extension/`、改寫 `manifest.json` 的 `version` 與名稱、移除固定 `key`、輸出到固定目錄），產物可直接載入 Chrome，與正式 extension 並存；測試後端設定的 `api.extension_origin` 填該測試 ID。
