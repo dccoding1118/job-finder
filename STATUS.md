@@ -18,16 +18,14 @@
 
 - [ ] bootstrap 腳本路徑的實測：`install.sh` 與 `install.ps1` 三種模式（只裝後端／只裝 extension／兩者）的匿名下載路徑，以及 `getting-started.md` §3.1 的 `raw.githubusercontent.com` 單行安裝。須待轉 public（見 §1）。`docs/verify.md` §6.1 的 D1–D9 與 D5A／D6A／D6B 已於兩平台全數通過；三模式改動後須重跑 D1、D5 與新增的 D10。
 
-- [ ] 補上 repo 的對外門面：`description`、`topics`、`homepageUrl` 目前皆為空（`gh repo edit --description … --add-topic …`），並關掉沒在用的 Projects 分頁（`gh repo edit --enable-projects=false`）。Wiki 已關閉。
-
 - [ ] 準備一個**無既有安裝**的環境給 D1 用：轉 public 當天要重跑的 D1 要求「在無既有安裝的環境執行 bootstrap 腳本」，而這台只有正式環境，正式安裝就地存在。臨時容器或另一台乾淨機器皆可，不必等隔離測試環境落地。
 
 - [ ] 公開 GitHub repo。多數資安與對外可見度設定被 private＋免費方案擋住，須依下列**硬順序**在轉 public 當天一次做完（Dependabot alerts 與 automated security fixes 已於 private 階段開啟）：
-  1. 本地備妥 `.github/workflows/codeql.yml`（**先別推**——private repo 的 `analyze` job 會恆紅）。
+  1. `.github/workflows/codeql.yml` 已備妥並推上分支 `ci/codeql`，未開 PR——private repo 的 code scanning 需要付費的 GitHub Code Security，`analyze` job 上傳結果會收到 403 而恆紅。掃描範圍為 Go 後端與 extension 的 JavaScript 兩個語言，排除 `ui-design` 與 `scripts/verify/browser`。
   2. `gh repo edit dccoding1118/job-finder --visibility public`（直接生效，不需 `--accept-visibility-change-consequences`，該旗標在部分 gh 版本會報 unknown flag）。
   3. 開啟 secret scanning ＋ push protection、Private vulnerability reporting（`SECURITY.md` 指向後者）。
-  4. 推 codeql 分支並開 PR，讓 CI ＋ codeql 在**已 public** 的 repo 上首跑；README 補上 CodeQL badge。
-  5. 全綠合併 → 設 main 分支保護（required status checks 填 `check`、`windows`、`analyze`；solo dev 不設 required reviews，會卡死自己）。
+  4. 為 `ci/codeql` 開 PR，讓 CI ＋ CodeQL 在**已 public** 的 repo 上首跑；README 補上 CodeQL badge。開 PR 前先 rebase 到最新 `main` 並確認 `codeql-action`、`checkout`、`setup-go` 的版本——Dependabot 只掃預設分支，這條分支上的 action 版本不會自動升。
+  5. 全綠合併 → 設 main 分支保護（required status checks 填 `check`、`windows`、`analyze (go)`、`analyze (javascript-typescript)`——CodeQL 走語言矩陣，檢查名稱帶語言後綴；solo dev 不設 required reviews，會卡死自己）。
   6. 轉 public 後補驗 bootstrap 腳本：`install.sh` 與 `install.ps1` 三種模式（只裝後端／只裝 extension／兩者）的匿名下載路徑，以及 `getting-started.md` §3.1 的 `raw.githubusercontent.com` 單行安裝（見 §1）。
   7. 驗只在 public 才生效的對外流程：以另一個帳號送一個 PR，確認 `close-external-pr.yml` 留言並關閉；確認 issue 模板與 `SECURITY.md` 指向的 Report a vulnerability 入口都出得來。
 
