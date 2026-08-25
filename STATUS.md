@@ -1,6 +1,6 @@
 # STATUS — job-finder（MVP 開發）
 
-> 最後更新：2026-08-24。規劃文件見 `docs/PRD.md`、`docs/design.md`、`docs/roadmap.md`、`docs/deploy.md`、`docs/designs/`。
+> 最後更新：2026-08-25。規劃文件見 `docs/PRD.md`、`docs/design.md`、`docs/roadmap.md`、`docs/deploy.md`、`docs/designs/`。
 
 ## §1 未歸檔結論
 
@@ -17,8 +17,6 @@
 **公開前置（依序完成後才轉 public）**
 
 - [ ] bootstrap 腳本路徑的實測：`install.sh` 與 `install.ps1` 三種模式（只裝後端／只裝 extension／兩者）的匿名下載路徑，以及 `getting-started.md` §3.1 的 `raw.githubusercontent.com` 單行安裝。須待轉 public（見 §1）。`docs/verify.md` §6.1 的 D1–D9 與 D5A／D6A／D6B 已於兩平台全數通過；三模式改動後須重跑 D1、D5 與新增的 D10。
-
-- [ ] 收掉剩下的 dependabot PR。三個都改 `go.mod` 與 `go.sum`，任一合併都會讓另外兩個變衝突，須逐個合併、中間對後續兩個留言 `@dependabot rebase`。順序：#52（`sqlite` 1.39.0，連帶帶進 `x/sys` 0.34.0）→ #51（`x/sys` 0.35.0）→ #24（`cobra` 1.10.2）。三者皆維持 `go 1.23.0`。
 
 - [ ] 補上 repo 的對外門面：`description`、`topics`、`homepageUrl` 目前皆為空（`gh repo edit --description … --add-topic …`），並關掉沒在用的 Projects 分頁（`gh repo edit --enable-projects=false`）。Wiki 已關閉。
 
