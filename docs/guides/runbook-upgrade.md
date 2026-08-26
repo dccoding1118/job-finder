@@ -142,7 +142,7 @@ $cfg = Join-Path $env:LOCALAPPDATA 'jobfinder\config\config.yaml'
 (Select-String -Path $cfg -Pattern '^\s{2}token:').Line.Split(':')[1].Trim()
 ```
 
-後端在遠端機器時，token 取自**那台**的設定檔，endpoint 填通道的本機 loopback（見 [遠端後端通道](runbook-extension.md)）。本機部署則填 `http://127.0.0.1:8686`。
+後端在別台機器時，token 取自**那台**的設定檔，endpoint 填轉送後的本機 loopback。同機部署則填 `http://127.0.0.1:8686`。
 
 在 jobfinder 卡片點「詳細資料」→「擴充功能選項」填入兩欄，按儲存；顯示「已儲存」且 token 欄位清空即成功。Options 只收 loopback HTTP endpoint。
 

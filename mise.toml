@@ -35,6 +35,10 @@ run = "npm exec -- playwright install-deps chromium"
 description = "Run repeatable mock E2E verification without external services or LLMs"
 run = "scripts/verify/run-mock.sh && scripts/verify/run-profile-mock.sh && scripts/verify/run-worker-mock.sh"
 
+[tasks.e2e-deploy]
+description = "Run the automated deployment verification group in an isolated install root"
+run = "scripts/verify/run-deploy.sh"
+
 [tasks.e2e-live]
 description = "Run opt-in live E2E verification with an external source and LLMs"
 run = "scripts/verify/run-live.sh"

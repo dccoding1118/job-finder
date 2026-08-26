@@ -23,7 +23,7 @@ MVP 的功能規格見 [PRD](PRD.md)；本文件回答三個問題：**現在的
 
 extension 對後端只認 **endpoint ＋ auth**，兩種部署共用同一顆已上架的 extension。代管服務的帳號、計費與營運不在本 repo。
 
-**自部署的預設是後端與瀏覽器同機**，extension 直連 loopback，沒有通道問題。後端跑在遠端機器時才需自行把遠端 loopback port 轉送到本機（見 `docs/guides/runbook-extension.md`），那是特定環境的作法而非產品路徑。
+**自部署支援的形態是後端與瀏覽器同機**，extension 直連 loopback。後端放在別台機器時，把那台的 loopback port 轉送到本機由使用者自理，不是產品路徑。S2 的「extension 後端無關化」才讓 Options 的位址欄位能真正指向遠端主機。
 
 ## 3. 現在的 MVP 是什麼
 

@@ -1,12 +1,18 @@
 # STATUS — job-finder（MVP 開發）
 
-> 最後更新：2026-08-25。規劃文件見 `docs/PRD.md`、`docs/design.md`、`docs/roadmap.md`、`docs/deploy.md`、`docs/designs/`。
+> 最後更新：2026-08-26。規劃文件見 `docs/PRD.md`、`docs/design.md`、`docs/roadmap.md`、`docs/deploy.md`、`docs/designs/`。
 
 ## §1 未歸檔結論
 
 - private repo 下 `scripts/bootstrap/install.sh`／`install.ps1` 無法驗證：兩者以匿名 `curl`／`Invoke-WebRequest` 打 `api.github.com/releases/latest` 與 `releases/download`，private repo 一律 404；`getting-started.md` §3.1 的 `raw.githubusercontent.com` 單行安裝同理。這是設計取捨（bootstrap 服務的是公開使用者），不是缺陷，但實測只能排在轉 public 之後。
 
-- 目前只有正式環境，沒有測試環境：實機驗收只能把 checkout 建置或 release 工件裝進正式安裝位置（`mise run deploy-install`／`deploy-update`），代價是正式服務短暫停機、版號變成 `dev (<commit>)`、且與正式資料庫共用同一份資料。過渡期照這個方式跑，額外守則兩條——動到 schema 的改動實測前先備份 `~/.local/share/jobfinder/jobs.db`（連同 `-wal`、`-shm`）；驗完以 `mise run deploy-rollback` 或 release 工件的 `update` 回到正式版。測試環境建立之前不改這個作法。
+- 環境分工已定案：正式後端只有一份，放一台新的 GCP VM；本台 GCP VM 與本機 Windows 都是測試部署；改動先在兩個測試後端驗過，再跑 release 發布到正式 VM。正式搬離本台之後，這台的 `mise run deploy-install` 不再覆蓋任何正式資產，測試安裝就是這台機器上的一般安裝，不需要獨立設定檔與 transient 單元那套。搬遷完成前，實機驗收仍照舊：動到 schema 的改動先備份 `~/.local/share/jobfinder/jobs.db`（連同 `-wal`、`-shm`），驗完以 `mise run deploy-rollback` 回到正式版。
+
+- 正式後端不放兩份：兩台各跑一份就是兩份各自獨立的 `jobs.db`，職缺狀態、去重分群與求職信歷程各記各的；且兩邊都掛每日抓取時，同一組 Agent 額度會被消耗兩次。Windows 那台的價值在於它是 D7／D8／D9 唯一能跑的地方，不在於當正式的第二個家。
+
+- 正式後端選 Linux 而非 Windows 桌機：每日抓取的排程契約是錯過不補跑（Linux `Persistent=false`、Windows `StartWhenAvailable=false`），Windows 桌機關機一晚就漏一天；Linux 側有 linger，登出關終端都不影響常駐。
+
+- 官方支援的部署形態只有一種：後端與瀏覽器同機。`extension/manifest.json` 的 `host_permissions` 只有 `http://127.0.0.1/*` 與 `http://[::1]/*`，`internal/install/smoke.go` 的 `assertLoopback` 又會在安裝時拒絕非 loopback 的 `api.addr`——這是程式碼強制的邊界。遠端後端由使用者自理，本 repo 不提供作法；個人的 GCP IAP 通道手冊已移出版控到 `.local-dev/personal-ops/runbook-extension.md`。讓 Options 的位址欄位能真正填遠端主機，需要 extension 改用 `optional_host_permissions`，屬 roadmap S2。
 
 - 測試 extension 不必經 GitHub 或發版：`release.yml` 的打包步驟就是「複製 `extension/`、改寫 `manifest.json` 的 `version`、壓成 zip」，本機以 `python3` 的 `zipfile` 即可重現（這台沒有 `zip` 指令）。要讓測試版與正式版**同時**存在於同一個 Chrome，關鍵是 `manifest.json` 內的固定 `key` 必須移除或改掉——ID 由它決定，兩個同 ID 的未封裝 extension 無法並存。移除 `key` 後 ID 改由載入目錄路徑決定，固定目錄即得到固定的測試 ID，該 ID 要填進測試後端設定的 `api.extension_origin`。
 
@@ -16,9 +22,9 @@
 
 **公開前置（依序完成後才轉 public）**
 
-- [ ] bootstrap 腳本路徑的實測：`install.sh` 與 `install.ps1` 三種模式（只裝後端／只裝 extension／兩者）的匿名下載路徑，以及 `getting-started.md` §3.1 的 `raw.githubusercontent.com` 單行安裝。須待轉 public（見 §1）。`docs/verify.md` §6.1 的 D1–D9 與 D5A／D6A／D6B 已於兩平台全數通過；三模式改動後須重跑 D1、D5 與新增的 D10。
+- [ ] bootstrap 腳本路徑的實測：`install.sh` 與 `install.ps1` 三種模式（只裝後端／只裝 extension／兩者）的匿名下載路徑，以及 `getting-started.md` §3.1 的 `raw.githubusercontent.com` 單行安裝。須待轉 public（見 §1）。剩下的只有下載那一段——安裝本身已由 `mise run e2e-deploy` 在隔離根內每次驗過。
 
-- [ ] 準備一個**無既有安裝**的環境給 D1 用：轉 public 當天要重跑的 D1 要求「在無既有安裝的環境執行 bootstrap 腳本」，而這台只有正式環境，正式安裝就地存在。臨時容器或另一台乾淨機器皆可，不必等隔離測試環境落地。
+- [ ] Windows 側的部署驗收自動組：Linux 側已由 `mise run e2e-deploy` 落地（D1／D2／D3／D5／D5A／D6／D6B）。Windows 對稱做法是以 `$env:LOCALAPPDATA` 指向隔離根，並在 PATH 最前放一個 `powershell.cmd` 攔截 `Register-ScheduledTask`（`.cmd` 在 `PATHEXT` 內，Go 的 `exec.LookPath` 會先找到它）；此路徑尚未在 Windows 實機驗證過。
 
 - [ ] 公開 GitHub repo。多數資安與對外可見度設定被 private＋免費方案擋住，須依下列**硬順序**在轉 public 當天一次做完（Dependabot alerts 與 automated security fixes 已於 private 階段開啟）：
   1. `.github/workflows/codeql.yml` 已備妥並推上分支 `ci/codeql`，未開 PR——private repo 的 code scanning 需要付費的 GitHub Code Security，`analyze` job 上傳結果會收到 403 而恆紅。掃描範圍為 Go 後端與 extension 的 JavaScript 兩個語言，排除 `ui-design` 與 `scripts/verify/browser`。
@@ -35,13 +41,18 @@
 
 - [ ] 生效面驗證失敗時附上服務輸出（`docs/changes/change-update-effect-surface.md` §2 D3）的實機驗證：以 `v0.2.0` 工件對 schema 10 的資料庫跑 `update`，錯誤訊息應在「服務不是 active」之後附上 `database schema version 10 is newer than supported version 9`。此情境不能用連續兩次 `rollback` 製造——回滾只退一版。
 
-- [ ] 建立隔離的測試環境。目標是同一台 Linux 同時跑正式與測試兩套、Windows Chrome 同時掛正式與測試兩個 extension，兩邊互不影響。落點與範圍：
-  - **測試後端**：獨立設定檔（自己的 `api.addr` 埠、`db.path`、`profile.path`、`log.file`、`api.token`），以 `systemd-run --user` 掛 transient 單元跑 `serve --config`，正式服務不停機也不改動。
-  - **測試資料**：資料庫取正式庫的副本，不共用檔案；預設不掛抓取排程——抓取與 Agent 呼叫共用同一組外部額度，兩套同時自動跑會重複消耗。要跑抓取時以 `run --config` 手動觸發。
-  - **測試 extension**：本機打包腳本（複製 `extension/`、改寫 `manifest.json` 的 `version` 與名稱、移除固定 `key`、輸出到固定目錄），產物可直接載入 Chrome，與正式 extension 並存；測試後端設定的 `api.extension_origin` 填該測試 ID。
-  - **Windows 連線**：另開一條通往測試埠的通道，測試 extension 的 Options 指向它。
-  - **binary 隔離（已定案）**：`jobfinder install` 不加 `--instance`。安裝流程服務的是正式環境，測試實例的執行檔放自己的目錄、以完整路徑執行、不進 PATH，也不經 `install`／`update`／`rollback`——否則測試用的建置會覆蓋掉正式環境的 binary，正是要避免的事。
-  - **文件**：`docs/changes/change-test-environment.md` 記動機與決策，`docs/deploy.md`、`docs/verify.md`、`docs/guides/runbook-extension.md` 落最新狀態。
+- [ ] 把正式後端搬到新的 GCP VM，本台改為測試部署（決策見 §1）。步驟：
+  - **新 VM**：跑正式安裝、開 linger、掛 `jobfinder-api.service` 與 `jobfinder-run.timer`；搬 `jobs.db`（含 `-wal`、`-shm`）、`profile.yaml`、`config.yaml` 的 `api.token` 與 `api.extension_origin`。首次安裝即一次真實的人工組 D1。
+  - **本台**：停止並移除正式的 systemd unit，改以 `mise run deploy-install` 當測試安裝；停掉每日抓取的 timer，要抓取時手動 `jobfinder run`——Agent 額度只有一組。
+  - **測試 extension**：本機打包（複製 `extension/`、改寫 `manifest.json` 的 `version` 與名稱、移除固定 `key`、輸出到固定目錄），與正式 extension 並存；兩個測試後端的 `api.extension_origin` 都填該測試 ID，Options 在兩者之間切換。
+  - **文件**：`docs/changes/change-test-environment.md` 記動機與決策，`docs/deploy.md` 與 `docs/verify.md` 落最新狀態。
+
+- [ ] 讓 Windows 端的 local ssh forward 不再有 PuTTY 視窗（下個 session 專題）。背景與方案：
+  - **現況**：正式後端在遠端 Linux，而官方形態只支援 loopback（見 §1），所以 Windows 這端必須自行把遠端的 `8686` 轉送到本機 `18686`。作法留在 `.local-dev/personal-ops/runbook-extension.md`。
+  - **視窗的根因**：Windows 版 gcloud SDK 內附 `putty.exe`，`gcloud compute ssh` 預設呼叫它，而它是 GUI subsystem 程式，會自己建視窗——與工作是否背景執行無關。與 `deploy.md` §2 講 `jobfinderw.exe` 存在的理由是同一件事，差別在 PuTTY 沒有無視窗版本可換。
+  - **待評估方案一**：Task Scheduler 的工作改勾「不論使用者是否登入均執行」。工作在非互動 session 跑，視窗不畫到桌面，工作管理員仍看得到行程。代價是要儲存 Windows 帳號密碼；且該模式沒有桌面可彈對話框，PuTTY 一旦需要互動（host key 確認、key passphrase）就會卡住，前置必須先在前景做完。
+  - **待評估方案二**：改用 Windows 10 內建的 OpenSSH `ssh.exe`（console subsystem），以 `wscript.exe` 跑 `WScript.Shell.Run(cmd, 0, False)` 隱藏啟動，走 IAP 時用 `gcloud compute start-iap-tunnel --listen-on-stdin` 當 ProxyCommand。不必存密碼，零件較多。
+  - **已知限制**：換網路（有線換手機熱點）一定會斷，這是 TCP 的必然而非 SSH 的缺陷；要撐過換網路只能改用 UDP 且無連線狀態的 VPN，那需要在 VM 開 inbound port，本輪未採用。
 
 **Roadmap（暫不實作，規劃見 `docs/roadmap.md`）**
 

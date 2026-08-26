@@ -142,7 +142,7 @@ Job 有兩條正交的狀態軸，擁有權不同：
 - **R6.3** 一鍵複製求職信至剪貼簿。
 - **R6.4** 投遞狀態變更（按鈕/下拉，MVP 不做拖曳看板），每次變更寫入 StatusEvent。
 - **R6.5** 手動觸發一輪抓取與檢視 Run 歷史（含該輪職缺的現行判定分布）。
-- **R6.6** Chrome 原生 Side Panel 是唯一日常操作入口，toolbar action 直接開啟；固定提供「目前職缺、待看、推薦、系統」四個頁籤。Options 可設定 localhost API endpoint 與 token。API 僅監聽 loopback；遠端部署時，extension 透過 SSH local forward 存取本機轉送埠。
+- **R6.6** Chrome 原生 Side Panel 是唯一日常操作入口，toolbar action 直接開啟；固定提供「目前職缺、待看、推薦、系統」四個頁籤。Options 可設定 localhost API endpoint 與 token。API 僅監聽 loopback，Options 的 endpoint 恆為本機位址。
 - **R6.7** 待看頁籤列出 `discovered` 職缺（職稱、公司、薪資、原始連結），供使用者逐筆點開由 content script 補全文。
 - **R6.8** 求職信生成入口：推薦職缺（`shortlisted`）提供「產生求職信」動作，送出後顯示處理中，完成時呈現求職信或未過審結果；`letter_failed` 提供再次生成，已有求職信者提供重新產製。
 - **R6.9** Side Panel 支援淺色與深色主題；切換不得清除目前頁籤、職缺或操作狀態。主題選擇可持久化，JD、求職信與 token 不因 UI 快取而另存副本。

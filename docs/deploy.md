@@ -113,11 +113,13 @@ Agent 稽核資料保留在 SQLite 的 `agent_calls`。
 
 Windows 的 `Start-ScheduledTask` 對已在執行的工作是 no-op，和 systemd 的 `enable --now` 是同一個陷阱：更新一律先停、等 process 真的消失、再啟動。ScheduledTasks 模組沒有單一 cmdlet 能完成重啟，`Stop-ScheduledTask` 之後必須等到工作離開 `Running` 才呼叫 `Start-ScheduledTask`；服務行程在啟動時取得環境變數，改動 PATH 或補裝 Agent CLI 後同樣要走這一步。不得將驗收部署（`.local-dev/verify/`）的 binary、設定或 state 直接覆蓋日常使用目錄。
 
-## 5. 遠端後端（選配）與維運
+## 5. 後端位置的約束與維運
 
-**預設形態是後端與瀏覽器同機**：extension 直連 loopback，不需要本節。
+**支援的形態是後端與瀏覽器同機**，extension 直連 loopback。
 
-extension 的 `host_permissions` 只有 `http://127.0.0.1/*` 與 `http://[::1]/*`，後端位置不是「設定檔填一個 URL」可決定的——`api.addr` 只決定綁哪個 loopback port。因此後端跑在遠端機器時，必須自行把遠端的 loopback port 轉送到本機 loopback，extension Options 使用該本機 endpoint；不得將 service 改綁 `0.0.0.0` 作為替代。以 GCP IAP 為例的完整設定、自動重連、驗證與排障見 [遠端後端：Windows extension 與 GCP API 常駐通道](guides/runbook-extension.md)。真正的遠端／雲端 endpoint 需要 `optional_host_permissions` 的 runtime 授權，屬 `docs/roadmap.md` 的 S2 項目。
+後端位置不是「設定檔填一個 URL」可決定的：extension 的 `host_permissions` 只有 `http://127.0.0.1/*` 與 `http://[::1]/*`，`api.addr` 也只決定綁哪個 loopback port，且 `internal/install` 的生效面驗證會拒絕非 loopback 的位址。後端放在別台機器時，唯一可行的接法是把那台的 loopback port 轉送到本機 loopback，extension Options 填該本機 endpoint；這條路由使用者自行實作與維護，本 repo 不提供作法。把 service 改綁 `0.0.0.0` 不是替代方案——它讓 API 暴露在網路上，而驗證只有一個 Bearer token。
+
+讓 Options 的位址欄位真正可以填遠端主機，需要 extension 改用 `optional_host_permissions` 於 runtime 請求授權，屬 `docs/roadmap.md` 的 S2 項目。
 
 日常診斷見 §3 的診斷欄與 Side Panel 的 Run 歷史。驗證 systemd 環境時，以 `systemd-run --user --wait --pipe` 執行相同 binary／設定組合，API 使用 transient service，timer 使用 transient timer 實際觸發 one-shot；互動 shell 成功不構成 service 環境成功的證據。user bus 不可用時，開發驗收回 `ENVIRONMENT_BLOCKED`，不誤判為產品失敗。
 
