@@ -13,7 +13,8 @@
 在專案根目錄執行：
 
 ```bash
-mise run e2e-mock   # 物化隔離 artifact → 依序跑 V1/V2/V4/V5/V7 → 產生答案卷
+mise run e2e-mock     # 物化隔離 artifact → 依序跑 V1/V2/V4/V5/V7 → 產生答案卷
+mise run e2e-deploy   # 在隔離根內生成無既有安裝的環境 → 跑部署驗收自動組（§6.1）
 ```
 
 - **沙盒**：`.local-dev/verify/`（gitignored 隔離根，0700，不碰日常 Profile/設定/SQLite）。
@@ -27,6 +28,8 @@ mise run e2e-mock   # 物化隔離 artifact → 依序跑 V1/V2/V4/V5/V7 → 產
   | 答案卷 | `.local-dev/verify/evidence/<最新>-{mock,profile-mock,worker-mock}.md` | 逐案例觀察值＋PASS/FAIL；收尾 tally 與使用者故事重建 |
   | SQLite snapshot | `<binary> verify snapshot --db .local-dev/verify/runtime/mock.db` | 5 筆 Job 的終態、篩選逐條判定、四維分數、letter 輪次、狀態事件 |
   | browser evidence | `evidence/extension-browser.json`、`evidence/extension-dashboard.png` | extension 模擬互動的安全摘要與截圖 |
+
+- **`e2e-deploy` 的沙盒**：`.local-dev/verify/deploy/`，每趟開始前重建、結束後刪除。它把 `HOME`（Linux）或 `LOCALAPPDATA`（Windows）指向該目錄，因此 `jobfinder install` 的每個落點都在隔離根內，日常使用的設定、Profile 與 SQLite 不受影響。判準與涵蓋範圍見 §6.1。
 
 - **跑到哪停**：`mise run e2e-mock` 一趟涵蓋 V1／V2／V4／V5、V6 全部步驟、V7 的 S30–S36 與 S39 系列，以及 V8 的 S46、S52（✅），依序產生一般 mock、Profile mock 與 worker mock 三份答案卷。V3 live 需真 Yourator＋已授權 `claude`/`codex` CLI，另跑 `mise run e2e-live`（⏳，§6）。實際 Chrome 安裝與相容性一律人工 gate（👤，§9）。
 
@@ -214,29 +217,42 @@ mise run e2e-live
 
 開發中未提交變更可直接驗收。artifact manifest 以 binary/extension/config/unit checksum 為主要追溯；Git revision 與 dirty 狀態只作輔助，不構成執行閘門。
 
-## 6.1 部署人工 gate（每平台各一輪）
+## 6.1 部署驗收
 
 逐步操作見 [上手指南](guides/getting-started.md)；本節只定義判準。
 
-安裝流程寫入的是真實使用者環境，自動化 harness 一律不碰（`scripts/verify/` 只寫 `.local-dev/`）。因此每個受支援平台各有一輪人工 gate，動到 `internal/paths`、`internal/install`、排程模板或 bootstrap 腳本時重跑該平台。
+D 系列分自動與人工兩組。動到 `internal/paths`、`internal/install`、排程模板或 bootstrap 腳本時，自動組每次重跑，人工組重跑該平台。
+
+**自動組**由 `mise run e2e-deploy` 執行，落點全部在 `.local-dev/verify/deploy/` 內。`internal/paths` 是路徑的唯一決策點，Linux 側的位置由 `$HOME` 與 `XDG_*` 推導、Windows 側由 `%LOCALAPPDATA%` 推導，把這些變數指向隔離根即得到一個無既有安裝的環境，而安裝走的仍是與真實安裝完全相同的程式碼路徑。
 
 | 步驟 | 動作 | 標準答案（字面預期） |
 |---|---|---|
-| D1 全新安裝 | 在無既有安裝的環境執行 bootstrap 腳本（不帶旗標，即只裝後端；或解壓工件後跑 `jobfinder install`） | 印出的路徑與 `jobfinder paths` 一致；設定含隨機 token 且無 `CHANGE_ME`、無 `.local-dev/`；Linux 上設定為 `0600`；Windows 上 `bin\` 同時有 `jobfinder.exe` 與 `jobfinderw.exe`；生效面驗證全過 |
+| D1 全新安裝 | 在無既有安裝的環境執行 bootstrap 腳本（不帶旗標，即只裝後端；或解壓工件後跑 `jobfinder install`） | 印出的路徑與 `jobfinder paths` 一致；設定含隨機 token 且無 `CHANGE_ME`、無未替換的範例路徑佔位，且每個路徑都落在該次安裝的根之下；Linux 上設定為 `0600`；Windows 上 `bin\` 同時有 `jobfinder.exe` 與 `jobfinderw.exe`；生效面驗證全過 |
 | D2 既有設定不覆寫 | 改動 `api.extension_origin` 後重跑安裝 | 設定內容逐字不變，安裝仍成功 |
 | D3 排程實際觸發 | 手動觸發抓取工作（Linux `systemctl --user start jobfinder-run.service`；Windows `Start-ScheduledTask -TaskPath '\jobfinder\' -TaskName 'run'`） | 抓取實際執行並寫入 `runs`，該筆 `trigger` 為 `timer`；Linux 於 journald、Windows 於 `log.file` 看得到該趟記錄；Windows 上全程不出現主控台視窗 |
-| D4 Side Panel 直連 | extension Options 填 `http://127.0.0.1:8686` 與設定中的 token，開啟 Side Panel | 無任何通道即可讀寫；未帶 token 的請求回 401 |
 | D5 更新確實生效 | 對新版工件執行 `jobfinder update`，或在已有安裝的環境重跑 bootstrap 腳本（後端模式應自行改走 `update`） | 執行中 process 的執行檔為新 binary 且啟動時間晚於替換點；`jobfinder version` 為新版號；Windows 上兩支執行檔皆為新版 |
 | D5A 更新不依賴服務當下是否在跑 | 停止 API 後對新版工件執行 `jobfinder update` | 服務被重新啟動並通過生效面驗證；同一份工件再跑一次 `update` 時 `jobfinder.prev` 仍為前一版 |
 | D6 回滾 | `jobfinder rollback` | 執行中 process 為前一版；資料庫未被更動；`.bad` 保留了被回滾掉的版本；Windows 上兩支一起回到前一版，不出現版本不一致 |
 | D6A 回滾不依賴服務當下是否在跑 | 停止 API 後執行 `jobfinder rollback` | 服務被啟動並通過生效面驗證，執行中 process 為前一版 |
 | D6B 回滾只退一版 | 回滾後再執行一次 `jobfinder rollback` | 第二次被拒絕且不動任何檔案；`.bad` 仍是第一次回滾撤下來的版本 |
+| D10 bootstrap 的 extension 模式（⏳ 待 public） | 以 `--extension`／`-Extension` 執行 bootstrap 腳本 | extension 解壓於 `<資料目錄>/jobfinder/extension/<tag>` 且含 `manifest.json`；其 `version` 與 `jobfinder version` 對得上；Windows 上解出的檔案無 Mark of the Web；不建立任何服務、不寫入設定檔；印出的目錄可直接被 Chrome 載入 |
+
+自動組以 `--skip-verify` 安裝，隨後自行啟動 `serve` 補上 API 生效面檢查（帶 token 回 200、未帶回 401），涵蓋 `internal/install/smoke.go` 中不依賴服務管理器的那一半。服務層改以 transient 單元驗證，不寫入正式 unit 目錄、不註冊正式排程工作。每趟結束清除自己建立的 transient 單元與隔離根，中途失敗亦然。
+
+D10 需要匿名下載 GitHub release 工件，repo 尚未 public 前一律 404，因此暫時跑不了；轉 public 後併入自動組。
+
+**人工組**需要真 Chrome 或真實作業系統環境，每個受支援平台各一輪。
+
+| 步驟 | 動作 | 標準答案（字面預期） |
+|---|---|---|
+| D4 Side Panel 直連 | extension Options 填 `http://127.0.0.1:8686` 與設定中的 token，開啟 Side Panel | 無任何通道即可讀寫；未帶 token 的請求回 401 |
 | D7 PATH 與診斷（Windows） | 開新終端執行 `jobfinder paths` | 不需完整路徑即可執行；印出 `%LocalAppData%\jobfinder\` 下的位置，含 `jobfinderw.exe` 那列 |
 | D8 Agent CLI 可執行（Windows） | 讓一筆職缺實際走到評分 | npm 安裝的 `claude`／`codex` 可被叫起；失敗時錯誤指向 CLI 本身而非「不是有效的應用程式」；整段過程不彈出主控台視窗 |
 | D9 服務重啟不卡死（Windows） | 停止 api 工作，等 process 消失，再啟動 | 工作回到 `Running` 且 API 有回應。停止是直接終止行程，殘留的 worker 鎖檔不得阻擋下一次啟動 |
-| D10 bootstrap 的 extension 模式 | 以 `--extension`／`-Extension` 執行 bootstrap 腳本 | extension 解壓於 `<資料目錄>/jobfinder/extension/<tag>` 且含 `manifest.json`；其 `version` 與 `jobfinder version` 對得上；Windows 上解出的檔案無 Mark of the Web；不建立任何服務、不寫入設定檔；印出的目錄可直接被 Chrome 載入 |
 
-`--skip-verify` 不得用於本 gate：未經生效面驗證的安裝不算通過。
+人工組不得使用 `--skip-verify`：未經完整生效面驗證的安裝不算通過。
+
+自動組不涵蓋兩件事，兩者都由單元測試補上。systemd unit 寫進 manager 搜尋路徑再 `enable --now` 這一串，受限於 manager 的搜尋路徑在啟動時就固定，同一個登入 session 內無法改指向隔離根；Windows 的 Task Scheduler 工作資料夾 `\jobfinder\` 是常數，不隨 `%LOCALAPPDATA%` 移動。掛載邏輯由 `internal/install/sequence_test.go` 的可注入 scheduler 守，真實掛載留在人工組。
 
 ## 7. 答案卷：報告如何對答案
 
@@ -264,4 +280,4 @@ mise run e2e-live
 1. 在具備正式來源連線與已授權 CLI 的環境跑通 **V3**：真來源至少一筆、真 Agent score／letter 與安全格式 evidence 缺一不可。
 2. 依 §5 骨架累加負向案例 N，沿用相同需求對照與 evidence 格式。
 
-**人工 gate 是常態流程，不是待辦**：凡動到 extension、Side Panel、Profile editor 或任一 content script 的改動，交付前由驗收者把同一份 artifact 載入實機 Chrome 走一次（步驟見 `docs/guides/runbook-extension.md`），涵蓋 §4 標為 👤 的步驟與該次改動觸及的頁面。自動隔離 Chromium 不得替代人工結論；結論當場即知，不回寫本檔。
+**人工 gate 是常態流程，不是待辦**：凡動到 extension、Side Panel、Profile editor 或任一 content script 的改動，交付前由驗收者把同一份 artifact 載入實機 Chrome 走一次（步驟見 `docs/guides/getting-started.md` §5），涵蓋 §4 標為 👤 的步驟與該次改動觸及的頁面。自動隔離 Chromium 不得替代人工結論；結論當場即知，不回寫本檔。
