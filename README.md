@@ -169,7 +169,7 @@ Work from the side panel. Scheduled matching runs daily at 08:30 (Asia/Taipei), 
 
 To update, re-run the bootstrap script or run `jobfinder update` against a newer artifact; `jobfinder rollback` reverts it. Replace the extension in the same pass, so the two stay on one version — `--all` / `-All` covers both halves of that pass.
 
-Running the backend on a different machine from the browser is possible but optional; see [the remote backend runbook](docs/guides/runbook-extension.md).
+The backend and the browser run on the same machine. The extension holds `host_permissions` for `http://127.0.0.1/*` and `http://[::1]/*` only, so its endpoint is always a local loopback address. Running the backend elsewhere means forwarding that machine's loopback port to your own, which is yours to arrange and yours to support.
 
 The **full walkthrough** — manual checksum verification, profile setup, extension wiring and troubleshooting — is in the **[getting-started guide](docs/guides/getting-started.md)**.
 
