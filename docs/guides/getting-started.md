@@ -57,7 +57,7 @@ REPO=dccoding1118/job-finder
 VER=$(gh release view -R "$REPO" --json tagName -q .tagName)
 cd "$(mktemp -d)"
 
-gh release download "$VER" -R "$REPO" -p "jobfinder_${VER}_linux_amd64.tar.gz" -p SHA256SUMS
+gh release download "$VER" -R "$REPO" -p "jobfinder_${VER}_linux_amd64.tar.gz" -p SHA256SUMS --clobber
 sha256sum -c --ignore-missing SHA256SUMS
 ```
 
@@ -137,7 +137,7 @@ $VER  = (gh release view -R $REPO --json tagName -q .tagName)
 $name = "jobfinder_${VER}_windows_amd64"
 Set-Location (New-Item -ItemType Directory -Path (Join-Path $env:TEMP "jf-$VER") -Force)
 
-gh release download $VER -R $REPO -p "$name.zip" -p SHA256SUMS
+gh release download $VER -R $REPO -p "$name.zip" -p SHA256SUMS --clobber
 
 $expected = (Select-String -Path SHA256SUMS -Pattern ([regex]::Escape("$name.zip"))).Line.Split()[0]
 $actual   = (Get-FileHash -Algorithm SHA256 "$name.zip").Hash.ToLower()
@@ -244,7 +244,7 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 -Extension
 TMP=$(mktemp -d)
 DEST=~/.local/share/jobfinder/extension/$VER
 mkdir -p "$DEST"
-gh release download "$VER" -R "$REPO" -p "jobfinder-extension_${VER}.zip" -D "$TMP"
+gh release download "$VER" -R "$REPO" -p "jobfinder-extension_${VER}.zip" -D "$TMP" --clobber
 unzip -o "$TMP/jobfinder-extension_${VER}.zip" -d "$DEST"
 grep '"version"' "$DEST/manifest.json"
 ```
