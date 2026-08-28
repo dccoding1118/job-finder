@@ -484,6 +484,94 @@ jobfinder version    # 應為前一版
 
 停掉 API 與抓取排程後刪除 SQLite（連同 `-wal`、`-shm`），下次啟動即以最新 schema 重建空庫。Profile、denylist 與設定不受影響。
 
+### 10.4 移除安裝
+
+**安裝根目錄底下不只有安裝流程的產物。** 整棵刪掉會一併帶走 Chrome 正在讀的 extension 目錄，以及任何自行放在該路徑下的檔案。逐項處理，不要一次刪整棵樹。
+
+| 子目錄 | 內容 | 移除後端時 |
+|---|---|---|
+| `bin/`、`lib/` | 執行檔、回滾工件與安裝 metadata | 刪 |
+| `config/` | 設定、Profile、denylist | 先備份 Profile 再刪 |
+| `data/` | SQLite、備份、日誌 | 要保留投遞歷程就先備份 |
+| `extension/<tag>/` | Chrome 載入未封裝項目時讀取的常駐目錄 | **保留**，除非同時要移除 extension |
+
+**先備份**：Profile 是唯一無法從工件重建的東西，資料庫承載全部職缺狀態與求職信歷程。
+
+```bash
+# Linux
+cp ~/.config/jobfinder/profile.yaml ~/profile-backup.yaml
+cp ~/.local/share/jobfinder/jobs.db ~/jobs-backup.db
+```
+
+```powershell
+# Windows
+Copy-Item "$env:LOCALAPPDATA\jobfinder\config\profile.yaml" "$env:USERPROFILE\profile-backup.yaml"
+Copy-Item "$env:LOCALAPPDATA\jobfinder\data\jobs.db" "$env:USERPROFILE\jobs-backup.db"
+```
+
+**Linux**：
+
+```bash
+systemctl --user disable --now jobfinder-api.service jobfinder-run.timer
+systemctl --user stop jobfinder-run.service
+rm -f ~/.config/systemd/user/jobfinder-api.service \
+      ~/.config/systemd/user/jobfinder-run.service \
+      ~/.config/systemd/user/jobfinder-run.timer
+systemctl --user daemon-reload
+
+rm -f ~/.local/bin/jobfinder
+rm -rf ~/.local/lib/jobfinder
+rm -rf ~/.config/jobfinder
+rm -rf ~/.local/share/jobfinder/{jobs.db,jobs.db-wal,jobs.db-shm,backups,logs}
+```
+
+最後一行刻意逐項列出，`~/.local/share/jobfinder/extension/` 因此留著。連 extension 一起移除才加 `rm -rf ~/.local/share/jobfinder`。
+
+**Windows**：
+
+```powershell
+Stop-ScheduledTask -TaskPath '\jobfinder\' -TaskName 'api' -ErrorAction SilentlyContinue
+while ((Get-ScheduledTask -TaskPath '\jobfinder\' -TaskName 'api' -ErrorAction SilentlyContinue).State -eq 'Running') {
+  Start-Sleep -Milliseconds 500
+}
+Unregister-ScheduledTask -TaskPath '\jobfinder\' -TaskName 'api' -Confirm:$false -ErrorAction SilentlyContinue
+Unregister-ScheduledTask -TaskPath '\jobfinder\' -TaskName 'run' -Confirm:$false -ErrorAction SilentlyContinue
+
+$root = Join-Path $env:LOCALAPPDATA 'jobfinder'
+Remove-Item (Join-Path $root 'bin')    -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item (Join-Path $root 'lib')    -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item (Join-Path $root 'config') -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item (Join-Path $root 'data')   -Recurse -Force -ErrorAction SilentlyContinue
+
+$bin = Join-Path $root 'bin'
+$path = [Environment]::GetEnvironmentVariable('PATH', 'User')
+[Environment]::SetEnvironmentVariable(
+  'PATH', (($path -split ';' | Where-Object { $_ -ne $bin }) -join ';'), 'User')
+```
+
+`$root` 本身不刪，`extension\` 留在原地。PATH 改動要開新終端才生效。
+
+**確認移除乾淨**：
+
+```bash
+# Linux
+systemctl --user list-units 'jobfinder*' --all
+ls ~/.local/bin/jobfinder ~/.config/jobfinder 2>&1
+```
+
+```powershell
+# Windows
+Get-ScheduledTask -TaskPath '\jobfinder\' -ErrorAction SilentlyContinue
+Get-Process jobfinder, jobfinderw -ErrorAction SilentlyContinue
+Get-ChildItem (Join-Path $env:LOCALAPPDATA 'jobfinder')
+```
+
+前兩項應無輸出，最後一項應只剩 `extension`。
+
+**移除 extension**：在 `chrome://extensions` 移除卡片，再刪版本目錄。移除卡片會清掉 `chrome.storage.local`，重裝後 endpoint 與 token 要重填。
+
+---
+
 ---
 
 ## 11. 常見卡點

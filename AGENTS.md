@@ -199,6 +199,7 @@ MVP 以 `jobfinder run` 作為 one-shot 的批次更新，由每日排程觸發�
 - extension Options 接受的 host 必須與 `manifest.json` 的 `host_permissions` 一致（`127.0.0.1`、`[::1]`）。多接受一個 `localhost` 會存得進去卻在 fetch 被擋，症狀是「存好了但離線」；IPv6 從 URL 解析出來帶方括號。
 - 排程狀態不得靠 `schtasks` 的文字輸出判定——那是安裝語系相依的；一律走 PowerShell 的 ScheduledTasks cmdlet 取物件屬性。
 - `go.mod` 的 `go` directive 釘在 1.23.0；升相依套件時必看 `git diff go.mod` 的 `go` 行。`go get` 會為了滿足新相依悄悄改寫 directive 且不發警告，本機因 Go 自動下載對應 toolchain 而毫無症狀，到 `GOTOOLCHAIN=local` 的環境才編不動。抬高 directive 的代價落在靜態分析工具層而非編譯器：golangci-lint、staticcheck、gopls 各自綁死一個可解析的 Go 版本，directive 超前時本機 lint 與 IDE 無法 typecheck。要維持原版本用 `go mod edit -go=1.23.0 -toolchain=none` 再挑相容的相依版本，各版本的 directive 以 `grep -m1 "^go " $(go env GOMODCACHE)/<module>@<ver>/go.mod` 查。仍相容的上緣為 `modernc.org/sqlite` 1.39.0 與 `golang.org/x/sys` 0.35.0，更高版已由 `.github/dependabot.yml` 擋下。
+- extension 與後端共用同一個安裝根目錄（Linux `~/.local/share/jobfinder/`、Windows `%LocalAppData%\jobfinder\`）：bootstrap 的 extension 模式把工件解壓到該根目錄下的 `extension/<tag>/`，而 Chrome 每次啟動都要從那裡讀檔。移除後端時整棵刪掉會一併帶走它，Chrome 的卡片隨即失效。逐項刪，步驟見 `docs/guides/getting-started.md` §10.4。
 - `jdx/mise-action` 的 `version` 輸入釘的是 **mise CLI 本身**，與 `mise.toml` 裡的工具版本無關，落後太多會讓 action 呼叫到該版沒有的子命令。症狀只在**快取命中**時出現：action 於快取命中時走 `mise version --json` 判斷已裝版本，命中失敗即 `exit code 2`，且該呼叫帶 `silent: true`，log 裡看不到任何錯誤原因。快取未命中時 action 直接下載 mise、不走這條路徑，所以升級後的第一次執行會綠、第二次起才紅。改動 `version` 會連帶改變快取鍵，舊的快取自然被繞開。
 
 ## 7. 怎麼上版
