@@ -1,6 +1,6 @@
 # STATUS — job-finder（MVP 開發）
 
-> 最後更新：2026-08-26。規劃文件見 `docs/PRD.md`、`docs/design.md`、`docs/roadmap.md`、`docs/deploy.md`、`docs/designs/`。
+> 最後更新：2026-08-28。規劃文件見 `docs/PRD.md`、`docs/design.md`、`docs/roadmap.md`、`docs/deploy.md`、`docs/designs/`。
 
 ## §1 未歸檔結論
 
@@ -16,38 +16,39 @@
 
 - 測試 extension 不必經 GitHub 或發版：`release.yml` 的打包步驟就是「複製 `extension/`、改寫 `manifest.json` 的 `version`、壓成 zip」，本機以 `python3` 的 `zipfile` 即可重現（這台沒有 `zip` 指令）。要讓測試版與正式版**同時**存在於同一個 Chrome，關鍵是 `manifest.json` 內的固定 `key` 必須移除或改掉——ID 由它決定，兩個同 ID 的未封裝 extension 無法並存。移除 `key` 後 ID 改由載入目錄路徑決定，固定目錄即得到固定的測試 ID，該 ID 要填進測試後端設定的 `api.extension_origin`。
 
-- 隔離的測試後端不需要動 `internal/paths`：`serve`、`run` 都收 `--config`，而 `db.path`、`profile.path`、`log.file`、`api.addr`、`api.token`、`api.extension_origin` 全在設定檔內，因此第二份設定檔就足以撐起一個獨立實例。服務掛載走 `systemd-run --user --unit=<name>`（`scripts/verify/run-live.sh` 已用這個方式跑 transient 單元），不寫進 `~/.config/systemd/user/`，正式的 `jobfinder-api.service` 不受影響。
-
 ## §2 未完成任務
 
-**公開前置（依序完成後才轉 public）**
+**公開前置（依序完成，順序不可調換）**
 
-- [ ] bootstrap 腳本路徑的實測：`install.sh` 與 `install.ps1` 三種模式（只裝後端／只裝 extension／兩者）的匿名下載路徑，以及 `getting-started.md` §3.1 的 `raw.githubusercontent.com` 單行安裝。須待轉 public（見 §1）。剩下的只有下載那一段——安裝本身已由 `mise run e2e-deploy` 在隔離根內每次驗過。
+- [ ] **步驟一**：建立正式區 GCP VM，以手動下載 `gh release` 工件的方式部署，確認運作正常後，依 `docs/guides/getting-started.md` §10.4 清理回未部署狀態。這一輪同時是正式環境的預演與人工組 D1 的實測；清乾淨是為了讓步驟三的 bootstrap 實測有一個無既有安裝的環境。
 
-- [ ] Windows 側的部署驗收自動組：Linux 側已由 `mise run e2e-deploy` 落地（D1／D2／D3／D5／D5A／D6／D6B）。Windows 對稱做法是以 `$env:LOCALAPPDATA` 指向隔離根，並在 PATH 最前放一個 `powershell.cmd` 攔截 `Register-ScheduledTask`（`.cmd` 在 `PATHEXT` 內，Go 的 `exec.LookPath` 會先找到它）；此路徑尚未在 Windows 實機驗證過。
-
-- [ ] 公開 GitHub repo。多數資安與對外可見度設定被 private＋免費方案擋住，須依下列**硬順序**在轉 public 當天一次做完（Dependabot alerts 與 automated security fixes 已於 private 階段開啟）：
+- [ ] **步驟二**：公開 GitHub repo。多數資安與對外可見度設定被 private＋免費方案擋住，須依下列**硬順序**在轉 public 當天一次做完（Dependabot alerts 與 automated security fixes 已於 private 階段開啟）：
   1. `.github/workflows/codeql.yml` 已備妥並推上分支 `ci/codeql`，未開 PR——private repo 的 code scanning 需要付費的 GitHub Code Security，`analyze` job 上傳結果會收到 403 而恆紅。掃描範圍為 Go 後端與 extension 的 JavaScript 兩個語言，排除 `ui-design` 與 `scripts/verify/browser`。
   2. `gh repo edit dccoding1118/job-finder --visibility public`（直接生效，不需 `--accept-visibility-change-consequences`，該旗標在部分 gh 版本會報 unknown flag）。
   3. 開啟 secret scanning ＋ push protection、Private vulnerability reporting（`SECURITY.md` 指向後者）。
   4. 為 `ci/codeql` 開 PR，讓 CI ＋ CodeQL 在**已 public** 的 repo 上首跑；README 補上 CodeQL badge。開 PR 前先 rebase 到最新 `main` 並確認 `codeql-action`、`checkout`、`setup-go` 的版本——Dependabot 只掃預設分支，這條分支上的 action 版本不會自動升。
   5. 全綠合併 → 設 main 分支保護（required status checks 填 `check`、`windows`、`analyze (go)`、`analyze (javascript-typescript)`——CodeQL 走語言矩陣，檢查名稱帶語言後綴；solo dev 不設 required reviews，會卡死自己）。
-  6. 轉 public 後補驗 bootstrap 腳本：`install.sh` 與 `install.ps1` 三種模式（只裝後端／只裝 extension／兩者）的匿名下載路徑，以及 `getting-started.md` §3.1 的 `raw.githubusercontent.com` 單行安裝（見 §1）。
-  7. 驗只在 public 才生效的對外流程：以另一個帳號送一個 PR，確認 `close-external-pr.yml` 留言並關閉；確認 issue 模板與 `SECURITY.md` 指向的 Report a vulnerability 入口都出得來。
+  6. 驗只在 public 才生效的對外流程：以另一個帳號送一個 PR，確認 `close-external-pr.yml` 留言並關閉；確認 issue 模板與 `SECURITY.md` 指向的 Report a vulnerability 入口都出得來。
 
   `v0.1.0` 至 `v0.3.4` 已於 private 階段發出（工件與 checksum 齊備、版號注入正常），轉 public 後不需重打。使用者實際跑到的 bootstrap 腳本來自 `raw.githubusercontent.com` 的 `main`，所以三模式不必發版即生效；`v0.3.4` 工件內附的那份 `install.sh`／`install.ps1` 仍是舊版，下次發版自然對齊。
 
-**與公開無關（可獨立進行）**
+- [ ] **步驟三**：bootstrap 三模式的匿名下載實測。`install.sh` 與 `install.ps1` 的只裝後端／只裝 extension／兩者三種模式，加上 `getting-started.md` §3.1 的 `raw.githubusercontent.com` 單行安裝。正式區 VM 以此完成正式部署，本機 Windows 也跑一次。這是 D1、D5 與 D10 的實測輪次；安裝本身的其餘部分已由 `mise run e2e-deploy` 在隔離根內每次驗過。
 
-- [ ] 生效面驗證失敗時附上服務輸出（`docs/changes/change-update-effect-surface.md` §2 D3）的實機驗證：以 `v0.2.0` 工件對 schema 10 的資料庫跑 `update`，錯誤訊息應在「服務不是 active」之後附上 `database schema version 10 is newer than supported version 9`。此情境不能用連續兩次 `rollback` 製造——回滾只退一版。
-
-- [ ] 把正式後端搬到新的 GCP VM，本台改為測試部署（決策見 §1）。步驟：
-  - **新 VM**：跑正式安裝、開 linger、掛 `jobfinder-api.service` 與 `jobfinder-run.timer`；搬 `jobs.db`（含 `-wal`、`-shm`）、`profile.yaml`、`config.yaml` 的 `api.token` 與 `api.extension_origin`。首次安裝即一次真實的人工組 D1。
+- [ ] **步驟四**：把本台 GCP VM 與本機 Windows 轉為測試環境。
   - **本台**：停止並移除正式的 systemd unit，改以 `mise run deploy-install` 當測試安裝；停掉每日抓取的 timer，要抓取時手動 `jobfinder run`——Agent 額度只有一組。
-  - **測試 extension**：本機打包（複製 `extension/`、改寫 `manifest.json` 的 `version` 與名稱、移除固定 `key`、輸出到固定目錄），與正式 extension 並存；兩個測試後端的 `api.extension_origin` 都填該測試 ID，Options 在兩者之間切換。
+  - **Windows**：既有安裝改為測試用途，`api.extension_origin` 改填測試 extension 的 ID。
+  - **測試 extension**：本機打包（複製 `extension/`、改寫 `manifest.json` 的 `version` 與名稱、移除固定 `key`、輸出到固定目錄），與正式 extension 並存；Options 在兩個測試後端之間切換。
   - **文件**：`docs/changes/change-test-environment.md` 記動機與決策，`docs/deploy.md` 與 `docs/verify.md` 落最新狀態。
 
-- [ ] 讓 Windows 端的 local ssh forward 不再有 PuTTY 視窗（下個 session 專題）。背景與方案：
+**與公開無關（可獨立進行）**
+
+- [ ] 生效面驗證失敗時附上服務輸出（`docs/changes/change-update-effect-surface.md` §2 D3）的實機驗證。情境仍成立：現行 `schemaVersion` 為 10（`internal/store/store.go:23`），`v0.2.0` 為 9，以該工件對 schema 10 的資料庫跑 `update`，錯誤訊息應在「服務不是 active」之後附上 `database schema version 10 is newer than supported version 9`。此情境不能用連續兩次 `rollback` 製造——回滾只退一版。
+
+  待驗的範圍已收窄到一件事：**診斷文字真的從 journald 或 `log.file` 取得**。錯誤訊息的組裝邏輯由 `internal/install/sequence_test.go` 的 `TestVerifyEffectCarriesTheServiceReasonIntoTheError` 守著，但該測試的 diagnosis 是注入的字串，不會真的呼叫 `journalctl`（`internal/install/systemd.go:151`）或讀 Windows 的 `LastTaskResult`。排在步驟四之後、於測試環境進行。
+
+- [ ] Windows 側的部署驗收自動組：Linux 側已由 `mise run e2e-deploy` 落地（D1／D2／D3／D5／D5A／D6／D6B）。Windows 對稱做法是以 `$env:LOCALAPPDATA` 指向隔離根，並在 PATH 最前放一個 `powershell.cmd` 攔截 `Register-ScheduledTask`（`.cmd` 在 `PATHEXT` 內，Go 的 `exec.LookPath` 會先找到它）；此路徑尚未在 Windows 實機驗證過。
+
+- [ ] 讓 Windows 端的 local ssh forward 不再有 PuTTY 視窗。**排在公開前置四個步驟全部完成之後**才評估。背景與方案：
   - **現況**：正式後端在遠端 Linux，而官方形態只支援 loopback（見 §1），所以 Windows 這端必須自行把遠端的 `8686` 轉送到本機 `18686`。作法留在 `.local-dev/personal-ops/runbook-extension.md`。
   - **視窗的根因**：Windows 版 gcloud SDK 內附 `putty.exe`，`gcloud compute ssh` 預設呼叫它，而它是 GUI subsystem 程式，會自己建視窗——與工作是否背景執行無關。與 `deploy.md` §2 講 `jobfinderw.exe` 存在的理由是同一件事，差別在 PuTTY 沒有無視窗版本可換。
   - **待評估方案一**：Task Scheduler 的工作改勾「不論使用者是否登入均執行」。工作在非互動 session 跑，視窗不畫到桌面，工作管理員仍看得到行程。代價是要儲存 Windows 帳號密碼；且該模式沒有桌面可彈對話框，PuTTY 一旦需要互動（host key 確認、key passphrase）就會卡住，前置必須先在前景做完。
