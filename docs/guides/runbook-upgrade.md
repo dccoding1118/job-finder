@@ -38,7 +38,7 @@ REPO=dccoding1118/job-finder
 VER=<tag>                     # 例：v0.3.3
 cd "$(mktemp -d)"
 
-gh release download "$VER" -R "$REPO" -p "jobfinder_${VER}_linux_amd64.tar.gz" -p SHA256SUMS
+gh release download "$VER" -R "$REPO" -p "jobfinder_${VER}_linux_amd64.tar.gz" -p SHA256SUMS --clobber
 sha256sum -c --ignore-missing SHA256SUMS
 
 tar -xzf "jobfinder_${VER}_linux_amd64.tar.gz"
@@ -73,7 +73,7 @@ $VER  = "<tag>"
 $name = "jobfinder_${VER}_windows_amd64"
 Set-Location (New-Item -ItemType Directory -Path (Join-Path $env:TEMP "jf-$VER") -Force)
 
-gh release download $VER -R $REPO -p "$name.zip" -p SHA256SUMS
+gh release download $VER -R $REPO -p "$name.zip" -p SHA256SUMS --clobber
 
 $expected = (Select-String -Path SHA256SUMS -Pattern ([regex]::Escape("$name.zip"))).Line.Split()[0]
 $actual   = (Get-FileHash -Algorithm SHA256 "$name.zip").Hash.ToLower()
