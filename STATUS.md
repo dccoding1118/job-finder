@@ -1,6 +1,6 @@
 # STATUS — job-finder（MVP 開發）
 
-> 最後更新：2026-08-28。規劃文件見 `docs/PRD.md`、`docs/design.md`、`docs/roadmap.md`、`docs/deploy.md`、`docs/designs/`。
+> 最後更新：2026-08-31。規劃文件見 `docs/PRD.md`、`docs/design.md`、`docs/roadmap.md`、`docs/deploy.md`、`docs/designs/`。
 
 ## §1 未歸檔結論
 
@@ -20,8 +20,6 @@
 
 **公開前置（依序完成，順序不可調換）**
 
-- [ ] **步驟一**：建立正式區 GCP VM，以手動下載 `gh release` 工件的方式部署，確認運作正常後，依 `docs/guides/getting-started.md` §10.4 清理回未部署狀態。這一輪同時是正式環境的預演與人工組 D1 的實測；清乾淨是為了讓步驟三的 bootstrap 實測有一個無既有安裝的環境。
-
 - [ ] **步驟二**：公開 GitHub repo。多數資安與對外可見度設定被 private＋免費方案擋住，須依下列**硬順序**在轉 public 當天一次做完（Dependabot alerts 與 automated security fixes 已於 private 階段開啟）：
   1. `.github/workflows/codeql.yml` 已備妥並推上分支 `ci/codeql`，未開 PR——private repo 的 code scanning 需要付費的 GitHub Code Security，`analyze` job 上傳結果會收到 403 而恆紅。掃描範圍為 Go 後端與 extension 的 JavaScript 兩個語言，排除 `ui-design` 與 `scripts/verify/browser`。
   2. `gh repo edit dccoding1118/job-finder --visibility public`（直接生效，不需 `--accept-visibility-change-consequences`，該旗標在部分 gh 版本會報 unknown flag）。
@@ -32,7 +30,7 @@
 
   `v0.1.0` 至 `v0.3.4` 已於 private 階段發出（工件與 checksum 齊備、版號注入正常），轉 public 後不需重打。使用者實際跑到的 bootstrap 腳本來自 `raw.githubusercontent.com` 的 `main`，所以三模式不必發版即生效；`v0.3.4` 工件內附的那份 `install.sh`／`install.ps1` 仍是舊版，下次發版自然對齊。
 
-- [ ] **步驟三**：bootstrap 三模式的匿名下載實測。`install.sh` 與 `install.ps1` 的只裝後端／只裝 extension／兩者三種模式，加上 `getting-started.md` §3.1 的 `raw.githubusercontent.com` 單行安裝。正式區 VM 以此完成正式部署，本機 Windows 也跑一次。這是 D1、D5 與 D10 的實測輪次；安裝本身的其餘部分已由 `mise run e2e-deploy` 在隔離根內每次驗過。
+- [ ] **步驟三**：bootstrap 三模式的匿名下載實測。`install.sh` 與 `install.ps1` 的只裝後端／只裝 extension／兩者三種模式，加上 `getting-started.md` §3.1 的 `raw.githubusercontent.com` 單行安裝。正式區 GCP VM 以此完成正式部署，本機 Windows 也跑一次。該 VM 的前置已備妥（linger、時區、`gh` 與其認證）且無既有安裝，可直接開跑。這是 D1、D5 與 D10 的實測輪次；安裝本身的其餘部分已由 `mise run e2e-deploy` 在隔離根內每次驗過。
 
 - [ ] **步驟四**：把本台 GCP VM 與本機 Windows 轉為測試環境。
   - **本台**：停止並移除正式的 systemd unit，改以 `mise run deploy-install` 當測試安裝；停掉每日抓取的 timer，要抓取時手動 `jobfinder run`——Agent 額度只有一組。

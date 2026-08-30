@@ -492,7 +492,7 @@ jobfinder version    # 應為前一版
 |---|---|---|
 | `bin/`、`lib/` | 執行檔、回滾工件與安裝 metadata | 刪 |
 | `config/` | 設定、Profile、denylist | 先備份 Profile 再刪 |
-| `data/` | SQLite、備份、日誌 | 要保留投遞歷程就先備份 |
+| `data/` | SQLite、worker 鎖檔、備份、日誌 | 要保留投遞歷程就先備份 |
 | `extension/<tag>/` | Chrome 載入未封裝項目時讀取的常駐目錄 | **保留**，除非同時要移除 extension |
 
 **先備份**：Profile 是唯一無法從工件重建的東西，資料庫承載全部職缺狀態與求職信歷程。
@@ -522,10 +522,10 @@ systemctl --user daemon-reload
 rm -f ~/.local/bin/jobfinder
 rm -rf ~/.local/lib/jobfinder
 rm -rf ~/.config/jobfinder
-rm -rf ~/.local/share/jobfinder/{jobs.db,jobs.db-wal,jobs.db-shm,backups,logs}
+rm -rf ~/.local/share/jobfinder/{jobs.db,jobs.db-wal,jobs.db-shm,jobs.db.worker.lock,backups,logs}
 ```
 
-最後一行刻意逐項列出，`~/.local/share/jobfinder/extension/` 因此留著。連 extension 一起移除才加 `rm -rf ~/.local/share/jobfinder`。
+最後一行刻意逐項列出，`~/.local/share/jobfinder/extension/` 因此留著。`jobs.db.worker.lock` 是常駐 worker 與手動批次的互斥鎖，落點是資料庫路徑加上該後綴，與 SQLite 同層，一併刪除。連 extension 一起移除才加 `rm -rf ~/.local/share/jobfinder`。
 
 **Windows**：
 
@@ -557,6 +557,7 @@ $path = [Environment]::GetEnvironmentVariable('PATH', 'User')
 # Linux
 systemctl --user list-units 'jobfinder*' --all
 ls ~/.local/bin/jobfinder ~/.config/jobfinder 2>&1
+ls ~/.local/share/jobfinder
 ```
 
 ```powershell
@@ -566,7 +567,7 @@ Get-Process jobfinder, jobfinderw -ErrorAction SilentlyContinue
 Get-ChildItem (Join-Path $env:LOCALAPPDATA 'jobfinder')
 ```
 
-前兩項應無輸出，最後一項應只剩 `extension`。
+前兩項應無輸出，最後一項應只剩 `extension`；該機器沒有載入未封裝項目時，最後一項為空。
 
 **移除 extension**：在 `chrome://extensions` 移除卡片，再刪版本目錄。移除卡片會清掉 `chrome.storage.local`，重裝後 endpoint 與 token 要重填。
 
