@@ -29,7 +29,7 @@
   ```
 
   停掉服務再複製；`update` 會把服務重新啟動起來，不需要自己起。服務乾淨停止後 `-wal` 與 `-shm` 可能已被收進主檔，這兩個檔案不存在屬正常，複製時報缺檔即可忽略。`jobs.db.worker.lock` 不必備份。
-- repo 目前是 private，**一律用 `gh` CLI 下載**。匿名路徑（`curl` 打 `releases/download`、`raw.githubusercontent.com` 單行安裝）在 private repo 一律 404。
+- 本手冊一律用 `gh` CLI 下載，取其自動帶認證與 `--clobber` 覆寫。匿名路徑（`curl` 打 `releases/download`、`raw.githubusercontent.com` 單行安裝）同樣可用，見 `docs/guides/getting-started.md`。
 
 ## 2. Linux 後端
 
