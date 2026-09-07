@@ -1,6 +1,7 @@
 # jobfinder
 
 [![CI](https://github.com/dccoding1118/job-finder/actions/workflows/ci.yml/badge.svg)](https://github.com/dccoding1118/job-finder/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/dccoding1118/job-finder/actions/workflows/codeql.yml/badge.svg)](https://github.com/dccoding1118/job-finder/actions/workflows/codeql.yml)
 [![Release](https://img.shields.io/github/v/release/dccoding1118/job-finder?sort=semver)](https://github.com/dccoding1118/job-finder/releases/latest)
 [![License](https://img.shields.io/badge/license-AGPL--3.0-blue)](LICENSE)
 

@@ -1,6 +1,6 @@
 # STATUS — job-finder（MVP 開發）
 
-> 最後更新：2026-08-31。規劃文件見 `docs/PRD.md`、`docs/design.md`、`docs/roadmap.md`、`docs/deploy.md`、`docs/designs/`。
+> 最後更新：2026-09-08。規劃文件見 `docs/PRD.md`、`docs/design.md`、`docs/roadmap.md`、`docs/deploy.md`、`docs/designs/`。
 
 ## §1 未歸檔結論
 
@@ -20,13 +20,11 @@
 
 **公開前置（依序完成，順序不可調換）**
 
-- [ ] **步驟二**：公開 GitHub repo。多數資安與對外可見度設定被 private＋免費方案擋住，須依下列**硬順序**在轉 public 當天一次做完（Dependabot alerts 與 automated security fixes 已於 private 階段開啟）：
-  1. `.github/workflows/codeql.yml` 已備妥並推上分支 `ci/codeql`，未開 PR——private repo 的 code scanning 需要付費的 GitHub Code Security，`analyze` job 上傳結果會收到 403 而恆紅。掃描範圍為 Go 後端與 extension 的 JavaScript 兩個語言，排除 `ui-design` 與 `scripts/verify/browser`。
-  2. `gh repo edit dccoding1118/job-finder --visibility public`（直接生效，不需 `--accept-visibility-change-consequences`，該旗標在部分 gh 版本會報 unknown flag）。
-  3. 開啟 secret scanning ＋ push protection、Private vulnerability reporting（`SECURITY.md` 指向後者）。
-  4. 為 `ci/codeql` 開 PR，讓 CI ＋ CodeQL 在**已 public** 的 repo 上首跑；README 補上 CodeQL badge。開 PR 前先 rebase 到最新 `main` 並確認 `codeql-action`、`checkout`、`setup-go` 的版本——Dependabot 只掃預設分支，這條分支上的 action 版本不會自動升。
-  5. 全綠合併 → 設 main 分支保護（required status checks 填 `check`、`windows`、`analyze (go)`、`analyze (javascript-typescript)`——CodeQL 走語言矩陣，檢查名稱帶語言後綴；solo dev 不設 required reviews，會卡死自己）。
-  6. 驗只在 public 才生效的對外流程：以另一個帳號送一個 PR，確認 `close-external-pr.yml` 留言並關閉；確認 issue 模板與 `SECURITY.md` 指向的 Report a vulnerability 入口都出得來。
+- [ ] **步驟二**：公開 GitHub repo 的收尾。repo 已為 public；secret scanning、push protection、Private vulnerability reporting 與 Dependabot alerts／automated security fixes 皆已開啟。剩餘項依序：
+  1. `ci/codeql` 已 rebase 到最新 `main`，唯一改動是 `.github/workflows/codeql.yml`。為它開 PR，讓 CI ＋ CodeQL 在已 public 的 repo 上首跑；README 的 CodeQL badge 併入同一個 PR。掃描範圍為 Go 後端與 extension 的 JavaScript 兩個語言，排除 `ui-design` 與 `scripts/verify/browser`。
+  2. 全綠合併 → 設 main 分支保護（required status checks 填 `check`、`windows`、`analyze (go)`、`analyze (javascript-typescript)`——CodeQL 走語言矩陣，檢查名稱帶語言後綴；solo dev 不設 required reviews，會卡死自己）。
+  3. 驗只在 public 才生效的對外流程：以另一個帳號送一個 PR，確認 `close-external-pr.yml` 留言並關閉；確認 issue 模板與 `SECURITY.md` 指向的 Report a vulnerability 入口都出得來。
+  4. 開啟 `secret_scanning_validity_checks`：REST API 的 PATCH 回 200 但值不變，須改由 repo Settings 的 web UI 勾選。
 
   `v0.1.0` 至 `v0.3.4` 已於 private 階段發出（工件與 checksum 齊備、版號注入正常），轉 public 後不需重打。使用者實際跑到的 bootstrap 腳本來自 `raw.githubusercontent.com` 的 `main`，所以三模式不必發版即生效；`v0.3.4` 工件內附的那份 `install.sh`／`install.ps1` 仍是舊版，下次發版自然對齊。
 

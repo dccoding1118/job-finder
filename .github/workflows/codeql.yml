@@ -1,0 +1,62 @@
+name: CodeQL
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    # 每週一 03:17 UTC（台北 11:17）。排程掃描讓新公布的規則也能掃到沒有變動的舊碼。
+    - cron: "17 3 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+      security-events: write
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Go 後端以自訂建置取代 autobuild，讓工具鏈版本跟著 go.mod 走。
+          - language: go
+            build-mode: manual
+          # Chrome extension 的前端程式碼，不需建置。
+          - language: javascript-typescript
+            build-mode: none
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - if: matrix.build-mode == 'manual'
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: github/codeql-action/init@v4
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+          # paths-ignore 只作用於直譯式語言，這裡排除的是 UI 設計稿與瀏覽器驗證腳本。
+          config: |
+            paths-ignore:
+              - ui-design
+              - scripts/verify/browser
+
+      - if: matrix.build-mode == 'manual'
+        run: go build ./...
+
+      - uses: github/codeql-action/analyze@v4
+        with:
+          category: "/language:${{ matrix.language }}"
