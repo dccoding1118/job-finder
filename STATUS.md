@@ -4,8 +4,6 @@
 
 ## §1 未歸檔結論
 
-- private repo 下 `scripts/bootstrap/install.sh`／`install.ps1` 無法驗證：兩者以匿名 `curl`／`Invoke-WebRequest` 打 `api.github.com/releases/latest` 與 `releases/download`，private repo 一律 404；`getting-started.md` §3.1 的 `raw.githubusercontent.com` 單行安裝同理。這是設計取捨（bootstrap 服務的是公開使用者），不是缺陷，但實測只能排在轉 public 之後。
-
 - 環境分工已定案：正式後端只有一份，放一台新的 GCP VM；本台 GCP VM 與本機 Windows 都是測試部署；改動先在兩個測試後端驗過，再跑 release 發布到正式 VM。正式搬離本台之後，這台的 `mise run deploy-install` 不再覆蓋任何正式資產，測試安裝就是這台機器上的一般安裝，不需要獨立設定檔與 transient 單元那套。搬遷完成前，實機驗收仍照舊：動到 schema 的改動先備份 `~/.local/share/jobfinder/jobs.db`（連同 `-wal`、`-shm`），驗完以 `mise run deploy-rollback` 回到正式版。
 
 - 正式後端不放兩份：兩台各跑一份就是兩份各自獨立的 `jobs.db`，職缺狀態、去重分群與求職信歷程各記各的；且兩邊都掛每日抓取時，同一組 Agent 額度會被消耗兩次。Windows 那台的價值在於它是 D7／D8／D9 唯一能跑的地方，不在於當正式的第二個家。
@@ -18,15 +16,7 @@
 
 ## §2 未完成任務
 
-**公開前置（依序完成，順序不可調換）**
-
-- [ ] **步驟二**：公開 GitHub repo 的收尾。repo 已為 public；secret scanning、push protection、Private vulnerability reporting 與 Dependabot alerts／automated security fixes 皆已開啟。剩餘項依序：
-  1. `ci/codeql` 已 rebase 到最新 `main`，唯一改動是 `.github/workflows/codeql.yml`。為它開 PR，讓 CI ＋ CodeQL 在已 public 的 repo 上首跑；README 的 CodeQL badge 併入同一個 PR。掃描範圍為 Go 後端與 extension 的 JavaScript 兩個語言，排除 `ui-design` 與 `scripts/verify/browser`。
-  2. 全綠合併 → 設 main 分支保護（required status checks 填 `check`、`windows`、`analyze (go)`、`analyze (javascript-typescript)`——CodeQL 走語言矩陣，檢查名稱帶語言後綴；solo dev 不設 required reviews，會卡死自己）。
-  3. 驗只在 public 才生效的對外流程：以另一個帳號送一個 PR，確認 `close-external-pr.yml` 留言並關閉；確認 issue 模板與 `SECURITY.md` 指向的 Report a vulnerability 入口都出得來。
-  4. 開啟 `secret_scanning_validity_checks`：REST API 的 PATCH 回 200 但值不變，須改由 repo Settings 的 web UI 勾選。
-
-  `v0.1.0` 至 `v0.3.4` 已於 private 階段發出（工件與 checksum 齊備、版號注入正常），轉 public 後不需重打。使用者實際跑到的 bootstrap 腳本來自 `raw.githubusercontent.com` 的 `main`，所以三模式不必發版即生效；`v0.3.4` 工件內附的那份 `install.sh`／`install.ps1` 仍是舊版，下次發版自然對齊。
+**公開後的部署收尾（依序完成，順序不可調換）**
 
 - [ ] **步驟三**：bootstrap 三模式的匿名下載實測。`install.sh` 與 `install.ps1` 的只裝後端／只裝 extension／兩者三種模式，加上 `getting-started.md` §3.1 的 `raw.githubusercontent.com` 單行安裝。正式區 GCP VM 以此完成正式部署，本機 Windows 也跑一次。這是 D1、D5 與 D10 的實測輪次；安裝本身的其餘部分已由 `mise run e2e-deploy` 在隔離根內每次驗過。
 
@@ -50,7 +40,7 @@
 
 - [ ] Windows 側的部署驗收自動組：Linux 側已由 `mise run e2e-deploy` 落地（D1／D2／D3／D5／D5A／D6／D6B）。Windows 對稱做法是以 `$env:LOCALAPPDATA` 指向隔離根，並在 PATH 最前放一個 `powershell.cmd` 攔截 `Register-ScheduledTask`（`.cmd` 在 `PATHEXT` 內，Go 的 `exec.LookPath` 會先找到它）；此路徑尚未在 Windows 實機驗證過。
 
-- [ ] 讓 Windows 端的 local ssh forward 不再有 PuTTY 視窗。**排在公開前置四個步驟全部完成之後**才評估。背景與方案：
+- [ ] 讓 Windows 端的 local ssh forward 不再有 PuTTY 視窗。**排在步驟三與步驟四完成之後**才評估。背景與方案：
   - **現況**：正式後端在遠端 Linux，而官方形態只支援 loopback（見 §1），所以 Windows 這端必須自行把遠端的 `8686` 轉送到本機 `18686`。作法留在 `.local-dev/personal-ops/runbook-extension.md`。
   - **視窗的根因**：Windows 版 gcloud SDK 內附 `putty.exe`，`gcloud compute ssh` 預設呼叫它，而它是 GUI subsystem 程式，會自己建視窗——與工作是否背景執行無關。與 `deploy.md` §2 講 `jobfinderw.exe` 存在的理由是同一件事，差別在 PuTTY 沒有無視窗版本可換。
   - **待評估方案一**：Task Scheduler 的工作改勾「不論使用者是否登入均執行」。工作在非互動 session 跑，視窗不畫到桌面，工作管理員仍看得到行程。代價是要儲存 Windows 帳號密碼；且該模式沒有桌面可彈對話框，PuTTY 一旦需要互動（host key 確認、key passphrase）就會卡住，前置必須先在前景做完。

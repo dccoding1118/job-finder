@@ -395,7 +395,7 @@ pass_step
 record ''
 record '## 結果'
 record "- PASS：${pass_count}"
-record "- 未涵蓋：D4／D7／D8／D9（人工組）、D10（待 repo 轉 public）"
+record "- 未涵蓋：D4／D7／D8／D9（人工組）、D10（未併入自動組）"
 record "- 清理：離開時停止 transient 單元與 fixture 伺服器，並刪除隔離根 ${DEPLOY_ROOT}"
 
 printf '\n==> 部署驗收自動組 PASS %s 項\n' "${pass_count}"

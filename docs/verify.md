@@ -235,11 +235,11 @@ D 系列分自動與人工兩組。動到 `internal/paths`、`internal/install`�
 | D6 回滾 | `jobfinder rollback` | 執行中 process 為前一版；資料庫未被更動；`.bad` 保留了被回滾掉的版本；Windows 上兩支一起回到前一版，不出現版本不一致 |
 | D6A 回滾不依賴服務當下是否在跑 | 停止 API 後執行 `jobfinder rollback` | 服務被啟動並通過生效面驗證，執行中 process 為前一版 |
 | D6B 回滾只退一版 | 回滾後再執行一次 `jobfinder rollback` | 第二次被拒絕且不動任何檔案；`.bad` 仍是第一次回滾撤下來的版本 |
-| D10 bootstrap 的 extension 模式（⏳ 待 public） | 以 `--extension`／`-Extension` 執行 bootstrap 腳本 | extension 解壓於 `<資料目錄>/jobfinder/extension/<tag>` 且含 `manifest.json`；其 `version` 與 `jobfinder version` 對得上；Windows 上解出的檔案無 Mark of the Web；不建立任何服務、不寫入設定檔；印出的目錄可直接被 Chrome 載入 |
+| D10 bootstrap 的 extension 模式（⏳ 未併入自動組） | 以 `--extension`／`-Extension` 執行 bootstrap 腳本 | extension 解壓於 `<資料目錄>/jobfinder/extension/<tag>` 且含 `manifest.json`；其 `version` 與 `jobfinder version` 對得上；Windows 上解出的檔案無 Mark of the Web；不建立任何服務、不寫入設定檔；印出的目錄可直接被 Chrome 載入 |
 
 自動組以 `--skip-verify` 安裝，隨後自行啟動 `serve` 補上 API 生效面檢查（帶 token 回 200、未帶回 401），涵蓋 `internal/install/smoke.go` 中不依賴服務管理器的那一半。服務層改以 transient 單元驗證，不寫入正式 unit 目錄、不註冊正式排程工作。每趟結束清除自己建立的 transient 單元與隔離根，中途失敗亦然。
 
-D10 需要匿名下載 GitHub release 工件，repo 尚未 public 前一律 404，因此暫時跑不了；轉 public 後併入自動組。
+D10 需要匿名下載 GitHub release 工件，尚未併入自動組，目前以人工執行 bootstrap 腳本驗證。
 
 **人工組**需要真 Chrome 或真實作業系統環境，每個受支援平台各一輪。
 
