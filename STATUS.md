@@ -34,6 +34,8 @@
 
 **與公開無關（可獨立進行）**
 
+- [ ] `release.yml` 的第三方 action 改用 commit SHA 釘住。範圍只限這一份：它是唯一帶 `contents: write` 的 workflow，產出的工件會被使用者下載並執行，上游 tag 被移動即可竄改發佈內容。`ci.yml` 同樣用 `jdx/mise-action@v4`，但 token 唯讀、repo 無任何 secret，血本範圍小，不必一起改。Dependabot 認得 SHA 釘法，升級 PR 照常提出。
+
 - [ ] 生效面驗證失敗時附上服務輸出（`docs/changes/change-update-effect-surface.md` §2 D3）的實機驗證。情境仍成立：現行 `schemaVersion` 為 10（`internal/store/store.go:23`），`v0.2.0` 為 9，以該工件對 schema 10 的資料庫跑 `update`，錯誤訊息應在「服務不是 active」之後附上 `database schema version 10 is newer than supported version 9`。此情境不能用連續兩次 `rollback` 製造——回滾只退一版。
 
   待驗的範圍已收窄到一件事：**診斷文字真的從 journald 或 `log.file` 取得**。錯誤訊息的組裝邏輯由 `internal/install/sequence_test.go` 的 `TestVerifyEffectCarriesTheServiceReasonIntoTheError` 守著，但該測試的 diagnosis 是注入的字串，不會真的呼叫 `journalctl`（`internal/install/systemd.go:151`）或讀 Windows 的 `LastTaskResult`。排在步驟四之後、於測試環境進行。
