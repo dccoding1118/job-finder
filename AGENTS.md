@@ -211,4 +211,5 @@ MVP 以 `jobfinder run` 作為 one-shot 的批次更新，由每日排程觸發�
 - 標準「開發完成後上版並開 PR」流程使用 `/ship` skill。
 - 發佈版本：推 tag `v<MAJOR>.<MINOR>.<PATCH>`，由 `.github/workflows/release.yml` 產出帶版號與 checksum 的 binary 與 extension zip（見 `docs/deploy.md` §7）。版號不寫進原始碼。
 - **發版後必附部署步驟**：推完 tag、確認工件無誤之後，回報除了 Release 連結，還要附上 `docs/guides/runbook-upgrade.md` 的三條 lane（Linux 後端、Windows 後端、Windows Chrome extension），版號填實際 tag、指令可直接複製。步驟的最新狀態一律以該 runbook 為準，不即席重編。
+- **`release.yml` 的 action 一律以 commit SHA 釘住**，後面用註解標出對應版號（例：`actions/checkout@3d3c42e… # v7.0.1`）。它是唯一帶 `contents: write` 的 workflow，產出的工件會被使用者下載並執行；tag 可被上游移動，用 tag 釘住等於把發佈內容的控制權交給上游帳號的安全性。`ci.yml` 與 `codeql.yml` 的 token 唯讀、repo 無任何 secret，維持 tag 寫法即可。Dependabot 的 `github-actions` 生態每週檢查，會連同 SHA 與版號註解一起更新。
 - 版號的唯一決策點是 `internal/version`：release 以 `-ldflags "-X github.com/dccoding1118/job-finder/internal/version.tag=<tag>"` 注入。**該符號路徑是字串綁定**——package 搬家或變數 `tag` 改名會讓注入靜默失效（不報錯，版號悄悄變回 `dev`），改動時必須同步 `release.yml`。
