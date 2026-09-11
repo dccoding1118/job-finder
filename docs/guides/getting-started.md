@@ -4,6 +4,8 @@
 
 契約與規格見 [deploy](../deploy.md)（路徑、排程、安裝子命令、release 工件）；本文只講操作。
 
+本文走的是 release 工件的兩條路徑——bootstrap 腳本的自動部署與自行下載工件的手動部署，測試環境與正式環境都適用。開發機把自己的 checkout 裝起來自用走 `mise run deploy-*`，不在本文範圍，見 [deploy](../deploy.md) §4。
+
 ---
 
 ## 1. 先決定形態

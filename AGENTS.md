@@ -82,7 +82,7 @@ Go 不保證在裸 PATH；以 `mise run <task>` 或 `mise exec -- go <args>` 執
 | `internal/` | 業務模組：`store`／`profile`／`crawler`／`pipeline`／`agents`／`api`／`install`／`paths`／`logging`／`version` |
 | `extension/` | Chrome MV3 extension：Side Panel、Profile 編輯器、瀏覽輔助模組 |
 | `deploy/production/` | `systemd/` 三個 unit 與 `windows/` 兩個 Task Scheduler 模板 |
-| `scripts/` | `bootstrap/`（下載安裝）、`deploy/`（開發 checkout 安裝）、`verify/`（驗收 harness） |
+| `scripts/` | `bootstrap/`（release 工件的自動部署）、`deploy/`（開發機自身的安裝）、`verify/`（驗收 harness） |
 | `configs/` | 設定與 Profile 範例、驗收用設定；安裝流程由此渲染實際 `config.yaml` |
 | `docs/` | 需求與設計的權威來源 |
 
@@ -181,7 +181,7 @@ mise run lint         # 執行 golangci-lint
 
 MVP 以 `jobfinder run` 作為 one-shot 的批次更新，由每日排程觸發（Linux systemd user timer、Windows Task Scheduler）；API service 只綁 loopback 並承載常駐 worker，Side Panel 透過其設定的 loopback endpoint 存取。支援的形態是後端與瀏覽器同機。extension 的 `host_permissions` 只涵蓋 loopback，endpoint 恆為本機位址；後端放在別台機器時，把那台的 loopback port 轉送到本機由使用者自理。
 
-**安裝語意集中在 binary 的 `install`／`update`／`rollback` 子命令**（`internal/install`），Linux 與 Windows 共用同一份實作，平台差異只剩排程掛載與執行檔數量：Windows 另裝一支 GUI subsystem 的 `jobfinderw.exe` 給排程執行（否則常駐服務會在桌面留一個主控台視窗），兩支同版、一起更新與回滾。`scripts/bootstrap/install.sh`／`install.ps1` 只負責下載、驗 `SHA256SUMS` 與解壓，分三種模式（不帶旗標只裝後端，`--extension`／`-Extension` 只裝 extension，`--all`／`-All` 兩者都裝）：後端模式解壓後依常駐 binary 是否存在交棒 `install` 或 `update`；extension 模式把 extension zip 解壓到 `<資料目錄>/jobfinder/extension/<tag>` 並印出 Chrome 的人工步驟——extension 沒有任何安裝語意，所以這條路只在腳本內，不進子命令；`scripts/deploy/*.sh`（`mise run deploy-*`）是開發 checkout 的 wrapper，跑完 `fmt`／`lint`／`test`／`build` 後把剛建置的 binary 交給同一組子命令。這些入口與 `scripts/verify/` 的驗收 harness 分離、**不由任何 `e2e-*` 任務呼叫**、不碰 `.local-dev/`。驗證一律打在生效面（執行中 process 的執行檔與啟動時間），非安裝面。完整步驟與契約見 `docs/deploy.md` §2–§4。
+**安裝語意集中在 binary 的 `install`／`update`／`rollback` 子命令**（`internal/install`），Linux 與 Windows 共用同一份實作，平台差異只剩排程掛載與執行檔數量：Windows 另裝一支 GUI subsystem 的 `jobfinderw.exe` 給排程執行（否則常駐服務會在桌面留一個主控台視窗），兩支同版、一起更新與回滾。`scripts/bootstrap/install.sh`／`install.ps1` 只負責下載、驗 `SHA256SUMS` 與解壓，分三種模式（不帶旗標只裝後端，`--extension`／`-Extension` 只裝 extension，`--all`／`-All` 兩者都裝）：後端模式解壓後依常駐 binary 是否存在交棒 `install` 或 `update`；extension 模式把 extension zip 解壓到 `<資料目錄>/jobfinder/extension/<tag>` 並印出 Chrome 的人工步驟——extension 沒有任何安裝語意，所以這條路只在腳本內，不進子命令；`scripts/deploy/*.sh`（`mise run deploy-*`）是開發 checkout 的 wrapper，跑完 `fmt`／`lint`／`test`／`build` 後把剛建置的 binary 交給同一組子命令；它裝的是 working tree 的建置，版號為 `dev`，只供開發機把自己當測試環境用，開發機以外的機器一律走 release 工件。這些入口與 `scripts/verify/` 的驗收 harness 分離、**不由任何 `e2e-*` 任務呼叫**、不碰 `.local-dev/`。驗證一律打在生效面（執行中 process 的執行檔與啟動時間），非安裝面。完整步驟與契約見 `docs/deploy.md` §2–§4。
 
 ### 已知雷
 

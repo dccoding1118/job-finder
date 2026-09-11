@@ -4,7 +4,7 @@
 
 ## §1 未歸檔結論
 
-- 環境分工已定案：正式後端只有一份，放一台新的 GCP VM；本台 GCP VM 與本機 Windows 都是測試部署；改動先在兩個測試後端驗過，再跑 release 發布到正式 VM。正式搬離本台之後，這台的 `mise run deploy-install` 不再覆蓋任何正式資產，測試安裝就是這台機器上的一般安裝，不需要獨立設定檔與 transient 單元那套。搬遷完成前，實機驗收仍照舊：動到 schema 的改動先備份 `~/.local/share/jobfinder/jobs.db`（連同 `-wal`、`-shm`），驗完以 `mise run deploy-rollback` 回到正式版。
+- 環境分工已定案：正式後端只有一份，放一台新的 GCP VM；本台 GCP VM 與本機 Windows 都是測試部署；改動先在兩個測試後端驗過，再跑 release 發布到正式 VM。正式搬離本台之後，這台的 `mise run deploy-install` 不再覆蓋任何正式資產，測試安裝就是這台機器上的一般安裝，不需要獨立設定檔與 transient 單元那套。
 
 - 正式後端不放兩份：兩台各跑一份就是兩份各自獨立的 `jobs.db`，職缺狀態、去重分群與求職信歷程各記各的；且兩邊都掛每日抓取時，同一組 Agent 額度會被消耗兩次。Windows 那台的價值在於它是 D7／D8／D9 唯一能跑的地方，不在於當正式的第二個家。
 
@@ -16,24 +16,13 @@
 
 ## §2 未完成任務
 
-**公開後的部署收尾（依序完成，順序不可調換）**
-
-- [ ] **步驟三**：bootstrap 三模式的匿名下載實測。`install.sh` 與 `install.ps1` 的只裝後端／只裝 extension／兩者三種模式，加上 `getting-started.md` §3.1 的 `raw.githubusercontent.com` 單行安裝。正式區 GCP VM 以此完成正式部署，本機 Windows 也跑一次。這是 D1、D5 與 D10 的實測輪次；安裝本身的其餘部分已由 `mise run e2e-deploy` 在隔離根內每次驗過。
-
-  該 VM 的前置已備妥：linger、時區、`gh` 與其認證、`claude` 與 `codex` 已裝並授權，jobfinder 的落點全空。
-
-  設定檔一律不預放。`config.yaml` 預放會讓 install 走既有設定不覆寫的分支，D1 要驗的設定渲染、token 生成與佔位替換整條跳過；Profile 與 denylist 預放則把個人資料放進 install 的 `profile lint` 閘門，且 `seedFile` 對既有檔不套 `0600`。順序是跑完 bootstrap 並判定 D1 → 以本台的 `profile.yaml` 與 `pii-denylist.txt` 覆蓋安裝種下的範例並 `chmod 600` → `profile lint` → 改 `api.extension_origin` → 重啟 API（`profile.Provider` 只在啟動時讀一次快照，手改檔案不重啟不生效）→ 從 Windows 接通道驗 Side Panel。
-
-  `jobs.db` 不搬，正式區從空庫開始。本台累積的判定只有 71 次 Agent 呼叫與 2 封求職信，重抓重判在單日上限內即可追平。
-
-  **進度**：Linux 側（新 GCP VM）的 D1、D5 與 `install.sh --extension` 的 D10 已通過，Profile 與 `api.extension_origin` 已就位。Windows 側停在 `install.ps1 -Extension`：`Get-ExpectedChecksum` 的前身以 `TrimStart('*', './')` 剝除行首，而 `TrimStart` 只收單一字元，`'./'` 無法轉型，三種模式都在下載完第一個工件後中止。修正已在本輪隨 CI 的執行期測試一併上版。
-
-  **待續（合併後執行）**：Windows 重新以 `irm …/main/scripts/bootstrap/install.ps1 -OutFile install.ps1` 取回修正後的腳本 → `-Extension` 完成 D10 的 Windows 半（含 Mark of the Web 已解除）→ Chrome 載入 `%LocalAppData%\jobfinder\extension\v0.4.0` → 通道 `Jobfinder-Api-Tunnel` 改指向新 VM → Options 填 `http://127.0.0.1:18686` 與 VM token → Side Panel 驗通 → 停本台 `jobfinder-run.timer` → VM 跑第一趟抓取。
+**公開後的部署收尾**
 
 - [ ] **步驟四**：把本台 GCP VM 與本機 Windows 轉為測試環境。
-  - **本台**：停止並移除正式的 systemd unit，改以 `mise run deploy-install` 當測試安裝；停掉每日抓取的 timer，要抓取時手動 `jobfinder run`——Agent 額度只有一組。
+  - **本台**：停止並移除正式的 systemd unit，改以 `mise run deploy-install` 當測試安裝（開發機走 working tree 建置，版號為 `dev`）。每日抓取的 timer 已停用，要抓取時手動 `jobfinder run`——Agent 額度只有一組。
   - **Windows**：既有安裝改為測試用途，`api.extension_origin` 改填測試 extension 的 ID。
-  - **測試 extension**：本機打包（複製 `extension/`、改寫 `manifest.json` 的 `version` 與名稱、移除固定 `key`、輸出到固定目錄），與正式 extension 並存；Options 在兩個測試後端之間切換。
+  - **Windows 通道**：新增第二條指向本台 VM 的通道，與正式通道並存——排程工作 `Jobfinder-Api-Tunnel-Test`、local port `28686`、常駐目錄 `%LOCALAPPDATA%\jobfinder-tunnel-test\`、wrapper `jobfinder-tunnel-test.ps1`。作法見 `.local-dev/personal-ops/runbook-extension.md` §9。
+  - **測試 extension**：本機打包（複製 `extension/`、改寫 `manifest.json` 的 `version` 與名稱、移除固定 `key`、輸出到固定目錄），與正式 extension 並存；Options 在 `http://127.0.0.1:8686`（Windows 本機測試後端）與 `http://127.0.0.1:28686`（本台測試後端）之間切換。
   - **文件**：`docs/changes/change-test-environment.md` 記動機與決策，`docs/deploy.md` 與 `docs/verify.md` 落最新狀態。
 
 **與公開無關（可獨立進行）**
