@@ -4,7 +4,7 @@ set -euo pipefail
 
 VERIFY_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${VERIFY_SCRIPT_DIR}/../.." && pwd)"
-VERIFY_ROOT="${VERIFY_ROOT:-${PROJECT_ROOT}/.local-dev/verify}"
+VERIFY_ROOT="${VERIFY_ROOT:-${PROJECT_ROOT}/.local-dev/dev-verify}"
 ARTIFACT_ROOT="${VERIFY_ROOT}/artifact"
 HARNESS_ROOT="${VERIFY_ROOT}/harness"
 RUNTIME_ROOT="${VERIFY_ROOT}/runtime"
@@ -13,9 +13,7 @@ VERIFY_BINARY="${ARTIFACT_ROOT}/bin/jobfinder"
 VERIFY_PROFILE="${RUNTIME_ROOT}/profile.yaml"
 VERIFY_DENYLIST="${RUNTIME_ROOT}/pii-denylist.txt"
 MOCK_CONFIG="${RUNTIME_ROOT}/config-mock.yaml"
-LIVE_CONFIG="${RUNTIME_ROOT}/config-live.yaml"
 MOCK_DB="${RUNTIME_ROOT}/mock.db"
-LIVE_DB="${RUNTIME_ROOT}/live.db"
 ARTIFACT_MANIFEST="${ARTIFACT_ROOT}/manifest.txt"
 VERIFY_PROFILE_JSON="${ARTIFACT_ROOT}/fixtures/profile.synthetic.json"
 
@@ -46,7 +44,8 @@ require_mode() {
   fi
 }
 
-# Reporting and environment primitives shared by run-mock.sh and run-live.sh.
+# Reporting and environment primitives shared by the mock runbooks and
+# verify-live.sh.
 # They read the caller's runbook globals (report, current_step, current_title,
 # pass_count); shellcheck cannot see those assignments when it analyses lib.sh in
 # isolation, so SC2154 is suppressed here rather than at every call site.

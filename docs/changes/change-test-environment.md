@@ -64,13 +64,13 @@ D7 之後 live 驗收需要 git clone 才跑得動，因此只適用與開發環
 
 | # | 項目 | 狀態 |
 |---|---|---|
-| 1 | `scripts/release/pack.sh`：吃版本字串與目標平台，產出平台包、extension zip 與 `SHA256SUMS` | ⏳ |
-| 2 | `release.yml` 的建置與打包改為呼叫 `pack.sh` | ⏳ |
-| 3 | `scripts/bootstrap/install.sh` 與 `install.ps1` 的本地來源模式 | ⏳ |
-| 4 | 兩支 bootstrap 寫死的 extension ID 常數：本地模式改印出載入目錄 | ⏳ |
-| 5 | 刪除 `scripts/deploy/*.sh`、`scripts/verify/run-live.sh`、`configs/verify.live.yaml`、`lib.sh` 的 live 常數、`harness/deploy.sh` 的 live 渲染段 | ⏳ |
-| 6 | `mise.toml`：刪 `deploy-*` 與 `e2e-live`，新增 `pack` 與 `verify-live` | ⏳ |
-| 7 | `.local-dev/` 目錄更名，同步 `lib.sh` 的沙盒根 | ⏳ |
+| 1 | `scripts/release/pack.sh`：吃版本字串與目標平台，產出平台包、extension zip 與 `SHA256SUMS` | ✅ |
+| 2 | `release.yml` 的建置與打包改為呼叫 `pack.sh` | ✅ |
+| 3 | `scripts/bootstrap/install.sh` 與 `install.ps1` 的本地來源模式 | ✅ |
+| 4 | 兩支 bootstrap 寫死的 extension ID 常數：本地模式改印出載入目錄 | ✅ |
+| 5 | 刪除 `scripts/deploy/*.sh`、`scripts/verify/run-live.sh`、`configs/verify.live.yaml`、`lib.sh` 的 live 常數、`harness/deploy.sh` 的 live 渲染段 | ✅ |
+| 6 | `mise.toml`：刪 `deploy-*` 與 `e2e-live`，新增 `pack` 與 `verify-live` | ✅ |
+| 7 | `.local-dev/` 目錄更名，同步 `lib.sh` 的沙盒根 | ✅ |
 | 8 | Linux 測試環境以 dev 部署包重裝，作為新安裝路徑的第一次實機驗證 | ⏳ |
 | 9 | Windows 測試環境部署 dev 包、載入 dev extension、建立第二條通道 | ⏳ |
 | 10 | 測試環境跑一次 live 驗收 | ⏳ |
@@ -81,4 +81,5 @@ D7 之後 live 驗收需要 git clone 才跑得動，因此只適用與開發環
 - **dev 部署包沒有公開的下載來源**。它不進 GitHub Release，跨機部署靠檔案傳輸，完整性由包內的 `SHA256SUMS` 保證。
 - **dev extension 的 ID 由載入目錄決定**。目錄搬移即換 ID，測試後端的 `api.extension_origin` 必須跟著改。固定目錄是取得固定 ID 的唯一手段。
 - **部署包只保留一版**。回滾點由 `jobfinder update` 的 `jobfinder.prev` 提供，切換受測版本的手段是換 branch 重新打包。
+- **`verify-live.sh` 尚未實跑**。它改寫成打在已安裝環境，真來源與真 Agent 的一趟完整執行要等 Linux 測試環境部署完成才驗得到。
 - **`internal/install` 的 asset 解析仍支援 git checkout 佈局**（`deploy/production/<平台>/`、`bin/`）。刪掉 `scripts/deploy/*.sh` 之後這條分支沒有呼叫者，是否一併移除待決。

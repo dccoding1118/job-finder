@@ -22,7 +22,7 @@ mise run e2e-deploy   # 在隔離根內生成無既有安裝的環境 → 跑部
 - **沙盒**：`.local-dev/dev-verify/`（gitignored 隔離根，0700，不碰日常 Profile/設定/SQLite）。
   `artifact/` 承載 product binary、extension 與 production unit templates；
   `harness/` 承載 mock fixture/fake Agent；`runtime/` 產生 config、SQLite、browser profile 與 rendered units；
-  `evidence/` 保留歷次答案卷。整個沙盒是可重建的產物，刪掉再跑一次即回到同一狀態。腳本位於 `scripts/verify/`（runbook 於根層——一般 mock、Profile mock 與 worker mock 各一支；browser E2E 於 `browser/`、Playwright 設定 `playwright.config.js`）。
+  `evidence/` 保留歷次答案卷。整個沙盒是可重建的產物，刪掉再跑一次即回到同一狀態。腳本位於 `scripts/verify/`（沙盒 runbook 於根層——一般 mock、Profile mock 與 worker mock 各一支；打在測試環境的 `verify-live.sh` 同層；browser E2E 於 `browser/`、Playwright 設定 `playwright.config.js`）。
 - **跑完要檢查哪些產物**（人工照著看一遍）：
 
   | 產物 | 位置 | 看什麼 |
