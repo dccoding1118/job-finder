@@ -69,11 +69,13 @@ Agent 稽核資料保留在 SQLite 的 `agent_calls`。
 
 **安裝語意集中在 binary 的三個子命令**：`jobfinder install`／`update`／`rollback`。路徑決策、token 生成、設定渲染、既有設定不覆寫、排程掛載與生效面驗證都在同一份 Go 程式碼裡，Linux 與 Windows 共用，平台差異只剩排程掛載。因此以下三條路徑得到完全相同的結果：
 
-| 取得方式 | 動作 |
-|---|---|
-| `install.sh`／`install.ps1` | 解析版本 → 下載工件與 `SHA256SUMS` → 驗 checksum → 解壓到暫存 → 執行解壓出的 `jobfinder install`，常駐 binary 已存在時改執行 `update` |
-| 手動下載工件 | 自行比對 `SHA256SUMS`，解壓後直接執行 `jobfinder install` |
-| 開發 checkout | `scripts/deploy/*.sh`（`mise run deploy-*`）：跑 `fmt`／`lint`／`test`／`build`，再把剛建置的 binary 交給同一組子命令，並以 checkout 為 `--assets` |
+| 路徑 | 適用機器 | 素材 | 動作 |
+|---|---|---|---|
+| 自動部署：`install.sh`／`install.ps1` | 測試與正式環境 | release 工件 | 解析版本 → 下載工件與 `SHA256SUMS` → 驗 checksum → 解壓到暫存 → 執行解壓出的 `jobfinder install`，常駐 binary 已存在時改執行 `update` |
+| 手動部署：自行下載工件 | 測試與正式環境 | release 工件 | 自行比對 `SHA256SUMS`，解壓後直接執行 `jobfinder install` |
+| 開發機安裝：`scripts/deploy/*.sh`（`mise run deploy-*`） | 有 git clone 的開發機 | 當下 working tree 的建置 | 跑 `fmt`／`lint`／`test`／`build`，再把剛建置的 binary 交給同一組子命令，並以 checkout 為 `--assets` |
+
+**前兩條與第三條的分界是素材，不是偏好。** 前兩條裝的是某個 tag 的 release 工件，`jobfinder version` 印得出該 tag，有 `SHA256SUMS` 可核對，任何機器上都成立；第三條裝的是當下 working tree 的建置，`jobfinder version` 印 `dev (<commit>)`，對應不到任何 release，也沒有工件可供他人重現。因此**開發機以外的機器一律走前兩條**，不論該機器承載的是測試環境還是正式環境；開發機要把自己的 checkout 當測試環境用時走第三條，改完即裝、不必先發版。
 
 **bootstrap 腳本另有 extension 模式**：不帶旗標即只裝後端；`--extension`（`install.sh`）／`-Extension`（`install.ps1`）只裝 extension，`--all`／`-All` 兩者都裝。extension 模式下載 `jobfinder-extension_<tag>.zip`、驗 checksum、解壓到 `<資料目錄>/jobfinder/extension/<tag>`（Linux `~/.local/share/…`、Windows `%LocalAppData%\jobfinder\extension\<tag>`），Windows 另解除 Mark of the Web，終點是目錄就緒與印出 Chrome 的手動步驟。extension 沒有安裝語意——無設定渲染、無 token、無排程、無生效面驗證——因此這條路留在腳本內，不進 `jobfinder install`、不併進平台工件。遠端拓撲靠它成立：跑 Chrome 的那台機器不需要、也不該被裝出一個後端服務。
 
