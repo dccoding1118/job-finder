@@ -137,7 +137,7 @@ Profile activation 是一般狀態機之外、僅由使用者手動要求的 sto
 |---|---|
 | L1 單元 | 每模組同檔 `_test.go`；store 用暫存目錄真 SQLite；crawler 用 `httptest` 假伺服器餵結構仿真、內容合成的回應 fixture；agents 用 fake Runner（罐頭 JSON）；API 用 `httptest`；extension 用單元測試或 mock API，不進真實瀏覽器 |
 | L2 mock | `e2e-mock` 以物化 binary、合成來源、fake Runner、真 SQLite/API/systemd 與隔離 Chromium extension 模擬驗證可重現的跨模組流程 |
-| Live E2E | `e2e-live` 以獨立設定／SQLite 驗證真實公開來源與已授權 CLI Runner；至少取得一筆真資料並驗證格式，外部能力不足明確標為 `ENVIRONMENT_BLOCKED` |
+| Live 驗收 | `verify-live` 在測試環境的實際安裝上驗證真實公開來源與已授權 CLI Runner；至少取得一筆真資料並驗證格式，外部能力不足明確標為 `ENVIRONMENT_BLOCKED` |
 | 人工 gate | 驗收者在實際 Chrome 載入同一 extension artifact；自動隔離 Chromium 不取代安裝、權限、origin 與相容性結論 |
 | 負向 | Agent 輸出非法 JSON、缺欄位、幻覺技能、缺佔位符；來源回應被擋/改版；capture payload 缺欄位；`run` 中斷重跑冪等 |
 

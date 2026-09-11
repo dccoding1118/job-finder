@@ -94,4 +94,4 @@
 - B1 的 Yourator adapter 透過公開 API 契約，以 `SearchSpec` 取得去重後的 `RawJob`，並正確區分完整與 partial 資料。
 - 分頁、頁數上限、header、延遲與重試均可由注入依賴測試；來源錯誤不產生部分或臆測結果。
 - fixture、測試輸出與錯誤訊息不含真實職缺內容、PII 或任何繞過反爬措施。
-- 真實 Yourator 端點僅由 opt-in 的 `e2e-live` 依 [verify](../verify.md) V3 檢查，不進 CI；必須至少取得一筆真資料並驗證實際欄位映射，零筆不得算 PASS。
+- 真實 Yourator 端點僅由測試環境的 `verify-live` 依 [verify](../verify.md) V3 檢查，不進 CI；必須至少取得一筆真資料並驗證實際欄位映射，零筆不得算 PASS。

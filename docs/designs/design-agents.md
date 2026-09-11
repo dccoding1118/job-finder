@@ -167,7 +167,7 @@ for round in 1..N:
 
 ## 6. 測試
 
-- Runner：以假可執行檔模擬正常、非零、逾時與 argv/cwd；精確驗證 model flag、空暫存目錄與 cleanup。真 CLI 呼叫只由 opt-in 的 `e2e-live` 驗收，不進 CI。
+- Runner：以假可執行檔模擬正常、非零、逾時與 argv/cwd；精確驗證 model flag、空暫存目錄與 cleanup。真 CLI 呼叫只由測試環境的 `verify-live` 驗收，不進 CI。
 - 五 Agent：fake Runner 回罐頭 JSON，驗證解析、驗證失敗路徑、fallback 切換、迴圈輪次上限；Reviewer 另驗 `issues` 為物件陣列時攤平為字串、字串陣列維持原行為、`revise` 時 `issues` 不得為空；Filter 另驗條件拆解欄位驗證、年資類 verdict 由程式覆寫、加分條件不進篩選彙總；Calibrator 另驗欄位白名單拒絕與空建議路徑。
 - prompt 子集：Scorer prompt 不含 `achievements`／`role`／`org_type`／`honesty_bounds`；Filter prompt 不含 `intents`。
 - 生成迴圈：輪數取自設定；N 輪跑滿時最後一輪不呼叫 Reviewer 且回 `finalized`；中途 approve 立即結束不跑剩餘輪次；N 為 1 時無審查呼叫；drafter 第 k 輪的輸入含前 k-1 版草稿與其意見。

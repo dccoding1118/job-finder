@@ -17,21 +17,23 @@ mise run e2e-mock     # 物化隔離 artifact → 依序跑 V1/V2/V4/V5/V7 → �
 mise run e2e-deploy   # 在隔離根內生成無既有安裝的環境 → 跑部署驗收自動組（§6.1）
 ```
 
-- **沙盒**：`.local-dev/verify/`（gitignored 隔離根，0700，不碰日常 Profile/設定/SQLite）。
-  `artifact/` 承載 mock/live 共用 product binary、extension 與 production unit templates；
-  `harness/` 只承載 mock fixture/fake Agent；`runtime/` 產生 config、SQLite、browser profile 與 rendered units；
-  `evidence/` 保留歷次答案卷。腳本位於 `scripts/verify/`（runbook 於根層——一般 mock、Profile mock 與 worker mock 各一支；browser E2E 於 `browser/`、Playwright 設定 `playwright.config.js`）。
+前兩者是**開發階段驗收**，跑在隔離沙盒內。真來源、真 Agent 與真 Chrome 的驗收跑在**測試環境**（§6、§6.1 人工組），環境分界見 [deploy](deploy.md) §1。
+
+- **沙盒**：`.local-dev/dev-verify/`（gitignored 隔離根，0700，不碰日常 Profile/設定/SQLite）。
+  `artifact/` 承載 product binary、extension 與 production unit templates；
+  `harness/` 承載 mock fixture/fake Agent；`runtime/` 產生 config、SQLite、browser profile 與 rendered units；
+  `evidence/` 保留歷次答案卷。整個沙盒是可重建的產物，刪掉再跑一次即回到同一狀態。腳本位於 `scripts/verify/`（runbook 於根層——一般 mock、Profile mock 與 worker mock 各一支；browser E2E 於 `browser/`、Playwright 設定 `playwright.config.js`）。
 - **跑完要檢查哪些產物**（人工照著看一遍）：
 
   | 產物 | 位置 | 看什麼 |
   |---|---|---|
-  | 答案卷 | `.local-dev/verify/evidence/<最新>-{mock,profile-mock,worker-mock}.md` | 逐案例觀察值＋PASS/FAIL；收尾 tally 與使用者故事重建 |
-  | SQLite snapshot | `<binary> verify snapshot --db .local-dev/verify/runtime/mock.db` | 5 筆 Job 的終態、篩選逐條判定、四維分數、letter 輪次、狀態事件 |
+  | 答案卷 | `.local-dev/dev-verify/evidence/<最新>-{mock,profile-mock,worker-mock}.md` | 逐案例觀察值＋PASS/FAIL；收尾 tally 與使用者故事重建 |
+  | SQLite snapshot | `<binary> verify snapshot --db .local-dev/dev-verify/runtime/mock.db` | 5 筆 Job 的終態、篩選逐條判定、四維分數、letter 輪次、狀態事件 |
   | browser evidence | `evidence/extension-browser.json`、`evidence/extension-dashboard.png` | extension 模擬互動的安全摘要與截圖 |
 
-- **`e2e-deploy` 的沙盒**：`.local-dev/verify/deploy/`，每趟開始前重建、結束後刪除。它把 `HOME`（Linux）或 `LOCALAPPDATA`（Windows）指向該目錄，因此 `jobfinder install` 的每個落點都在隔離根內，日常使用的設定、Profile 與 SQLite 不受影響。判準與涵蓋範圍見 §6.1。
+- **`e2e-deploy` 的沙盒**：`.local-dev/dev-verify/deploy/`，每趟開始前重建、結束後刪除。它把 `HOME`（Linux）或 `LOCALAPPDATA`（Windows）指向該目錄，因此 `jobfinder install` 的每個落點都在隔離根內，日常使用的設定、Profile 與 SQLite 不受影響。判準與涵蓋範圍見 §6.1。
 
-- **跑到哪停**：`mise run e2e-mock` 一趟涵蓋 V1／V2／V4／V5、V6 全部步驟、V7 的 S30–S36 與 S39 系列，以及 V8 的 S46、S52（✅），依序產生一般 mock、Profile mock 與 worker mock 三份答案卷。V3 live 需真 Yourator＋已授權 `claude`/`codex` CLI，另跑 `mise run e2e-live`（⏳，§6）。實際 Chrome 安裝與相容性一律人工 gate（👤，§9）。
+- **跑到哪停**：`mise run e2e-mock` 一趟涵蓋 V1／V2／V4／V5、V6 全部步驟、V7 的 S30–S36 與 S39 系列，以及 V8 的 S46、S52（✅），依序產生一般 mock、Profile mock 與 worker mock 三份答案卷。V3 live 需真 Yourator＋已授權 `claude`/`codex` CLI，在測試環境跑 `mise run verify-live`（⏳，§6）。實際 Chrome 安裝與相容性一律人工 gate（👤，§9）。
 
 ## 2. 覆蓋度地圖（需求 ←→ 案例）
 
@@ -195,35 +197,40 @@ Cake 列表以 `__NEXT_DATA__` 與 DOM 收割兩種素材各擷取一次；內�
 | N-P | PII 防線 | 求職信含實體姓名/聯絡方式而非 placeholder→`FAIL`；evidence 誤含禁記欄位→`FAIL` | R1/R8 | ⏳ |
 | N-PRF | Profile 前置條件與條件式儲存 | missing／invalid 的處理型 route→409；缺 If-Match→428；衝突→412；非法／PII→422；均不得改檔或 snapshot | R1/R6/R8 | ⏳ |
 
-## 6. 現行 live 案例：V3（真來源與已授權 CLI Agent）
+## 6. Live 驗收：V3（真來源與已授權 CLI Agent）
 
-在已安裝且授權 `claude`、`codex` CLI，並允許連線正式 Yourator 的環境執行：
+跑在**測試環境**的實際安裝上。前置：該機器已依 [測試環境指南](guides/test-environment.md) 部署 dev 部署包，已安裝並授權 `claude`、`codex` CLI，且允許連線正式 Yourator。
 
 ```bash
-mise run e2e-live
+mise run verify-live
 ```
 
-直接 reset/deploy 共用 artifact，從空的 live SQLite 執行下列階段，不會先跑 mock，也不讀 `harness/`、loopback `base_url`、fake Agent result 或 mock SQLite。Agent 成本上限為 score 一筆、letter 一筆；真實職缺、Agent 原文與信件只留 gitignored live SQLite，不進 evidence。
+設定與 SQLite 取自該機器的安裝（位置由 `jobfinder paths` 決定），不物化自己的 artifact、不渲染自己的 unit，也不讀 `harness/`、loopback `base_url`、fake Agent result 或 mock SQLite。Agent 成本上限為 score 一筆、letter 一筆；真實職缺、Agent 原文與信件只留在測試環境的 SQLite，不進 evidence。
+
+這支腳本需要 git clone，因此只適用與開發環境同機的測試環境。其他平台的實機驗收走 §6.1 人工組。
 
 | 階段 | 動作 | 標準答案（字面預期） | 狀態 |
 |---|---|---|---|
-| 共用 artifact 與 live runtime | 物化一次 binary/extension/units，產生 live config、SQLite、evidence | mock/live 同一 binary checksum；`base_url` 為 `https://www.yourator.co`；live SQLite 與 mock/日常分離；PATH 不含 harness | ⏳ |
+| 環境 preflight | 確認測試環境已安裝且 API 服務在跑 | `jobfinder version` 印 `dev (<commit>)`；執行中 process 的執行檔就是該次安裝放置的 binary；設定的 `api.addr` 為 loopback | ⏳ |
 | 外部能力 preflight | 檢查來源工具、user systemd、browser runtime、設定路由 CLI；資料 request 前先查 robots.txt | 未授權／網路／來源不可達→`ENVIRONMENT_BLOCKED`；不得退回 fixture 或 fake Runner | ⏳ |
-| 真來源 fetch | 每方向 keywords 組一個正式 query（每來源最多三組），結果進同一池 | 至少一筆真 Job；跨 query/page 依 external ID 去重；**零筆＝FAIL**；evidence 只記來源、筆數、external ID hash 與 request/format 摘要 | ⏳ |
-| 真資料格式 | 讀 live SQLite 安全 snapshot | external ID、canonical HTTPS URL、標題、公司、非空 JD、地點、remote enum、content hash 正確；salary 可 NULL，非 NULL 時 min≤max | ⏳ |
+| 真來源 fetch | 每方向 keywords 組一個正式 query（每來源最多三組），結果進同一池 | 本趟至少新增一筆真 Job；跨 query/page 依 external ID 去重；**本趟零筆新增且庫內無對應來源資料＝FAIL**；evidence 只記來源、筆數、external ID hash 與 request/format 摘要 | ⏳ |
+| 真資料格式 | 讀測試環境 SQLite 的安全 snapshot | external ID、canonical HTTPS URL、標題、公司、非空 JD、地點、remote enum、content hash 正確；salary 可 NULL，非 NULL 時 min≤max | ⏳ |
 | 真 Agent filter／score／letter | 對一筆結構化條件全過的 Job 跑語意篩選與評分；再對一筆推薦職缺**明確要求後**生成 | 逐條判定與彙總結論、四維、加權總分、reason、runner audit、信件終態合法；要求前零 Drafter/Reviewer 呼叫；score/letter 各最多一筆；executable 非 repo 內 fake | ⏳ |
 | 冪等與 Run | 再執行相同 live query | 同 source/external ID 不新增重複 Job；**未變更的職缺其 `content_hash` 與 `process_state` 逐筆不變**（否則整批會被重置回 `new` 並重付篩選與評分）；Run stats、Agent 上限、錯誤摘要正確 | ⏳ |
-| systemd／API／extension 模擬 | live config 啟 transient systemd 與 localhost API，隔離 Chromium 操作 extension | 讀同一 live SQLite；browser verifier 依實際 Job 狀態選資料、不依賴 mock 合成標題或固定 ID；仍屬自動模擬，非實際 Chrome gate | ⏳ |
 
-開發中未提交變更可直接驗收。artifact manifest 以 binary/extension/config/unit checksum 為主要追溯；Git revision 與 dirty 狀態只作輔助，不構成執行閘門。
+**判準以增量為準**，不要求從空的 SQLite 開始：測試環境的資料庫會累積歷次驗收的結果，每一趟比對的是本趟的新增與變動。
+
+部署包來自打包當下的 working tree，未提交的變更同樣驗得到。追溯以 `jobfinder version` 印出的 commit 與部署包的 `SHA256SUMS` 為準。
+
+Side Panel 的實機讀寫不在本節，屬 §6.1 人工組的 D4。
 
 ## 6.1 部署驗收
 
 逐步操作見 [上手指南](guides/getting-started.md)；本節只定義判準。
 
-D 系列分自動與人工兩組。動到 `internal/paths`、`internal/install`、排程模板或 bootstrap 腳本時，自動組每次重跑，人工組重跑該平台。
+D 系列分自動與人工兩組，分屬兩種環境：**自動組是開發階段驗收**，跑在隔離沙盒內；**人工組是測試環境的實機驗收**，安排見 [測試環境指南](guides/test-environment.md)。動到 `internal/paths`、`internal/install`、排程模板或 bootstrap 腳本時，自動組每次重跑，人工組重跑受影響的平台。
 
-**自動組**由 `mise run e2e-deploy` 執行，落點全部在 `.local-dev/verify/deploy/` 內。`internal/paths` 是路徑的唯一決策點，Linux 側的位置由 `$HOME` 與 `XDG_*` 推導、Windows 側由 `%LOCALAPPDATA%` 推導，把這些變數指向隔離根即得到一個無既有安裝的環境，而安裝走的仍是與真實安裝完全相同的程式碼路徑。
+**自動組**由 `mise run e2e-deploy` 執行，落點全部在 `.local-dev/dev-verify/deploy/` 內。`internal/paths` 是路徑的唯一決策點，Linux 側的位置由 `$HOME` 與 `XDG_*` 推導、Windows 側由 `%LOCALAPPDATA%` 推導，把這些變數指向隔離根即得到一個無既有安裝的環境，而安裝走的仍是與真實安裝完全相同的程式碼路徑。
 
 | 步驟 | 動作 | 標準答案（字面預期） |
 |---|---|---|
@@ -235,17 +242,17 @@ D 系列分自動與人工兩組。動到 `internal/paths`、`internal/install`�
 | D6 回滾 | `jobfinder rollback` | 執行中 process 為前一版；資料庫未被更動；`.bad` 保留了被回滾掉的版本；Windows 上兩支一起回到前一版，不出現版本不一致 |
 | D6A 回滾不依賴服務當下是否在跑 | 停止 API 後執行 `jobfinder rollback` | 服務被啟動並通過生效面驗證，執行中 process 為前一版 |
 | D6B 回滾只退一版 | 回滾後再執行一次 `jobfinder rollback` | 第二次被拒絕且不動任何檔案；`.bad` 仍是第一次回滾撤下來的版本 |
-| D10 bootstrap 的 extension 模式（⏳ 未併入自動組） | 以 `--extension`／`-Extension` 執行 bootstrap 腳本 | extension 解壓於 `<資料目錄>/jobfinder/extension/<tag>` 且含 `manifest.json`；其 `version` 與 `jobfinder version` 對得上；Windows 上解出的檔案無 Mark of the Web；不建立任何服務、不寫入設定檔；印出的目錄可直接被 Chrome 載入 |
+| D10 bootstrap 的 extension 模式（⏳ 未併入自動組） | 以 `--extension`／`-Extension` 執行 bootstrap 腳本，來源為 release 工件或 dev 部署包 | extension 解壓於 `<資料目錄>/jobfinder/extension/<版本字串>` 且含 `manifest.json`；Windows 上解出的檔案無 Mark of the Web；不建立任何服務、不寫入設定檔；印出的目錄可直接被 Chrome 載入。release 工件的 `manifest.json` `version` 與 `jobfinder version` 對得上且腳本印得出固定 ID；dev 部署包的 `key` 已移除，腳本改印出載入目錄 |
 
 自動組以 `--skip-verify` 安裝，隨後自行啟動 `serve` 補上 API 生效面檢查（帶 token 回 200、未帶回 401），涵蓋 `internal/install/smoke.go` 中不依賴服務管理器的那一半。服務層改以 transient 單元驗證，不寫入正式 unit 目錄、不註冊正式排程工作。每趟結束清除自己建立的 transient 單元與隔離根，中途失敗亦然。
 
-D10 需要匿名下載 GitHub release 工件，尚未併入自動組，目前以人工執行 bootstrap 腳本驗證。
+D10 尚未併入自動組，以人工執行 bootstrap 腳本驗證：release 工件那條需要匿名下載 GitHub 工件，dev 部署包那條在測試環境以本地來源模式驗。
 
-**人工組**需要真 Chrome 或真實作業系統環境，每個受支援平台各一輪。
+**人工組**需要真 Chrome 或真實作業系統環境，在測試環境進行，每個受支援平台各一輪。
 
 | 步驟 | 動作 | 標準答案（字面預期） |
 |---|---|---|
-| D4 Side Panel 直連 | extension Options 填 `http://127.0.0.1:8686` 與設定中的 token，開啟 Side Panel | 無任何通道即可讀寫；未帶 token 的請求回 401 |
+| D4 Side Panel 直連 | extension Options 填該測試後端的 loopback 位址與其設定中的 token，開啟 Side Panel | 後端與瀏覽器同機時無任何通道即可讀寫；未帶 token 的請求回 401 |
 | D7 PATH 與診斷（Windows） | 開新終端執行 `jobfinder paths` | 不需完整路徑即可執行；印出 `%LocalAppData%\jobfinder\` 下的位置，含 `jobfinderw.exe` 那列 |
 | D8 Agent CLI 可執行（Windows） | 讓一筆職缺實際走到評分 | npm 安裝的 `claude`／`codex` 可被叫起；失敗時錯誤指向 CLI 本身而非「不是有效的應用程式」；整段過程不彈出主控台視窗 |
 | D9 服務重啟不卡死（Windows） | 停止 api 工作，等 process 消失，再啟動 | 工作回到 `Running` 且 API 有回應。停止是直接終止行程，殘留的 worker 鎖檔不得阻擋下一次啟動 |
