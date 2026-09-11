@@ -1,6 +1,6 @@
 # STATUS — job-finder（MVP 開發）
 
-> 最後更新：2026-09-08。規劃文件見 `docs/PRD.md`、`docs/design.md`、`docs/roadmap.md`、`docs/deploy.md`、`docs/designs/`。
+> 最後更新：2026-09-11。規劃文件見 `docs/PRD.md`、`docs/design.md`、`docs/roadmap.md`、`docs/deploy.md`、`docs/designs/`。
 
 ## §1 未歸檔結論
 
@@ -25,6 +25,10 @@
   設定檔一律不預放。`config.yaml` 預放會讓 install 走既有設定不覆寫的分支，D1 要驗的設定渲染、token 生成與佔位替換整條跳過；Profile 與 denylist 預放則把個人資料放進 install 的 `profile lint` 閘門，且 `seedFile` 對既有檔不套 `0600`。順序是跑完 bootstrap 並判定 D1 → 以本台的 `profile.yaml` 與 `pii-denylist.txt` 覆蓋安裝種下的範例並 `chmod 600` → `profile lint` → 改 `api.extension_origin` → 重啟 API（`profile.Provider` 只在啟動時讀一次快照，手改檔案不重啟不生效）→ 從 Windows 接通道驗 Side Panel。
 
   `jobs.db` 不搬，正式區從空庫開始。本台累積的判定只有 71 次 Agent 呼叫與 2 封求職信，重抓重判在單日上限內即可追平。
+
+  **進度**：Linux 側（新 GCP VM）的 D1、D5 與 `install.sh --extension` 的 D10 已通過，Profile 與 `api.extension_origin` 已就位。Windows 側停在 `install.ps1 -Extension`：`Get-ExpectedChecksum` 的前身以 `TrimStart('*', './')` 剝除行首，而 `TrimStart` 只收單一字元，`'./'` 無法轉型，三種模式都在下載完第一個工件後中止。修正已在本輪隨 CI 的執行期測試一併上版。
+
+  **待續（合併後執行）**：Windows 重新以 `irm …/main/scripts/bootstrap/install.ps1 -OutFile install.ps1` 取回修正後的腳本 → `-Extension` 完成 D10 的 Windows 半（含 Mark of the Web 已解除）→ Chrome 載入 `%LocalAppData%\jobfinder\extension\v0.4.0` → 通道 `Jobfinder-Api-Tunnel` 改指向新 VM → Options 填 `http://127.0.0.1:18686` 與 VM token → Side Panel 驗通 → 停本台 `jobfinder-run.timer` → VM 跑第一趟抓取。
 
 - [ ] **步驟四**：把本台 GCP VM 與本機 Windows 轉為測試環境。
   - **本台**：停止並移除正式的 systemd unit，改以 `mise run deploy-install` 當測試安裝；停掉每日抓取的 timer，要抓取時手動 `jobfinder run`——Agent 額度只有一組。

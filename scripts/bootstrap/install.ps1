@@ -72,31 +72,26 @@ function Get-LocalAppData {
     return $env:LOCALAPPDATA
 }
 
-if ([string]::IsNullOrWhiteSpace($Version)) {
-    Write-Step "resolving the latest release of $Repo"
-    $release = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases/latest" -UseBasicParsing
-    $Version = $release.tag_name
-    if ([string]::IsNullOrWhiteSpace($Version)) { throw "could not resolve the latest release tag" }
+# The release writes its sums with `sha256sum ./*.tar.gz ./*.zip`, so every name
+# carries a leading "./"; GNU coreutils also marks binary mode with a leading
+# "*". Both are prefixes on the line, not part of the artifact name.
+function Get-ExpectedChecksum([string[]]$Lines, [string]$Artifact) {
+    foreach ($line in $Lines) {
+        $fields = $line -split '\s+', 2
+        if ($fields.Count -ne 2) { continue }
+        if (($fields[1].Trim() -replace '^(\*|\./)', '') -eq $Artifact) { return $fields[0].Trim() }
+    }
+    return $null
 }
-
-$base = "https://github.com/$Repo/releases/download/$Version"
-$work = New-Item -ItemType Directory -Path (Join-Path $env:TEMP ("jobfinder-bootstrap-" + [guid]::NewGuid().ToString("N")))
 
 # Get-Artifact verifies before it returns, so no caller can reach an unverified
 # file. It returns the path of the downloaded archive.
-function Get-Artifact([string]$Artifact) {
+function Get-Artifact([string]$Base, [string]$Work, [string]$Artifact) {
     Write-Step "downloading $Artifact"
-    $path = Join-Path $work $Artifact
-    Invoke-WebRequest -Uri "$base/$Artifact" -OutFile $path -UseBasicParsing
+    $path = Join-Path $Work $Artifact
+    Invoke-WebRequest -Uri "$Base/$Artifact" -OutFile $path -UseBasicParsing
 
-    $expected = $null
-    foreach ($line in Get-Content (Join-Path $work "SHA256SUMS")) {
-        $fields = $line -split '\s+', 2
-        if ($fields.Count -eq 2 -and $fields[1].Trim().TrimStart('*', './') -eq $Artifact) {
-            $expected = $fields[0].Trim()
-            break
-        }
-    }
+    $expected = Get-ExpectedChecksum (Get-Content (Join-Path $Work "SHA256SUMS")) $Artifact
     if (-not $expected) { throw "$Artifact is not listed in SHA256SUMS" }
     $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $path).Hash
     if ($expected.ToLower() -ne $actual.ToLower()) {
@@ -106,12 +101,12 @@ function Get-Artifact([string]$Artifact) {
     return $path
 }
 
-function Install-Backend {
-    $name = "jobfinder_${Version}_windows_amd64"
-    $archive = Get-Artifact "$name.zip"
+function Install-Backend([string]$Base, [string]$Work, [string]$Tag) {
+    $name = "jobfinder_${Tag}_windows_amd64"
+    $archive = Get-Artifact $Base $Work "$name.zip"
 
-    Expand-Archive -LiteralPath $archive -DestinationPath $work -Force
-    $unpacked = Join-Path $work $name
+    Expand-Archive -LiteralPath $archive -DestinationPath $Work -Force
+    $unpacked = Join-Path $Work $name
     # The Mark of the Web on the downloaded zip is inherited by everything
     # expanded out of it, and SmartScreen blocks a marked executable.
     Get-ChildItem -Recurse -File -LiteralPath $unpacked | Unblock-File
@@ -130,13 +125,13 @@ function Install-Backend {
     if ($Keep) { Write-Host "`nUnpacked artifact kept at $unpacked" }
 }
 
-function Install-Extension {
-    $archive = Get-Artifact "jobfinder-extension_${Version}.zip"
+function Install-Extension([string]$Base, [string]$Work, [string]$Tag) {
+    $archive = Get-Artifact $Base $Work "jobfinder-extension_${Tag}.zip"
 
     # The resident directory follows the same local app data root the backend
     # resolves, and is per-tag so an older unpack stays intact until Chrome
     # points at the new one.
-    $dest = (New-Item -ItemType Directory -Force -Path (Join-Path (Get-LocalAppData) "jobfinder\extension\$Version")).FullName
+    $dest = (New-Item -ItemType Directory -Force -Path (Join-Path (Get-LocalAppData) "jobfinder\extension\$Tag")).FullName
     Expand-Archive -LiteralPath $archive -DestinationPath $dest -Force
     Get-ChildItem -Recurse -File -LiteralPath $dest | Unblock-File
     $manifest = Join-Path $dest "manifest.json"
@@ -163,12 +158,27 @@ The backend only answers requests from it once its config carries
     if ($Keep) { Write-Host "`nDownloaded archive kept at $archive" }
 }
 
-try {
-    Invoke-WebRequest -Uri "$base/SHA256SUMS" -OutFile (Join-Path $work "SHA256SUMS") -UseBasicParsing
+function Invoke-Bootstrap {
+    $tag = $Version
+    if ([string]::IsNullOrWhiteSpace($tag)) {
+        Write-Step "resolving the latest release of $Repo"
+        $release = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases/latest" -UseBasicParsing
+        $tag = $release.tag_name
+        if ([string]::IsNullOrWhiteSpace($tag)) { throw "could not resolve the latest release tag" }
+    }
 
-    if ($mode -ne "extension") { Install-Backend }
-    if ($mode -ne "backend") { Install-Extension }
+    $base = "https://github.com/$Repo/releases/download/$tag"
+    $work = (New-Item -ItemType Directory -Path (Join-Path $env:TEMP ("jobfinder-bootstrap-" + [guid]::NewGuid().ToString("N")))).FullName
+
+    try {
+        Invoke-WebRequest -Uri "$base/SHA256SUMS" -OutFile (Join-Path $work "SHA256SUMS") -UseBasicParsing
+
+        if ($mode -ne "extension") { Install-Backend $base $work $tag }
+        if ($mode -ne "backend") { Install-Extension $base $work $tag }
+    }
+    finally {
+        if (-not $Keep) { Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue }
+    }
 }
-finally {
-    if (-not $Keep) { Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue }
-}
+
+Invoke-Bootstrap
