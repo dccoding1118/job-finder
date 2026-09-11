@@ -77,3 +77,39 @@ jobs:
           [System.Management.Automation.Language.Parser]::ParseFile(
             (Resolve-Path scripts/bootstrap/install.ps1), [ref]$null, [ref]$errors) | Out-Null
           if ($errors) { $errors | ForEach-Object { Write-Error $_ }; exit 1 }
+
+      # 語法檢查看不見執行期的型別錯誤,而 checksum 比對是整支腳本第一個碰到的邏輯:
+      # 它錯了,三種模式全部在下載完第一個工件之後就中止。取出該函式的原始碼實際呼叫,
+      # 才驗得到 release 實際產出的 "./name" 這種行首。
+      - name: bootstrap 的 SHA256SUMS 比對
+        shell: pwsh
+        run: |
+          $ast = [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path scripts/bootstrap/install.ps1), [ref]$null, [ref]$null)
+          $fn = $ast.Find({
+            param($node)
+            $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -eq 'Get-ExpectedChecksum'
+          }, $true)
+          if (-not $fn) { Write-Error 'Get-ExpectedChecksum 不存在'; exit 1 }
+          Invoke-Expression $fn.Extent.Text
+
+          $lines = @(
+            'aaaa  ./jobfinder-extension_v9.9.9.zip',
+            'bbbb *jobfinder_v9.9.9_windows_amd64.zip',
+            'cccc  jobfinder_v9.9.9_linux_amd64.tar.gz',
+            ''
+          )
+          $cases = @{
+            'jobfinder-extension_v9.9.9.zip'     = 'aaaa'
+            'jobfinder_v9.9.9_windows_amd64.zip' = 'bbbb'
+            'jobfinder_v9.9.9_linux_amd64.tar.gz' = 'cccc'
+          }
+          foreach ($name in $cases.Keys) {
+            $got = Get-ExpectedChecksum $lines $name
+            if ($got -ne $cases[$name]) { Write-Error "$name 應得 $($cases[$name]),實得 '$got'"; exit 1 }
+          }
+          if ($null -ne (Get-ExpectedChecksum $lines 'jobfinder_v9.9.9_darwin_arm64.tar.gz')) {
+            Write-Error '未列出的工件應回 null'; exit 1
+          }
+          Write-Host 'SHA256SUMS 比對通過'

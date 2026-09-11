@@ -150,7 +150,7 @@ Windows 的 `Start-ScheduledTask` 對已在執行的工作是 no-op，和 system
 | workflow | job | 觸發 | 動作 |
 |---|---|---|---|
 | `.github/workflows/ci.yml` | `check`（ubuntu） | pull request、push 至 `main` | 以 `mise.toml` 鎖定的工具鏈執行 gofumpt 檢查（只檢查不改寫）、`lint`、`test`，並確認 extension manifest 可解析 |
-| `.github/workflows/ci.yml` | `windows`（windows-latest） | 同上 | `go build`／`go test`、Task Scheduler 模板可被 XML 解析、`install.ps1` 語法檢查。Windows 是受支援平台，路徑類錯誤不得只在 release 才暴露 |
+| `.github/workflows/ci.yml` | `windows`（windows-latest） | 同上 | `go build`／`go test`、Task Scheduler 模板可被 XML 解析、`install.ps1` 語法檢查與其 `SHA256SUMS` 比對的實際呼叫。Windows 是受支援平台，路徑類錯誤不得只在 release 才暴露 |
 | `.github/workflows/release.yml` | `release` | push tag `v*` | 驗證 tag 格式 → 重跑 lint／test → 建置多平台 binary → 打包 extension → 產生 checksum → 建立 GitHub Release |
 
 release 工件：
