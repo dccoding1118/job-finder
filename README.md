@@ -204,7 +204,8 @@ The full staged plan is in [docs/roadmap.md](docs/roadmap.md).
 
 | Document | Contents |
 |---|---|
-| [docs/guides/getting-started.md](docs/guides/getting-started.md) | Getting started: install, configure, wire up the extension, daily operation, troubleshooting |
+| [docs/guides/getting-started.md](docs/guides/getting-started.md) | Getting started: install, configure, wire up the extension, daily operation, troubleshooting (written in Traditional Chinese) |
+| [docs/guides/test-environment.md](docs/guides/test-environment.md) | Setting up a test environment from a dev deployment package (written in Traditional Chinese) |
 | [docs/PRD.md](docs/PRD.md) | Requirements and scope |
 | [docs/roadmap.md](docs/roadmap.md) | Product positioning and staged plan |
 | [AGENTS.md](AGENTS.md) | Development guide: architecture, module contracts, testing and deployment (written in Traditional Chinese) |

@@ -1,35 +1,30 @@
 # STATUS — job-finder（MVP 開發）
 
-> 最後更新：2026-09-11。規劃文件見 `docs/PRD.md`、`docs/design.md`、`docs/roadmap.md`、`docs/deploy.md`、`docs/designs/`。
+> 最後更新：2026-09-12。規劃文件見 `docs/PRD.md`、`docs/design.md`、`docs/roadmap.md`、`docs/deploy.md`、`docs/designs/`。
 
 ## §1 未歸檔結論
-
-- 環境分工已定案：正式後端只有一份，放一台新的 GCP VM；本台 GCP VM 與本機 Windows 都是測試部署；改動先在兩個測試後端驗過，再跑 release 發布到正式 VM。正式搬離本台之後，這台的 `mise run deploy-install` 不再覆蓋任何正式資產，測試安裝就是這台機器上的一般安裝，不需要獨立設定檔與 transient 單元那套。
 
 - 正式後端不放兩份：兩台各跑一份就是兩份各自獨立的 `jobs.db`，職缺狀態、去重分群與求職信歷程各記各的；且兩邊都掛每日抓取時，同一組 Agent 額度會被消耗兩次。Windows 那台的價值在於它是 D7／D8／D9 唯一能跑的地方，不在於當正式的第二個家。
 
 - 正式後端選 Linux 而非 Windows 桌機：每日抓取的排程契約是錯過不補跑（Linux `Persistent=false`、Windows `StartWhenAvailable=false`），Windows 桌機關機一晚就漏一天；Linux 側有 linger，登出關終端都不影響常駐。
 
-- 官方支援的部署形態只有一種：後端與瀏覽器同機。`extension/manifest.json` 的 `host_permissions` 只有 `http://127.0.0.1/*` 與 `http://[::1]/*`，`internal/install/smoke.go` 的 `assertLoopback` 又會在安裝時拒絕非 loopback 的 `api.addr`——這是程式碼強制的邊界。遠端後端由使用者自理，本 repo 不提供作法；個人的 GCP IAP 通道手冊已移出版控到 `.local-dev/personal-ops/runbook-extension.md`。讓 Options 的位址欄位能真正填遠端主機，需要 extension 改用 `optional_host_permissions`，屬 roadmap S2。
-
-- 測試 extension 不必經 GitHub 或發版：`release.yml` 的打包步驟就是「複製 `extension/`、改寫 `manifest.json` 的 `version`、壓成 zip」，本機以 `python3` 的 `zipfile` 即可重現（這台沒有 `zip` 指令）。要讓測試版與正式版**同時**存在於同一個 Chrome，關鍵是 `manifest.json` 內的固定 `key` 必須移除或改掉——ID 由它決定，兩個同 ID 的未封裝 extension 無法並存。移除 `key` 後 ID 改由載入目錄路徑決定，固定目錄即得到固定的測試 ID，該 ID 要填進測試後端設定的 `api.extension_origin`。
+- 本台 GCP VM 同時是開發環境與 Linux 測試環境：開發階段驗收落在 `.local-dev/dev-verify/`，測試環境落在使用者環境的標準位置，兩者不重疊。Windows 是另一台測試環境，也是 D7／D8／D9 唯一能跑的地方。
 
 ## §2 未完成任務
 
-**公開後的部署收尾**
+**測試環境獨立成第三套部署**
 
-- [ ] **步驟四**：把本台 GCP VM 與本機 Windows 轉為測試環境。
-  - **本台**：停止並移除正式的 systemd unit，改以 `mise run deploy-install` 當測試安裝（開發機走 working tree 建置，版號為 `dev`）。每日抓取的 timer 已停用，要抓取時手動 `jobfinder run`——Agent 額度只有一組。
-  - **Windows**：既有安裝改為測試用途，`api.extension_origin` 改填測試 extension 的 ID。
-  - **Windows 通道**：新增第二條指向本台 VM 的通道，與正式通道並存——排程工作 `Jobfinder-Api-Tunnel-Test`、local port `28686`、常駐目錄 `%LOCALAPPDATA%\jobfinder-tunnel-test\`、wrapper `jobfinder-tunnel-test.ps1`。作法見 `.local-dev/personal-ops/runbook-extension.md` §9。
-  - **測試 extension**：本機打包（複製 `extension/`、改寫 `manifest.json` 的 `version` 與名稱、移除固定 `key`、輸出到固定目錄），與正式 extension 並存；Options 在 `http://127.0.0.1:8686`（Windows 本機測試後端）與 `http://127.0.0.1:28686`（本台測試後端）之間切換。
-  - **文件**：`docs/changes/change-test-environment.md` 記動機與決策，`docs/deploy.md` 與 `docs/verify.md` 落最新狀態。
+- [ ] 程式與工件改動：打包腳本、bootstrap 本地來源模式、刪除舊的開發機安裝與 live 沙盒、`mise.toml` 任務調整、`.local-dev/` 目錄更名。逐項清單見 `docs/changes/change-test-environment.md` §5，文件已先行落定。
+
+- [ ] 兩台測試環境的實際部署：Linux 以 dev 部署包重裝、Windows 部署 dev 包與 dev extension、建立指向本台 VM 的第二條通道（作法見 `.local-dev/personal-ops/runbook-extension.md` §9）。兩台的 `api.extension_origin` 都要改填 dev extension 的 ID。
+
+- [ ] 測試環境跑一次 live 驗收。Side Panel 那段要等 Windows 的通道與 dev extension 就緒，其餘不必等。
 
 **與公開無關（可獨立進行）**
 
 - [ ] 生效面驗證失敗時附上服務輸出（`docs/changes/change-update-effect-surface.md` §2 D3）的實機驗證。情境仍成立：現行 `schemaVersion` 為 10（`internal/store/store.go:23`），`v0.2.0` 為 9，以該工件對 schema 10 的資料庫跑 `update`，錯誤訊息應在「服務不是 active」之後附上 `database schema version 10 is newer than supported version 9`。此情境不能用連續兩次 `rollback` 製造——回滾只退一版。
 
-  待驗的範圍已收窄到一件事：**診斷文字真的從 journald 或 `log.file` 取得**。錯誤訊息的組裝邏輯由 `internal/install/sequence_test.go` 的 `TestVerifyEffectCarriesTheServiceReasonIntoTheError` 守著，但該測試的 diagnosis 是注入的字串，不會真的呼叫 `journalctl`（`internal/install/systemd.go:151`）或讀 Windows 的 `LastTaskResult`。排在步驟四之後、於測試環境進行。
+  待驗的範圍已收窄到一件事：**診斷文字真的從 journald 或 `log.file` 取得**。錯誤訊息的組裝邏輯由 `internal/install/sequence_test.go` 的 `TestVerifyEffectCarriesTheServiceReasonIntoTheError` 守著，但該測試的 diagnosis 是注入的字串，不會真的呼叫 `journalctl`（`internal/install/systemd.go:151`）或讀 Windows 的 `LastTaskResult`。排在測試環境就緒之後進行。
 
 - [ ] Windows 側的部署驗收自動組：Linux 側已由 `mise run e2e-deploy` 落地（D1／D2／D3／D5／D5A／D6／D6B）。Windows 對稱做法是以 `$env:LOCALAPPDATA` 指向隔離根，並在 PATH 最前放一個 `powershell.cmd` 攔截 `Register-ScheduledTask`（`.cmd` 在 `PATHEXT` 內，Go 的 `exec.LookPath` 會先找到它）；此路徑尚未在 Windows 實機驗證過。
 

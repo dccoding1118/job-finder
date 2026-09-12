@@ -6,11 +6,17 @@
 
 支援的部署平台為 Linux 與 Windows。兩者共用同一份 Go 安裝實作，差異只在排程機制（systemd user unit／Task Scheduler）與日誌出口。macOS 有 binary 工件但不是部署平台：工件不含排程模板與 bootstrap 腳本。
 
-## 1. 開發階段驗收部署
+## 1. 三種環境
 
-開發 checkout 與測試部署區分離：`.local-dev/verify/` 是本機、gitignored 的受測安裝根目錄。開發完成一個批次後，先以 `scripts/verify/harness/deploy.sh` 物化目前 binary、驗收設定、匿名 Profile、資源與證據目錄，再從該目錄執行 [verify](verify.md) 指定的 runbook。browser E2E 程式與設定位於 `scripts/verify/browser/`。
+| 環境 | 範圍 | 素材 | 安裝入口 | `jobfinder version` |
+|---|---|---|---|---|
+| 開發階段驗收 | `.local-dev/dev-verify/` 隔離根 | 當下 working tree 的建置 | 驗收腳本自行物化，不裝進使用者環境 | `dev (<commit>)` |
+| 測試環境 | 一台機器的完整使用者環境 | dev 部署包 | bootstrap 腳本的本地來源模式 | `dev (<commit>)` |
+| 正式環境 | 一台機器的完整使用者環境 | release 工件 | bootstrap 腳本的下載模式 | tag |
 
-此部署不安裝 systemd unit、不覆蓋日常使用資料，也不讀取日常使用目錄。部署產物 manifest 必須記錄來源 revision、建置時間及 binary checksum，使驗收可證明執行的是物化的 binary。驗收會將 `deploy/production/systemd/` 的模板渲染到隔離目錄，並以 transient user unit 驗證 service、one-shot 與 timer；不得複製 unit 到正式 user unit 目錄或啟用正式 unit。
+**測試環境與正式環境只差素材一項**，安裝入口、路徑決策、排程掛載與生效面驗證逐字相同。測試環境因此驗得到正式環境實際會走的安裝流程。官方建議的測試環境安排見 [測試環境指南](guides/test-environment.md)。
+
+開發階段驗收的邊界是**不碰使用者環境**：不安裝 systemd unit、不覆蓋日常使用資料，也不讀取日常使用目錄。它把 `deploy/production/systemd/` 的模板渲染到隔離目錄，並以 transient user unit 驗證 service、one-shot 與 timer，不複製 unit 到正式 user unit 目錄、不啟用正式 unit。物化產物的 manifest 記錄來源 revision、建置時間與 binary checksum，使驗收可證明執行的是物化的那份 binary。作法見 `AGENTS.md` §5，案例見 [verify](verify.md)。
 
 ## 2. 路徑決策與檔案配置
 
@@ -69,15 +75,19 @@ Agent 稽核資料保留在 SQLite 的 `agent_calls`。
 
 **安裝語意集中在 binary 的三個子命令**：`jobfinder install`／`update`／`rollback`。路徑決策、token 生成、設定渲染、既有設定不覆寫、排程掛載與生效面驗證都在同一份 Go 程式碼裡，Linux 與 Windows 共用，平台差異只剩排程掛載。因此以下三條路徑得到完全相同的結果：
 
-| 路徑 | 適用機器 | 素材 | 動作 |
+| 路徑 | 適用環境 | 素材 | 動作 |
 |---|---|---|---|
-| 自動部署：`install.sh`／`install.ps1` | 測試與正式環境 | release 工件 | 解析版本 → 下載工件與 `SHA256SUMS` → 驗 checksum → 解壓到暫存 → 執行解壓出的 `jobfinder install`，常駐 binary 已存在時改執行 `update` |
-| 手動部署：自行下載工件 | 測試與正式環境 | release 工件 | 自行比對 `SHA256SUMS`，解壓後直接執行 `jobfinder install` |
-| 開發機安裝：`scripts/deploy/*.sh`（`mise run deploy-*`） | 有 git clone 的開發機 | 當下 working tree 的建置 | 跑 `fmt`／`lint`／`test`／`build`，再把剛建置的 binary 交給同一組子命令，並以 checkout 為 `--assets` |
+| 下載安裝：`install.sh`／`install.ps1` | 正式環境 | release 工件 | 解析版本 → 下載工件與 `SHA256SUMS` → 驗 checksum → 解壓到暫存 → 執行解壓出的 `jobfinder install`，常駐 binary 已存在時改執行 `update` |
+| 本地安裝：`install.sh --from-dir <dir>`／`install.ps1 -FromDirectory <dir>` | 測試環境 | dev 部署包 | 讀該目錄的 `SHA256SUMS` → 驗 checksum → 解壓到暫存 → 之後與上一列逐字相同 |
+| 手動安裝：自行解壓工件 | 兩者 | 任一種 | 自行比對 `SHA256SUMS`，解壓後直接執行 `jobfinder install` |
 
-**前兩條與第三條的分界是素材，不是偏好。** 前兩條裝的是某個 tag 的 release 工件，`jobfinder version` 印得出該 tag，有 `SHA256SUMS` 可核對，任何機器上都成立；第三條裝的是當下 working tree 的建置，`jobfinder version` 印 `dev (<commit>)`，對應不到任何 release，也沒有工件可供他人重現。因此**開發機以外的機器一律走前兩條**，不論該機器承載的是測試環境還是正式環境；開發機要把自己的 checkout 當測試環境用時走第三條，改完即裝、不必先發版。
+**三條路徑的分界是素材從哪裡來，安裝動作本身完全相同。** 下載模式取的是某個 tag 的 release 工件，`jobfinder version` 印得出該 tag，`SHA256SUMS` 隨 Release 公開，任何人都能核對；本地模式取的是開發環境打包當下 working tree 的建置，`jobfinder version` 印 `dev (<commit>)`，對應不到任何 release，完整性由包內的 `SHA256SUMS` 保證。
 
-**bootstrap 腳本另有 extension 模式**：不帶旗標即只裝後端；`--extension`（`install.sh`）／`-Extension`（`install.ps1`）只裝 extension，`--all`／`-All` 兩者都裝。extension 模式下載 `jobfinder-extension_<tag>.zip`、驗 checksum、解壓到 `<資料目錄>/jobfinder/extension/<tag>`（Linux `~/.local/share/…`、Windows `%LocalAppData%\jobfinder\extension\<tag>`），Windows 另解除 Mark of the Web，終點是目錄就緒與印出 Chrome 的手動步驟。extension 沒有安裝語意——無設定渲染、無 token、無排程、無生效面驗證——因此這條路留在腳本內，不進 `jobfinder install`、不併進平台工件。遠端拓撲靠它成立：跑 Chrome 的那台機器不需要、也不該被裝出一個後端服務。
+**正式環境一律走 release 工件。** dev 部署包沒有公開的下載來源，也對應不到可重現的版本座標，它存在的理由是讓尚未發版的改動能在測試環境的完整安裝流程上驗過。部署包的產出見 §7。
+
+**bootstrap 腳本另有 extension 模式**：不帶旗標即只裝後端；`--extension`（`install.sh`）／`-Extension`（`install.ps1`）只裝 extension，`--all`／`-All` 兩者都裝。extension 模式取得 `jobfinder-extension_<版本字串>.zip`、驗 checksum、解壓到 `<資料目錄>/jobfinder/extension/<版本字串>`（Linux `~/.local/share/…`、Windows `%LocalAppData%\jobfinder\extension\…`），Windows 另解除 Mark of the Web，終點是目錄就緒與印出 Chrome 的手動步驟。常駐目錄名一律是該素材的版本字串——release 工件為 tag，dev 部署包為 `dev`。extension 沒有安裝語意——無設定渲染、無 token、無排程、無生效面驗證——因此這條路留在腳本內，不進 `jobfinder install`、不併進平台工件。跑 Chrome 的那台機器不需要、也不該被裝出一個後端服務。
+
+extension 模式同樣支援本地來源：`--from-dir`／`-FromDirectory` 下改讀該目錄的 extension zip。**release 工件的 extension ID 是常數**，`manifest.json` 帶固定 `key`，Chrome 在每台機器上推導出同一個 ID，腳本因此印得出它；dev 部署包的 `key` 已於打包時移除，ID 由載入目錄的路徑決定，腳本改為印出該目錄並要求從 `chrome://extensions` 取得實際 ID。
 
 **移除沒有對應的子命令**：`install`／`update`／`rollback` 三者都不負責拆除。安裝根目錄底下除了安裝流程的產物，還有 bootstrap 的 extension 模式解壓出的 `extension/<tag>/`——Chrome 讀的就是那裡——所以移除是逐項進行，不是刪整棵樹。步驟見 [上手指南](guides/getting-started.md) §10.4。
 
@@ -115,7 +125,7 @@ Agent 稽核資料保留在 SQLite 的 `agent_calls`。
 
 重啟一律是**無條件重啟**，不是「有在跑才重啟」也不是「啟用」：`systemctl --user enable --now` 對執行中的服務無作用，`try-restart` 對停止中的服務無作用，兩者各自會在一半的情境下讓新 binary 躺在磁碟上而記憶體裡沒有它。同版重跑 `update` 不覆蓋 `jobfinder.prev`：回滾點必須指向前一個版本，被現行版蓋掉等於回滾指向它自己要撤銷的那一版。
 
-Windows 的 `Start-ScheduledTask` 對已在執行的工作是 no-op，和 systemd 的 `enable --now` 是同一個陷阱：更新一律先停、等 process 真的消失、再啟動。ScheduledTasks 模組沒有單一 cmdlet 能完成重啟，`Stop-ScheduledTask` 之後必須等到工作離開 `Running` 才呼叫 `Start-ScheduledTask`；服務行程在啟動時取得環境變數，改動 PATH 或補裝 Agent CLI 後同樣要走這一步。不得將驗收部署（`.local-dev/verify/`）的 binary、設定或 state 直接覆蓋日常使用目錄。
+Windows 的 `Start-ScheduledTask` 對已在執行的工作是 no-op，和 systemd 的 `enable --now` 是同一個陷阱：更新一律先停、等 process 真的消失、再啟動。ScheduledTasks 模組沒有單一 cmdlet 能完成重啟，`Stop-ScheduledTask` 之後必須等到工作離開 `Running` 才呼叫 `Start-ScheduledTask`；服務行程在啟動時取得環境變數，改動 PATH 或補裝 Agent CLI 後同樣要走這一步。不得將開發階段驗收（`.local-dev/dev-verify/`）的 binary、設定或 state 直接覆蓋日常使用目錄。
 
 ## 5. 後端位置的約束與維運
 
@@ -153,7 +163,7 @@ Windows 的 `Start-ScheduledTask` 對已在執行的工作是 no-op，和 system
 |---|---|---|---|
 | `.github/workflows/ci.yml` | `check`（ubuntu） | pull request、push 至 `main` | 以 `mise.toml` 鎖定的工具鏈執行 gofumpt 檢查（只檢查不改寫）、`lint`、`test`，並確認 extension manifest 可解析 |
 | `.github/workflows/ci.yml` | `windows`（windows-latest） | 同上 | `go build`／`go test`、Task Scheduler 模板可被 XML 解析、`install.ps1` 語法檢查與其 `SHA256SUMS` 比對的實際呼叫。Windows 是受支援平台，路徑類錯誤不得只在 release 才暴露 |
-| `.github/workflows/release.yml` | `release` | push tag `v*` | 驗證 tag 格式 → 重跑 lint／test → 建置多平台 binary → 打包 extension → 產生 checksum → 建立 GitHub Release |
+| `.github/workflows/release.yml` | `release` | push tag `v*` | 驗證 tag 格式 → 重跑 lint／test → 呼叫 `scripts/release/pack.sh` 產出工件與 checksum → 建立 GitHub Release |
 
 release 工件：
 
@@ -164,11 +174,15 @@ release 工件：
 | `jobfinder-extension_<tag>.zip` | extension 目錄，`manifest.json` 的 `version` 於打包時改寫為 tag 去掉 `v` 的語意版號 |
 | `SHA256SUMS` | 上述所有工件的 SHA256 |
 
+**打包邏輯集中在 `scripts/release/pack.sh`**，吃版本字串與目標平台清單，產出上表的工件形狀。它有兩個呼叫者：`release.yml` 帶 tag 與全部平台，開發環境帶 `dev` 與受測平台。兩者共用同一支腳本，因此「dev 部署包與 release 工件同形狀」是機械保證，不靠人維持。壓縮不使用 `zip` 指令，開發機不一定有它。
+
+**dev 部署包**是測試環境的素材，工件形狀與上表逐項相同，差別只在版本字串為 `dev` 而非 tag，以及它落在開發環境的本機目錄、不進 GitHub Release。版本字串為 `dev` 時打包另做兩件事：移除 `manifest.json` 的固定 `key`、把 `name` 改為 `jobfinder (dev)`。前者讓 Chrome 改以載入目錄推導 ID，後者讓兩張卡片在清單上分得開——dev extension 與正式 extension 因此能並存於同一個 Chrome，而這是打包的保證，不是操作步驟。
+
 版號的唯一決策點是 `internal/version`：逐欄位取 ldflags 注入值 → `debug.ReadBuildInfo()` → 寫死的 fallback。`jobfinder version` 因此在任何建置路徑都印得出可辨識的身分——release 建置印 tag，本機建置印 `dev (<commit>) (dirty)`，不偽造版本號。
 
 `-X` 的符號路徑 `github.com/dccoding1118/job-finder/internal/version.tag` 是字串綁定：package 搬家或變數改名會使注入**靜默失效**，版號悄悄退回 `dev`。改動時必須同步 `release.yml`。
 
-工件內容即安裝流程所需的全部素材：`configs/` 供設定渲染、平台目錄供排程掛載、bootstrap 腳本供下載路徑使用。安裝流程在開發 checkout 下改讀 `deploy/production/<平台>/`，因此兩種來源共用同一份實作。
+工件內容即安裝流程所需的全部素材：`configs/` 供設定渲染、平台目錄供排程掛載、bootstrap 腳本供安裝入口使用。安裝流程預設從執行檔所在目錄取素材，`--assets` 可另行指定；release 工件與 dev 部署包的佈局相同，因此兩種素材共用同一份實作。
 
 **extension 與後端必須同版**。兩者由同一個 tag 一起發出，但執行期沒有版本協商或相容性檢查：舊版 extension 連新版 API 一樣通過認證、Side Panel 一樣載入，只在個別功能上安靜地行為不對。extension 不由 `jobfinder install` 取得——它是獨立工件，平台工件內不含它；bootstrap 腳本的 extension 模式負責下載與解壓，載入 Chrome 仍是人工步驟，後端換版時一併更換。
 

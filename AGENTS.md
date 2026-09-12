@@ -82,7 +82,7 @@ Go 不保證在裸 PATH；以 `mise run <task>` 或 `mise exec -- go <args>` 執
 | `internal/` | 業務模組：`store`／`profile`／`crawler`／`pipeline`／`agents`／`api`／`install`／`paths`／`logging`／`version` |
 | `extension/` | Chrome MV3 extension：Side Panel、Profile 編輯器、瀏覽輔助模組 |
 | `deploy/production/` | `systemd/` 三個 unit 與 `windows/` 兩個 Task Scheduler 模板 |
-| `scripts/` | `bootstrap/`（release 工件的自動部署）、`deploy/`（開發機自身的安裝）、`verify/`（驗收 harness） |
+| `scripts/` | `bootstrap/`（安裝入口：下載 release 工件或讀本地 dev 部署包）、`release/`（打包）、`verify/`（驗收 harness） |
 | `configs/` | 設定與 Profile 範例、驗收用設定；安裝流程由此渲染實際 `config.yaml` |
 | `docs/` | 需求與設計的權威來源 |
 
@@ -106,7 +106,7 @@ Go 不保證在裸 PATH；以 `mise run <task>` 或 `mise exec -- go <args>` 執
 | 版號解析與注入 | `docs/deploy.md` §7 | `internal/version/` |
 | CLI 命令樹 | 各模組的 CLI 介面節 | `cmd/jobfinder/cli/` |
 
-**頂層文件**：`docs/PRD.md`（需求與範圍）、`docs/design.md`（系統架構、關鍵技術決策與開發順序）、`docs/roadmap.md`（產品定位與階段規劃）、`docs/deploy.md`（部署契約）、`docs/verify.md`（累加式整合與驗收）、`docs/guides/getting-started.md`（上手與操作）、`docs/guides/runbook-upgrade.md`（發版後三條 lane 的換版步驟）。各模組實作契約在 `docs/designs/design-<module>.md`、單元測試規劃在 `docs/tests/test-<module>.md`。
+**頂層文件**：`docs/PRD.md`（需求與範圍）、`docs/design.md`（系統架構、關鍵技術決策與開發順序）、`docs/roadmap.md`（產品定位與階段規劃）、`docs/deploy.md`（部署契約）、`docs/verify.md`（累加式整合與驗收）、`docs/guides/getting-started.md`（上手與操作）、`docs/guides/test-environment.md`（官方建議的測試環境安排）、`docs/guides/runbook-upgrade.md`（發版後三條 lane 的換版步驟）。各模組實作契約在 `docs/designs/design-<module>.md`、單元測試規劃在 `docs/tests/test-<module>.md`。
 
 **變更紀錄**：`docs/changes/change-<slug>.md`——記某次變更的動機、決策與落點（**非 canonical**，最新狀態一律讀被覆蓋的 canonical 文件本身）。既有主題的變更先寫此檔、再就地更新 canonical。
 
@@ -170,18 +170,20 @@ mise run lint         # 執行 golangci-lint
 |---|---|---|
 | L1 單元 | 模組內邏輯與負向案例 | 同檔 `*_test.go`；store 使用暫存目錄中的真 SQLite；crawler 使用 `httptest`；agents 使用 fake Runner |
 | L2 整合 | pipeline 跨模組流程 | `mise run e2e-mock` 以合成來源、fake Runner 與 extension 模擬驗證；不代表真外部依賴 |
-| Live E2E | 真實來源與 CLI Runner | `mise run e2e-live` 使用獨立設定與 SQLite；至少抓回一筆真資料並驗證格式，不得退回 mock |
-| 人工 gate | 實際 Chrome 插件、實機部署 | 依 `docs/verify.md` 由驗收者載入同一 artifact；自動隔離 Chromium 不得替代 |
+| Live 驗收 | 真實來源與 CLI Runner | `mise run verify-live` 打在測試環境的實際安裝；至少抓回一筆真資料並驗證格式，不得退回 mock |
+| 人工 gate | 實際 Chrome 插件、各平台實機 | 在測試環境進行，判準見 `docs/verify.md` §6.1；自動隔離 Chromium 不得替代 |
 
 每個完成的模組都應先通過 `mise run fmt`、`mise run lint`、`mise run test`，再進入下一個模組。
 
-開發批次完成後，先以 `scripts/verify/harness/deploy.sh` 把受測 binary 與驗收資源物化到 `.local-dev/verify/`，再執行該批次的 `scripts/verify/run-*.sh` 與 `docs/verify.md` 案例。入口 runbook（`run-*.sh`、`reset.sh`）與共用 `lib.sh` 在 `scripts/verify/`；建置 harness（`deploy.sh`、`fake-agent.sh`）在 `scripts/verify/harness/`、斷言 oracle 在 `scripts/verify/oracle/`、browser E2E 與 Playwright 設定在 `scripts/verify/browser/`；mock／live 各自的 SQLite 與證據位於 gitignored 的 `.local-dev/verify/` 且不得共用外部依賴設定。正式排程模板位於 `deploy/production/`，不由驗收腳本安裝。
+**前四層跑在開發階段驗收的沙盒內，Live 驗收與人工 gate 跑在測試環境**。三種環境的分界見 `docs/deploy.md` §1，測試環境怎麼架見 `docs/guides/test-environment.md`。
+
+開發批次完成後，先以 `scripts/verify/harness/deploy.sh` 把受測 binary 與驗收資源物化到 `.local-dev/dev-verify/`，再執行該批次的 `scripts/verify/run-*.sh` 與 `docs/verify.md` 案例。入口 runbook（`run-*.sh`、`reset.sh`）與共用 `lib.sh` 在 `scripts/verify/`；建置 harness（`deploy.sh`、`fake-agent.sh`）在 `scripts/verify/harness/`、斷言 oracle 在 `scripts/verify/oracle/`、browser E2E 與 Playwright 設定在 `scripts/verify/browser/`；mock 的 SQLite 與證據位於 gitignored 的 `.local-dev/dev-verify/`。沙盒是可重建的產物，整個刪掉再跑一次即回到同一狀態。正式排程模板位於 `deploy/production/`，不由驗收腳本安裝。
 
 ## 6. 怎麼部署
 
 MVP 以 `jobfinder run` 作為 one-shot 的批次更新，由每日排程觸發（Linux systemd user timer、Windows Task Scheduler）；API service 只綁 loopback 並承載常駐 worker，Side Panel 透過其設定的 loopback endpoint 存取。支援的形態是後端與瀏覽器同機。extension 的 `host_permissions` 只涵蓋 loopback，endpoint 恆為本機位址；後端放在別台機器時，把那台的 loopback port 轉送到本機由使用者自理。
 
-**安裝語意集中在 binary 的 `install`／`update`／`rollback` 子命令**（`internal/install`），Linux 與 Windows 共用同一份實作，平台差異只剩排程掛載與執行檔數量：Windows 另裝一支 GUI subsystem 的 `jobfinderw.exe` 給排程執行（否則常駐服務會在桌面留一個主控台視窗），兩支同版、一起更新與回滾。`scripts/bootstrap/install.sh`／`install.ps1` 只負責下載、驗 `SHA256SUMS` 與解壓，分三種模式（不帶旗標只裝後端，`--extension`／`-Extension` 只裝 extension，`--all`／`-All` 兩者都裝）：後端模式解壓後依常駐 binary 是否存在交棒 `install` 或 `update`；extension 模式把 extension zip 解壓到 `<資料目錄>/jobfinder/extension/<tag>` 並印出 Chrome 的人工步驟——extension 沒有任何安裝語意，所以這條路只在腳本內，不進子命令；`scripts/deploy/*.sh`（`mise run deploy-*`）是開發 checkout 的 wrapper，跑完 `fmt`／`lint`／`test`／`build` 後把剛建置的 binary 交給同一組子命令；它裝的是 working tree 的建置，版號為 `dev`，只供開發機把自己當測試環境用，開發機以外的機器一律走 release 工件。這些入口與 `scripts/verify/` 的驗收 harness 分離、**不由任何 `e2e-*` 任務呼叫**、不碰 `.local-dev/`。驗證一律打在生效面（執行中 process 的執行檔與啟動時間），非安裝面。完整步驟與契約見 `docs/deploy.md` §2–§4。
+**安裝語意集中在 binary 的 `install`／`update`／`rollback` 子命令**（`internal/install`），Linux 與 Windows 共用同一份實作，平台差異只剩排程掛載與執行檔數量：Windows 另裝一支 GUI subsystem 的 `jobfinderw.exe` 給排程執行（否則常駐服務會在桌面留一個主控台視窗），兩支同版、一起更新與回滾。`scripts/bootstrap/install.sh`／`install.ps1` 只負責取得工件、驗 `SHA256SUMS` 與解壓，分三種模式（不帶旗標只裝後端，`--extension`／`-Extension` 只裝 extension，`--all`／`-All` 兩者都裝）：後端模式解壓後依常駐 binary 是否存在交棒 `install` 或 `update`；extension 模式把 extension zip 解壓到 `<資料目錄>/jobfinder/extension/<版本字串>` 並印出 Chrome 的人工步驟——extension 沒有任何安裝語意，所以這條路只在腳本內，不進子命令。工件來源有兩種：不帶旗標時下載 release 工件，`--from-dir`／`-FromDirectory` 則讀該目錄內的 dev 部署包，兩者之後的動作逐字相同。部署包由 `scripts/release/pack.sh` 產出，`release.yml` 與 `mise run pack` 共用它。這些入口與 `scripts/verify/` 的驗收 harness 分離、**不由任何 `e2e-*` 任務呼叫**、不碰 `.local-dev/dev-verify/`。驗證一律打在生效面（執行中 process 的執行檔與啟動時間），非安裝面。完整步驟與契約見 `docs/deploy.md` §2–§4、§7；測試環境的安排見 `docs/guides/test-environment.md`。
 
 ### 已知雷
 
@@ -199,7 +201,7 @@ MVP 以 `jobfinder run` 作為 one-shot 的批次更新，由每日排程觸發�
 - extension Options 接受的 host 必須與 `manifest.json` 的 `host_permissions` 一致（`127.0.0.1`、`[::1]`）。多接受一個 `localhost` 會存得進去卻在 fetch 被擋，症狀是「存好了但離線」；IPv6 從 URL 解析出來帶方括號。
 - 排程狀態不得靠 `schtasks` 的文字輸出判定——那是安裝語系相依的；一律走 PowerShell 的 ScheduledTasks cmdlet 取物件屬性。
 - `go.mod` 的 `go` directive 釘在 1.23.0；升相依套件時必看 `git diff go.mod` 的 `go` 行。`go get` 會為了滿足新相依悄悄改寫 directive 且不發警告，本機因 Go 自動下載對應 toolchain 而毫無症狀，到 `GOTOOLCHAIN=local` 的環境才編不動。抬高 directive 的代價落在靜態分析工具層而非編譯器：golangci-lint、staticcheck、gopls 各自綁死一個可解析的 Go 版本，directive 超前時本機 lint 與 IDE 無法 typecheck。要維持原版本用 `go mod edit -go=1.23.0 -toolchain=none` 再挑相容的相依版本，各版本的 directive 以 `grep -m1 "^go " $(go env GOMODCACHE)/<module>@<ver>/go.mod` 查。仍相容的上緣為 `modernc.org/sqlite` 1.39.0 與 `golang.org/x/sys` 0.35.0，更高版已由 `.github/dependabot.yml` 擋下。
-- extension 與後端共用同一個安裝根目錄（Linux `~/.local/share/jobfinder/`、Windows `%LocalAppData%\jobfinder\`）：bootstrap 的 extension 模式把工件解壓到該根目錄下的 `extension/<tag>/`，而 Chrome 每次啟動都要從那裡讀檔。移除後端時整棵刪掉會一併帶走它，Chrome 的卡片隨即失效。逐項刪，步驟見 `docs/guides/getting-started.md` §10.4。
+- extension 與後端共用同一個安裝根目錄（Linux `~/.local/share/jobfinder/`、Windows `%LocalAppData%\jobfinder\`）：bootstrap 的 extension 模式把工件解壓到該根目錄下的 `extension/<版本字串>/`，而 Chrome 每次啟動都要從那裡讀檔。移除後端時整棵刪掉會一併帶走它，Chrome 的卡片隨即失效。逐項刪，步驟見 `docs/guides/getting-started.md` §10.4。
 - `gh release download` 遇到目的地已有同名檔案時整條命令失敗，不是跳過該檔。重跑同一段下載（換版驗收、checksum 對不上重來、安裝到一半中斷）必然踩到，且工件與 `SHA256SUMS` 都會被擋。文件裡的每一條 `gh release download` 一律帶 `--clobber`。
 - `jdx/mise-action` 的 `version` 輸入釘的是 **mise CLI 本身**，與 `mise.toml` 裡的工具版本無關，落後太多會讓 action 呼叫到該版沒有的子命令。症狀只在**快取命中**時出現：action 於快取命中時走 `mise version --json` 判斷已裝版本，命中失敗即 `exit code 2`，且該呼叫帶 `silent: true`，log 裡看不到任何錯誤原因。快取未命中時 action 直接下載 mise、不走這條路徑，所以升級後的第一次執行會綠、第二次起才紅。改動 `version` 會連帶改變快取鍵，舊的快取自然被繞開。
 
