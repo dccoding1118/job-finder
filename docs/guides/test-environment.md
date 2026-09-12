@@ -48,11 +48,14 @@ mise run pack
 
 ## 4. 部署到 Linux 測試環境
 
+先切到工件目錄，再從該目錄安裝：
+
 ```bash
-.local-dev/test-deploy/install.sh --from-dir .local-dev/test-deploy
+cd .local-dev/test-deploy
+./install.sh --from-dir .
 ```
 
-常駐 binary 已存在時腳本自行改走 `update`，不必分辨首裝與換版。裝完確認：
+`--from-dir` 指的是存放工件與 `SHA256SUMS` 的目錄，工件就在當前目錄時填 `.`。常駐 binary 已存在時腳本自行改走 `update`，不必分辨首裝與換版。裝完確認：
 
 ```bash
 jobfinder version          # 應印 dev (<commit>)
@@ -70,9 +73,10 @@ systemctl --user start jobfinder-run.service    # 需要抓取時手動跑
 
 ## 5. 部署到 Windows 測試環境
 
-把 `.local-dev/test-deploy/` 整個目錄傳到 Windows，在該目錄內：
+把 `.local-dev/test-deploy/` 整個目錄傳到 Windows，先切到它在這台機器上的位置，再從該目錄安裝：
 
 ```powershell
+cd $env:USERPROFILE\Downloads\test-deploy    # 換成該目錄實際傳到的位置
 powershell -ExecutionPolicy Bypass -File .\install.ps1 -FromDirectory .
 ```
 
@@ -86,6 +90,8 @@ jobfinder run                                    # 需要抓取時手動跑
 工作停用後連手動啟動一併關閉，所以 Windows 這端的手動抓取走 CLI。Linux 那端停用的是 timer，one-shot unit 本身仍可手動觸發。
 
 ## 6. dev extension 與正式 extension 並存
+
+在同一個工件目錄內執行 extension 模式：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\install.ps1 -FromDirectory . -Extension
