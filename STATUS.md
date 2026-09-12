@@ -14,8 +14,6 @@
 
 **測試環境獨立成第三套部署**
 
-- [ ] 程式與工件改動：打包腳本、bootstrap 本地來源模式、刪除舊的開發機安裝與 live 沙盒、`mise.toml` 任務調整、`.local-dev/` 目錄更名。逐項清單見 `docs/changes/change-test-environment.md` §5，文件已先行落定。
-
 - [ ] 兩台測試環境的實際部署：Linux 以 dev 部署包重裝、Windows 部署 dev 包與 dev extension、建立指向本台 VM 的第二條通道（作法見 `.local-dev/personal-ops/runbook-extension.md` §9）。兩台的 `api.extension_origin` 都要改填 dev extension 的 ID。
 
 - [ ] 測試環境跑一次 live 驗收。Side Panel 那段要等 Windows 的通道與 dev extension 就緒，其餘不必等。

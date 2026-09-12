@@ -177,7 +177,7 @@ mise run lint         # 執行 golangci-lint
 
 **前四層跑在開發階段驗收的沙盒內，Live 驗收與人工 gate 跑在測試環境**。三種環境的分界見 `docs/deploy.md` §1，測試環境怎麼架見 `docs/guides/test-environment.md`。
 
-開發批次完成後，先以 `scripts/verify/harness/deploy.sh` 把受測 binary 與驗收資源物化到 `.local-dev/dev-verify/`，再執行該批次的 `scripts/verify/run-*.sh` 與 `docs/verify.md` 案例。入口 runbook（`run-*.sh`、`reset.sh`）與共用 `lib.sh` 在 `scripts/verify/`；建置 harness（`deploy.sh`、`fake-agent.sh`）在 `scripts/verify/harness/`、斷言 oracle 在 `scripts/verify/oracle/`、browser E2E 與 Playwright 設定在 `scripts/verify/browser/`；mock 的 SQLite 與證據位於 gitignored 的 `.local-dev/dev-verify/`。沙盒是可重建的產物，整個刪掉再跑一次即回到同一狀態。正式排程模板位於 `deploy/production/`，不由驗收腳本安裝。
+開發批次完成後，先以 `scripts/verify/harness/deploy.sh` 把受測 binary 與驗收資源物化到 `.local-dev/dev-verify/`，再執行該批次的 `scripts/verify/run-*.sh` 與 `docs/verify.md` 案例。沙盒的入口 runbook（`run-*.sh`、`reset.sh`）、打在測試環境的 `verify-live.sh` 與共用 `lib.sh` 都在 `scripts/verify/`；建置 harness（`deploy.sh`、`fake-agent.sh`）在 `scripts/verify/harness/`、斷言 oracle 在 `scripts/verify/oracle/`、browser E2E 與 Playwright 設定在 `scripts/verify/browser/`；mock 的 SQLite 與證據位於 gitignored 的 `.local-dev/dev-verify/`。沙盒是可重建的產物，整個刪掉再跑一次即回到同一狀態。正式排程模板位於 `deploy/production/`，不由驗收腳本安裝。
 
 ## 6. 怎麼部署
 

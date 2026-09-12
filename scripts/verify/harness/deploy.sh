@@ -9,18 +9,16 @@ source "${SCRIPT_DIR}/../lib.sh"
 profile_source="${VERIFY_PROFILE_SOURCE:-${PROJECT_ROOT}/scripts/verify/fixtures/profile.synthetic.yaml}"
 denylist_source="${VERIFY_DENYLIST_SOURCE:-}"
 mock_config_source="${VERIFY_MOCK_CONFIG_SOURCE:-${PROJECT_ROOT}/configs/verify.mock.yaml}"
-live_config_source="${VERIFY_LIVE_CONFIG_SOURCE:-${PROJECT_ROOT}/configs/verify.live.yaml}"
 
 require_file "${profile_source}" "verification profile source"
 require_file "${mock_config_source}" "mock verification config source"
-require_file "${live_config_source}" "live verification config source"
 command -v sha256sum >/dev/null || {
   printf 'environment blocked: sha256sum is required\n' >&2
   exit 2
 }
 
 mkdir -p "${ARTIFACT_ROOT}/bin" "${ARTIFACT_ROOT}/extension" "${ARTIFACT_ROOT}/systemd" "${ARTIFACT_ROOT}/fixtures" \
-  "${HARNESS_ROOT}/bin" "${RUNTIME_ROOT}/tmp" "${RUNTIME_ROOT}/systemd-mock" "${RUNTIME_ROOT}/systemd-live" "${EVIDENCE_ROOT}"
+  "${HARNESS_ROOT}/bin" "${RUNTIME_ROOT}/tmp" "${RUNTIME_ROOT}/systemd-mock" "${EVIDENCE_ROOT}"
 chmod 700 "${VERIFY_ROOT}" "${ARTIFACT_ROOT}" "${HARNESS_ROOT}" "${RUNTIME_ROOT}" "${RUNTIME_ROOT}/tmp" "${EVIDENCE_ROOT}"
 
 (
@@ -34,8 +32,7 @@ install -m 0755 "${PROJECT_ROOT}/scripts/verify/harness/fake-agent.sh" "${HARNES
 install -m 0600 "${profile_source}" "${VERIFY_PROFILE}"
 install -m 0600 "${PROJECT_ROOT}/scripts/verify/fixtures/profile.synthetic.json" "${VERIFY_PROFILE_JSON}"
 sed "s|__VERIFY_ROOT__|${VERIFY_ROOT}|g" "${mock_config_source}" >"${MOCK_CONFIG}"
-sed "s|__VERIFY_ROOT__|${VERIFY_ROOT}|g" "${live_config_source}" >"${LIVE_CONFIG}"
-chmod 600 "${MOCK_CONFIG}" "${LIVE_CONFIG}"
+chmod 600 "${MOCK_CONFIG}"
 
 if [[ -n "${denylist_source}" ]]; then
   require_file "${denylist_source}" "verification denylist source"
@@ -58,14 +55,8 @@ for unit in jobfinder-api.service jobfinder-run.service jobfinder-run.timer; do
     -e "s|%h/.local/share/jobfinder|${RUNTIME_ROOT}|g" \
     -e "s|^Environment=PATH=.*|Environment=PATH=${HARNESS_ROOT}/bin:/usr/local/bin:/usr/bin:/bin|" \
     "${ARTIFACT_ROOT}/systemd/${unit}" >"${RUNTIME_ROOT}/systemd-mock/${unit}"
-  sed \
-    -e "s|%h/.local/lib/jobfinder/jobfinder|${VERIFY_BINARY}|g" \
-    -e "s|%h/.config/jobfinder/config.yaml|${LIVE_CONFIG}|g" \
-    -e "s|%h/.local/share/jobfinder|${RUNTIME_ROOT}|g" \
-    -e "s|^Environment=PATH=.*|Environment=PATH=${PATH}|" \
-    "${ARTIFACT_ROOT}/systemd/${unit}" >"${RUNTIME_ROOT}/systemd-live/${unit}"
 done
-chmod 644 "${RUNTIME_ROOT}/systemd-mock/"* "${RUNTIME_ROOT}/systemd-live/"*
+chmod 644 "${RUNTIME_ROOT}/systemd-mock/"*
 
 revision="$(git -C "${PROJECT_ROOT}" rev-parse --verify HEAD 2>/dev/null || printf 'uncommitted')"
 build_time="$(TZ=Asia/Taipei date --iso-8601=seconds)"
@@ -80,7 +71,6 @@ checksum="$(sha256sum "${VERIFY_BINARY}" | awk '{print $1}')"
   printf 'binary_sha256=%s\n' "${checksum}"
   printf 'profile_source=%s\n' "$(basename "${profile_source}")"
   printf 'mock_config_template_sha256=%s\n' "$(sha256sum "${mock_config_source}" | awk '{print $1}')"
-  printf 'live_config_template_sha256=%s\n' "$(sha256sum "${live_config_source}" | awk '{print $1}')"
   printf 'extension_manifest_sha256=%s\n' "$(sha256sum "${ARTIFACT_ROOT}/extension/manifest.json" | awk '{print $1}')"
   printf 'run_unit_template_sha256=%s\n' "$(sha256sum "${ARTIFACT_ROOT}/systemd/jobfinder-run.service" | awk '{print $1}')"
 } >"${ARTIFACT_MANIFEST}"
