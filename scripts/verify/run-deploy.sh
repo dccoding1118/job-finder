@@ -84,6 +84,27 @@ assert_absent() {
   return 0
 }
 
+# scheduler_mark and assert_rearmed_without_fetch read the installer's systemctl
+# calls from one command onward. Every install, update and rollback must enable
+# and restart the fetch timer whatever state it was in, and none may start the
+# fetch service: arming the schedule is not running a fetch.
+scheduler_mark() {
+  wc -l < "${SYSTEMCTL_LOG}"
+}
+
+assert_rearmed_without_fetch() {
+  local calls
+  calls="$(tail -n +"$(( $1 + 1 ))" "${SYSTEMCTL_LOG}")"
+  grep -qxF -- 'systemctl --user enable jobfinder-run.timer' <<< "${calls}" \
+    || fail "$2 未 enable run timer"
+  grep -qxF -- 'systemctl --user restart jobfinder-run.timer' <<< "${calls}" \
+    || fail "$2 未重新武裝 run timer"
+  if grep -F -- 'jobfinder-run.service' <<< "${calls}" | grep -qvF -- ' show '; then
+    fail "$2 對抓取 service 下了 show 以外的指令"
+  fi
+  return 0
+}
+
 # staged_binary builds a jobfinder carrying the given version tag into its own
 # directory. The installer refuses to install a resident copy over itself, so
 # every install and update needs a build that lives outside the install root.
@@ -192,6 +213,7 @@ BIN_V2="$(staged_binary v0.0.2-deploy-b)"
 step D1 "全新安裝"
 record "- 動作：\`HOME=<隔離根> jobfinder install --assets <checkout>\`"
 
+mark="$(scheduler_mark)"
 install_as "${BIN_V1}" install > "${DEPLOY_ROOT}/d1-install.log" 2>&1 \
   || fail "install 失敗，輸出見 ${DEPLOY_ROOT}/d1-install.log"
 
@@ -225,6 +247,7 @@ fi
 assert_contains "${SYSTEMCTL_LOG}" 'daemon-reload' "install 未觸發 daemon-reload"
 assert_contains "${SYSTEMCTL_LOG}" 'enable jobfinder-api.service jobfinder-run.timer' \
   "install 未啟用 API service 與 run timer"
+assert_rearmed_without_fetch "${mark}" install
 for unit in jobfinder-api.service jobfinder-run.service jobfinder-run.timer; do
   [[ -f "${INSTALLED_UNITS}/${unit}" ]] || fail "unit ${unit} 未渲染到 ${INSTALLED_UNITS}"
 done
@@ -239,7 +262,7 @@ done
 grep -qF 'Unit=jobfinder-run.service' "${INSTALLED_UNITS}/jobfinder-run.timer" \
   || fail "run timer 未指向 jobfinder-run.service"
 
-record "- 觀察：binary、設定、三個 unit 全部落在隔離根內；token 長度 ${#api_token}；設定 0600"
+record "- 觀察：binary、設定、三個 unit 全部落在隔離根內；token 長度 ${#api_token}；設定 0600；run timer 已武裝，未對抓取 service 下指令"
 
 # Three settings in the rendered config cannot stand in an isolated run. The
 # API port belongs to whatever real install this machine already has; the
@@ -328,6 +351,7 @@ fi
 step D5 "更新確實生效"
 record "- 動作：對新版工件執行 update"
 
+mark="$(scheduler_mark)"
 install_as "${BIN_V2}" update > "${DEPLOY_ROOT}/d5-update.log" 2>&1 \
   || fail "update 失敗，輸出見 ${DEPLOY_ROOT}/d5-update.log"
 
@@ -337,7 +361,8 @@ printf '%s' "${version_now}" | grep -q 'v0.0.2-deploy-b' \
 [[ -f "${FAKE_HOME}/.local/lib/jobfinder/jobfinder.prev" ]] \
   || fail "update 未保留回滾工件 jobfinder.prev"
 assert_contains "${SYSTEMCTL_LOG}" 'restart jobfinder-api.service' "update 未要求重啟 API service"
-record "- 觀察：版號為 ${version_now}；jobfinder.prev 已保留"
+assert_rearmed_without_fetch "${mark}" update
+record "- 觀察：版號為 ${version_now}；jobfinder.prev 已保留；run timer 已重新武裝，未對抓取 service 下指令"
 pass_step
 
 # ---------------------------------------------------------------- D5A
@@ -346,8 +371,10 @@ step D5A "更新不依賴服務當下是否在跑"
 record "- 動作：同一份工件再跑一次 update"
 
 prev_before="$(sha256sum "${FAKE_HOME}/.local/lib/jobfinder/jobfinder.prev" | cut -d' ' -f1)"
+mark="$(scheduler_mark)"
 install_as "${BIN_V2}" update > "${DEPLOY_ROOT}/d5a-update.log" 2>&1 \
   || fail "重跑 update 失敗，輸出見 ${DEPLOY_ROOT}/d5a-update.log"
+assert_rearmed_without_fetch "${mark}" '重跑 update'
 prev_after="$(sha256sum "${FAKE_HOME}/.local/lib/jobfinder/jobfinder.prev" | cut -d' ' -f1)"
 [[ "${prev_before}" == "${prev_after}" ]] \
   || fail "以同一份工件重跑 update 後，jobfinder.prev 不再是前一版"
@@ -360,8 +387,10 @@ step D6 "回滾"
 record "- 動作：jobfinder rollback"
 
 db_before="$(sha256sum "${INSTALLED_DB}" | cut -d' ' -f1)"
+mark="$(scheduler_mark)"
 install_as "${INSTALLED_BIN}" rollback > "${DEPLOY_ROOT}/d6-rollback.log" 2>&1 \
   || fail "rollback 失敗，輸出見 ${DEPLOY_ROOT}/d6-rollback.log"
+assert_rearmed_without_fetch "${mark}" rollback
 
 version_back="$("${INSTALLED_BIN}" version)"
 printf '%s' "${version_back}" | grep -q 'v0.0.1-deploy-a' \
@@ -370,7 +399,7 @@ db_after="$(sha256sum "${INSTALLED_DB}" | cut -d' ' -f1)"
 [[ "${db_before}" == "${db_after}" ]] || fail "rollback 動到了資料庫"
 [[ -f "${FAKE_HOME}/.local/lib/jobfinder/jobfinder.bad" ]] \
   || fail "rollback 未把被撤下的版本保留為 .bad"
-record "- 觀察：版號回到 ${version_back}；資料庫 sha256 未變；.bad 已保留"
+record "- 觀察：版號回到 ${version_back}；資料庫 sha256 未變；.bad 已保留；run timer 已重新武裝，未對抓取 service 下指令"
 pass_step
 
 # ---------------------------------------------------------------- D6B

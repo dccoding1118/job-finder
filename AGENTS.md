@@ -193,6 +193,7 @@ MVP 以 `jobfinder run` 作為 one-shot 的批次更新，由每日排程觸發�
 - Windows 無 `chmod` 等價物：帶 token 的設定靠 `%LocalAppData%` 繼承的 ACL 保護，不得宣稱套了檔案權限。
 - Windows 上 npm 裝的 `claude` 是 `.cmd` shim，CreateProcess 無法直接執行；`internal/agents` 解析後改經 `%COMSPEC% /c`。
 - `Start-ScheduledTask` 對已在執行的工作是 no-op，與 systemd `enable --now` 同一個陷阱：更新必須先停、等 process 消失、再啟動。
+- systemd 的 `enable` 不改變 timer 當下的 `ActiveState`，Windows 的 `rollback` 可能還原出停用的工作定義：`install`／`update`／`rollback` 都必須重新武裝排程（Linux `enable` 加 `restart` timer、Windows `Enable-ScheduledTask`），否則停用過排程的機器驗證必敗。重新武裝一律不得對 `jobfinder-run.service` 或 Windows 抓取工作下啟動指令，安裝不觸發抓取是契約，由 `internal/install/scheduler_commands_test.go` 守著。
 - Task Scheduler 丟棄工作的 stdout／stderr：Windows 的日誌出口只有 `log.file`，不是 journald。
 - 排程執行的 `jobfinderw.exe` 是 GUI subsystem，**完全沒有 stderr**。日誌的多重寫入必須把檔案排在 stderr 前面（`io.MultiWriter` 遇第一個錯誤即停止），啟動失敗的錯誤另有一條寫進 `log.file` 的路徑。前景診斷一律用 console 的 `jobfinder.exe serve`。
 - 服務沒有主控台，Windows 會替每個 console 子行程另配一個並顯示；Agent 子行程一律帶 `CREATE_NO_WINDOW`。

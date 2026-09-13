@@ -73,9 +73,14 @@ func verifyEffect(ctx context.Context, sched scheduler, layout paths.Layout, mar
 	return smokeAPI(ctx, layout, opts.Out)
 }
 
-// run executes a command and returns its trimmed stdout, folding stderr into
+// run is the single exit through which the schedulers reach the service
+// manager. It is a variable so tests can record the commands a scheduler sends
+// without a service manager present.
+var run = execute
+
+// execute runs a command and returns its trimmed stdout, folding stderr into
 // the error so a failure explains itself.
-func run(ctx context.Context, name string, args ...string) (string, error) {
+func execute(ctx context.Context, name string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, name, args...) // #nosec G204 G702 -- fixed scheduling commands with layout-derived arguments.
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr

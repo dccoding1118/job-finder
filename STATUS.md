@@ -1,6 +1,6 @@
 # STATUS — job-finder（MVP 開發）
 
-> 最後更新：2026-09-12。規劃文件見 `docs/PRD.md`、`docs/design.md`、`docs/roadmap.md`、`docs/deploy.md`、`docs/designs/`。
+> 最後更新：2026-09-13。規劃文件見 `docs/PRD.md`、`docs/design.md`、`docs/roadmap.md`、`docs/deploy.md`、`docs/designs/`。
 
 ## §1 未歸檔結論
 
@@ -14,7 +14,9 @@
 
 **測試環境獨立成第三套部署**
 
-- [ ] 兩台測試環境的實際部署：Linux 以 dev 部署包重裝、Windows 部署 dev 包與 dev extension、建立指向本台 VM 的第二條通道（作法見 `.local-dev/personal-ops/runbook-extension.md` §9）。兩台的 `api.extension_origin` 都要改填 dev extension 的 ID。
+- [ ] 重新部署時重新武裝排程的修正上版（`docs/changes/change-rearm-schedule-on-redeploy.md`）。Linux 測試環境已以含此修正的 working tree 部署包重裝並跑過 D11，版本印 `dev (09d46e62ae8a) (dirty)`；合併後從 main 重新打包重裝可換回可追溯的 commit，重裝後要再停用一次 `jobfinder-run.timer`。
+
+- [ ] 兩台測試環境的實際部署：Windows 部署 dev 包與 dev extension、跑 D11、建立指向本台 VM 的第二條通道（作法見 `.local-dev/personal-ops/runbook-extension.md` §9）。兩台的 `api.extension_origin` 都要改填 dev extension 的 ID。
 
 - [ ] 測試環境跑一次 live 驗收。Side Panel 那段要等 Windows 的通道與 dev extension 就緒，其餘不必等。
 

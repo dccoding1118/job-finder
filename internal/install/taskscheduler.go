@@ -162,6 +162,9 @@ func (t taskScheduler) start(ctx context.Context, layout paths.Layout, out io.Wr
 	if err := t.restartTask(ctx, layout); err != nil {
 		return err
 	}
+	if err := armFetchTask(ctx); err != nil {
+		return err
+	}
 	report(out, "started the %s task; the fetch task is armed for its daily trigger", apiTask)
 	return nil
 }
@@ -170,7 +173,24 @@ func (t taskScheduler) restart(ctx context.Context, layout paths.Layout, out io.
 	if err := t.restartTask(ctx, layout); err != nil {
 		return err
 	}
-	report(out, "restarted the %s task", apiTask)
+	if err := armFetchTask(ctx); err != nil {
+		return err
+	}
+	report(out, "restarted the %s task and re-armed the %s task", apiTask, runTask)
+	return nil
+}
+
+// armFetchTask enables the fetch task. Registering from the template already
+// leaves it enabled, but rollback registers the definition exported before the
+// update, and an export taken while the task was disabled restores it disabled
+// with no next run. Enabling never runs the task: its only trigger is a calendar
+// one with StartWhenAvailable=false, and Start-ScheduledTask is never sent to it.
+func armFetchTask(ctx context.Context) error {
+	if _, err := powershell(ctx, fmt.Sprintf(
+		"Enable-ScheduledTask -TaskPath '%s' -TaskName '%s' | Out-Null", taskFolder, runTask,
+	)); err != nil {
+		return fmt.Errorf("install: enable the %s task: %w", runTask, err)
+	}
 	return nil
 }
 

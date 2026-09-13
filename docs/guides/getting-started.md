@@ -457,7 +457,7 @@ Start-ScheduledTask -TaskPath '\jobfinder\' -TaskName 'api'
 .\jobfinder.exe update   # Windows
 ```
 
-`update` 會保留現行 binary 供回滾，替換 binary 與排程定義，重啟 API，並在**執行中的 process** 上驗證新版且啟動時間晚於替換點。
+`update` 會保留現行 binary 供回滾，替換 binary 與排程定義，重啟 API，重新武裝每日抓取排程，並在**執行中的 process** 上驗證新版且啟動時間晚於替換點。手動停用過的排程會因此恢復；重新武裝只排定下一次觸發，**不會當場抓取**。
 
 > 為什麼要「重啟」而不是「啟用」：systemd 的 `enable --now` 與 Windows 的 `Start-ScheduledTask` 對已在執行的服務都是 no-op。新 binary 躺在磁碟上、記憶體裡跑的還是舊的——這是更新最典型的假成功。
 
@@ -468,7 +468,7 @@ jobfinder rollback
 jobfinder version    # 應為前一版
 ```
 
-回滾**不動資料庫**。被回滾掉的版本保留在 rollback 目錄的 `.bad` 檔，所以前滾還有得救。
+回滾**不動資料庫**。被回滾掉的版本保留在 rollback 目錄的 `.bad` 檔，所以前滾還有得救。回滾與 `update` 一樣重新武裝排程，同樣不觸發抓取。
 
 **回滾只退一個版本**：保留的前一版恰好一份，回滾不會把它往前推。連跑兩次 rollback 不會退到再前一版，第二次會被拒絕。要退超過一版，下載該版工件跑 `update`。
 
