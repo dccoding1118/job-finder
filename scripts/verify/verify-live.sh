@@ -107,7 +107,17 @@ api_token="$(awk '/^api:/{f=1; next} f && /^  token:/{print $2; exit}' "${config
 case "${api_addr}" in 127.0.0.1:*|"[::1]:"*|localhost:*) ;; *) fail "api.addr is not a loopback address: ${api_addr}" ;; esac
 [[ -n "${api_token}" ]] || fail 'the installed config carries no api.token'
 grep -Fqx "  path: ${db}" "${config}" || fail 'the installed config does not target the reported database'
-grep -Fqx '    base_url: https://www.yourator.co' "${config}" || fail 'the installed config does not target official Yourator'
+# The rendered config leaves base_url out and the crawler falls back to the
+# official host, so only an explicit value pointing anywhere else disqualifies.
+yourator_base="$(awk '
+  /^[^[:space:]#]/ { in_sources = ($0 ~ /^sources:/); in_yourator = 0; next }
+  in_sources && /^  [^[:space:]#]/ { in_yourator = ($0 ~ /^  yourator:/); next }
+  in_yourator && /^    base_url:/ { print $2; exit }
+' "${config}" | tr -d "\"'")"
+case "${yourator_base%/}" in
+  ''|https://www.yourator.co) ;;
+  *) fail "the installed config does not target official Yourator: ${yourator_base}" ;;
+esac
 # Every role carries a primary and a fallback, and both have to name the agent
 # and the model outright: a live run must never reach an external CLI through an
 # implicit default. The expected endpoint count is derived from the roles the

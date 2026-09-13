@@ -10,15 +10,22 @@
 
 - 本台 GCP VM 同時是開發環境與 Linux 測試環境：開發階段驗收落在 `.local-dev/dev-verify/`，測試環境落在使用者環境的標準位置，兩者不重疊。Windows 是另一台測試環境，也是 D7／D8／D9 唯一能跑的地方。
 
+- 來源端點維持現狀：抓取批次目前只為 Yourator 而寫，`sources.yourator.base_url` 選填、缺省走程式內的 `https://www.yourator.co`，安裝渲染的設定不帶這一行。**接入第二個抓取來源時**改為每個來源的端點一律由設定檔明確提供、缺少即報錯，屆時不得保留程式內預設值，`docs/designs/design-pipeline.md` 的 `sources.<name>` 列與設定範本一併改寫。
+
+- 測試環境的實機自動驗收要重新設計，現行 `scripts/verify/verify-live.sh` 不可用。它是從隔離沙盒版改寫而來，直接對已安裝環境跑 `run --stage`，但常駐 worker 持有 worker 鎖，第 01 步即被拒；且第 04 步 filter 以每日額度為上限，實機上會一次呼叫 60 次。重新設計的要求：
+  - **定位**：測試環境的實機驗收，不是開發階段驗收，不必由 `mise` 觸發。同一份情境設計產出 Linux 與 Windows 兩支腳本。
+  - **流程**：先把測試環境暫時安排成可自動驗證的情境（例如 worker 鎖、`auto_processing`、`worker.paused`），跑一輪、產出報告，最後把環境復原成跑之前的設定；中途失敗也要復原。
+  - **成本**：每種驗證只跑一筆——一個職缺依序跑一次篩選、評分、寫信、批改信，不得出現批次篩選。
+  - **情境**：實機不一定每一步都有現成情境，缺的情境由腳本自行安排，不要求使用者事先把環境調成特定狀態。
+  - 開工時另立 `docs/changes/` change 文件，改寫 `docs/verify.md` §6 與測試環境指南 §8。
+
 ## §2 未完成任務
 
 **測試環境獨立成第三套部署**
 
-- [ ] 重新部署時重新武裝排程的修正上版（`docs/changes/change-rearm-schedule-on-redeploy.md`）。Linux 測試環境已以含此修正的 working tree 部署包重裝並跑過 D11，版本印 `dev (09d46e62ae8a) (dirty)`；合併後從 main 重新打包重裝可換回可追溯的 commit，重裝後要再停用一次 `jobfinder-run.timer`。
+- [ ] Windows 測試環境的部署驗收人工組 D7／D8／D9／D11（判準見 `docs/verify.md` §6.1）。兩台測試環境皆已部署 `dev (8960e3a53433)`，Windows 的 dev extension 經本機 `8686` 與通到本台 VM 的 `28686` 通道皆連得上。
 
-- [ ] 兩台測試環境的實際部署：Windows 部署 dev 包與 dev extension、跑 D11、建立指向本台 VM 的第二條通道（作法見 `.local-dev/personal-ops/runbook-extension.md` §9）。兩台的 `api.extension_origin` 都要改填 dev extension 的 ID。
-
-- [ ] 測試環境跑一次 live 驗收。Side Panel 那段要等 Windows 的通道與 dev extension 就緒，其餘不必等。
+- [ ] 重新設計測試環境的實機自動驗收（要求見 §1）。
 
 **與公開無關（可獨立進行）**
 
