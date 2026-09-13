@@ -12,20 +12,18 @@
 
 - 來源端點維持現狀：抓取批次目前只為 Yourator 而寫，`sources.yourator.base_url` 選填、缺省走程式內的 `https://www.yourator.co`，安裝渲染的設定不帶這一行。**接入第二個抓取來源時**改為每個來源的端點一律由設定檔明確提供、缺少即報錯，屆時不得保留程式內預設值，`docs/designs/design-pipeline.md` 的 `sources.<name>` 列與設定範本一併改寫。
 
-- 測試環境的實機自動驗收要重新設計，現行 `scripts/verify/verify-live.sh` 不可用。它是從隔離沙盒版改寫而來，直接對已安裝環境跑 `run --stage`，但常駐 worker 持有 worker 鎖，第 01 步即被拒；且第 04 步 filter 以每日額度為上限，實機上會一次呼叫 60 次。重新設計的要求：
-  - **定位**：測試環境的實機驗收，不是開發階段驗收，不必由 `mise` 觸發。同一份情境設計產出 Linux 與 Windows 兩支腳本。
-  - **流程**：先把測試環境暫時安排成可自動驗證的情境（例如 worker 鎖、`auto_processing`、`worker.paused`），跑一輪、產出報告，最後把環境復原成跑之前的設定；中途失敗也要復原。
-  - **成本**：每種驗證只跑一筆——一個職缺依序跑一次篩選、評分、寫信、批改信，不得出現批次篩選。
-  - **情境**：實機不一定每一步都有現成情境，缺的情境由腳本自行安排，不要求使用者事先把環境調成特定狀態。
-  - 開工時另立 `docs/changes/` change 文件，改寫 `docs/verify.md` §6 與測試環境指南 §8。
-
 ## §2 未完成任務
 
 **測試環境獨立成第三套部署**
 
-- [ ] 重新設計測試環境的實機自動驗收（要求見 §1）。
+- [ ] 測試環境的實機自動驗收：依 `docs/changes/change-test-env-live-verify.md` §4 就地更新 canonical 文件，再實作腳本，兩台測試環境實跑通過後上版（進度見該文件 §5）。
 
 **與公開無關（可獨立進行）**
+
+- [ ] 產品修正求職信每日額度（`llm.max_letter_per_day`）的兩個缺口，另立 change 文件，暫不排入：
+  - **查不到**：`GET /api/v1/status` 只回 `filter_budget`、`score_budget`，沒有求職信的剩餘額度，Side Panel 與驗收腳本都無從事先得知。
+  - **沒先擋**：額度用盡時 `POST /api/v1/jobs/{id}/letter` 仍受理並轉 `letter_requested`，要等 worker 取件落空才知道額度不夠。現行契約刻意如此（`docs/designs/design-pipeline.md` §5「未處理的 `letter_requested` 留待隔日」），該條與 `docs/designs/design-api.md` §4 的 letter route 要一併改寫。
+  - 修正後回頭調整實機驗收的求職信步驟：額度不足的辨認改為預檢，並決定求職信驗證是否比照篩選與評分走不受每日上限的入口。
 
 - [ ] 生效面驗證失敗時附上服務輸出（`docs/changes/change-update-effect-surface.md` §2 D3）的實機驗證。情境仍成立：現行 `schemaVersion` 為 10（`internal/store/store.go:23`），`v0.2.0` 為 9，以該工件對 schema 10 的資料庫跑 `update`，錯誤訊息應在「服務不是 active」之後附上 `database schema version 10 is newer than supported version 9`。此情境不能用連續兩次 `rollback` 製造——回滾只退一版。
 
