@@ -95,9 +95,9 @@ extension 模式同樣支援本地來源：`--from-dir`／`-FromDirectory` 下�
 
 | 子命令 | 動作 | 生效面驗證 |
 |---|---|---|
-| `install` | 建立 §2 目錄 → 渲染設定並生成隨機 token（既有者不覆寫）→ 種入範例 Profile 與空 denylist（既有者不覆寫）→ `profile lint` 閘門 → 放置 binary → 掛載排程 → 註冊 PATH → 啟動並驗證 | 見下段 |
-| `update` | 保留現行 binary 至 `jobfinder.prev`（新舊為同一份建置時保留既有的 `.prev` 不覆蓋）→ 替換 binary 與排程定義 → 重啟 API → 驗證 | 同上，且啟動時間須晚於替換點 |
-| `rollback` | 現行 binary 存為 `.bad`（保留前滾可能）→ 由 `.prev` 與 stash 的排程定義還原 → 重啟 API → 驗證；SQLite **不自動更動**，僅在確認毀損時由備份目錄手動還原 | 同上 |
+| `install` | 建立 §2 目錄 → 渲染設定並生成隨機 token（既有者不覆寫）→ 種入範例 Profile 與空 denylist（既有者不覆寫）→ `profile lint` 閘門 → 放置 binary → 掛載排程 → 註冊 PATH → 啟動 API → 武裝排程 → 驗證 | 見下段 |
+| `update` | 保留現行 binary 至 `jobfinder.prev`（新舊為同一份建置時保留既有的 `.prev` 不覆蓋）→ 替換 binary 與排程定義 → 重啟 API → 重新武裝排程 → 驗證 | 同上，且啟動時間須晚於替換點 |
+| `rollback` | 現行 binary 存為 `.bad`（保留前滾可能）→ 由 `.prev` 與 stash 的排程定義還原 → 重啟 API → 重新武裝排程 → 驗證；SQLite **不自動更動**，僅在確認毀損時由備份目錄手動還原 | 同上 |
 
 `update` 與 `rollback` 對該平台的**全部**執行檔一起動作。Windows 只還原其中一支會讓使用者輸入的 binary 與實際在跑的服務落在不同版本，比原本要回滾的狀態更糟，因此回滾前先確認每一支都有對應的 `.prev`，缺一即拒絕。
 
@@ -121,7 +121,16 @@ extension 模式同樣支援本地來源：`--from-dir`／`-FromDirectory` 下�
 
 第一次安裝時若無設定檔，由 `configs/config.example.yaml` 渲染出絕對路徑與隨機 token 的 `config.yaml`。**每個佔位替換都要求恰好命中一次**，否則安裝直接失敗——靜默未命中會讓安裝指向相對的開發路徑，然後在無關的地方才炸。`api.extension_origin` 仍為佔位，須在載入 extension 前替換為實際 `chrome-extension://` id。Linux 的 unit 為渲染後的靜態副本，安裝前會比對並將差異吵出（template 改版或人工修改都不靜默吞掉）。
 
-安裝流程一律不觸發抓取：只確認排程已排定下一次觸發。抓取只由每日排程、操作者手動觸發，或 Side Panel 的重新整理動作啟動。
+**`install`、`update`、`rollback` 對 API 服務與每日抓取排程一律建立或重建**，與執行前處於運行、停止或停用無關：API 無條件重啟，排程無條件重新武裝。操作者手動停用的排程，下一次執行這三者任一時即恢復；要維持停用，於每次部署後重做一次。
+
+**重新武裝只排定下一次觸發，三條路徑一律不觸發抓取。** 抓取只由每日排程到點、操作者手動觸發，或 Side Panel 的重新整理動作啟動。
+
+| 平台 | 重新武裝 | 為什麼不會觸發抓取 |
+|---|---|---|
+| Linux | `systemctl --user enable jobfinder-run.timer` 後 `systemctl --user restart jobfinder-run.timer` | timer 為 `Persistent=false`，啟動與重啟只計算下一次觸發時間，不補跑錯過的觸發；不對 `jobfinder-run.service` 下任何啟動指令 |
+| Windows | 重新註冊抓取工作（`install`／`update` 取範本，`rollback` 取 stash），再 `Enable-ScheduledTask` | 工作只有 `CalendarTrigger` 且 `StartWhenAvailable=false`，註冊與啟用都不補跑；不對抓取工作呼叫 `Start-ScheduledTask` |
+
+兩步各管一半：`enable` 決定 manager 下次啟動（重開機、重新登入）時帶起 timer，不改變它當下的狀態；`restart` 讓 timer 當下就是 active，停用過的與執行中的都一樣。`rollback` 還原的 unit 與 Windows 工作定義可能是停用時留下的，同樣靠這一步收斂。
 
 重啟一律是**無條件重啟**，不是「有在跑才重啟」也不是「啟用」：`systemctl --user enable --now` 對執行中的服務無作用，`try-restart` 對停止中的服務無作用，兩者各自會在一半的情境下讓新 binary 躺在磁碟上而記憶體裡沒有它。同版重跑 `update` 不覆蓋 `jobfinder.prev`：回滾點必須指向前一個版本，被現行版蓋掉等於回滾指向它自己要撤銷的那一版。
 

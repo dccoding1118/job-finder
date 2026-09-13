@@ -69,7 +69,7 @@ systemctl --user disable --now jobfinder-run.timer
 systemctl --user start jobfinder-run.service    # 需要抓取時手動跑
 ```
 
-每次重新部署都會再次武裝排程（生效面驗證的一部分），停用因此要重做一次。
+重新部署與回滾都會重新武裝排程，只排定下一次觸發、不會當場抓取；停用因此要在每次部署或回滾後重做一次。
 
 ## 5. 部署到 Windows 測試環境
 
@@ -87,7 +87,7 @@ Disable-ScheduledTask -TaskPath '\jobfinder\' -TaskName 'run'
 jobfinder run                                    # 需要抓取時手動跑
 ```
 
-工作停用後連手動啟動一併關閉，所以 Windows 這端的手動抓取走 CLI。Linux 那端停用的是 timer，one-shot unit 本身仍可手動觸發。
+工作停用後連手動啟動一併關閉，所以 Windows 這端的手動抓取走 CLI。Linux 那端停用的是 timer，one-shot unit 本身仍可手動觸發。與 Linux 相同，重新部署與回滾會重新啟用這個工作但不執行它，停用要重做一次。
 
 ## 6. dev extension 與正式 extension 並存
 
@@ -120,13 +120,13 @@ Options 的 endpoint 填測試後端的位址，token 取自該後端的 `config
 | 驗收 | 在哪跑 | 內容 |
 |---|---|---|
 | live 驗收 | Linux 測試環境（需與開發環境同機） | `mise run verify-live`：真來源抓取、真格式、真 Agent 的篩選評分與求職信、冪等與 Run 統計。判準見 [verify](../verify.md) §6 |
-| 部署驗收人工組 | 各平台測試環境 | D4 Side Panel 直連、D7 PATH 與診斷、D8 Agent CLI 可執行、D9 服務重啟不卡死。判準見 [verify](../verify.md) §6.1 |
+| 部署驗收人工組 | 各平台測試環境 | D4 Side Panel 直連、D7 PATH 與診斷、D8 Agent CLI 可執行、D9 服務重啟不卡死、D11 重新部署重新武裝排程且不觸發抓取。判準見 [verify](../verify.md) §6.1 |
 | bootstrap 的 extension 模式 | 有 Chrome 的測試環境 | D10：解壓目錄、`manifest.json` 的版本、Windows 無 Mark of the Web、不建立任何服務 |
 
 `mise run verify-live` 需要 git clone，因此只有與開發環境同機的測試環境跑得動。其餘平台的驗收是人工的。
 
 ## 9. 換版與停用
 
-換版重跑第 3 節打包與該平台的部署指令，腳本自行走 `update`。更新只替換執行檔與排程定義，資料庫原地保留；跨 schema 版本的回滾必須先還原升級前的備份，`update` 不代為備份。
+換版重跑第 3 節打包與該平台的部署指令，腳本自行走 `update`，之後依第 4、5 節重新停用排程。更新只替換執行檔與排程定義，資料庫原地保留；跨 schema 版本的回滾必須先還原升級前的備份，`update` 不代為備份。
 
 停用測試環境時逐項移除，不要刪整棵安裝根——Chrome 讀的 extension 目錄就在底下。步驟見 [上手指南](getting-started.md) §10.4。

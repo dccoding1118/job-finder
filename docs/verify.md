@@ -244,7 +244,7 @@ D 系列分自動與人工兩組，分屬兩種環境：**自動組是開發階�
 | D6B 回滾只退一版 | 回滾後再執行一次 `jobfinder rollback` | 第二次被拒絕且不動任何檔案；`.bad` 仍是第一次回滾撤下來的版本 |
 | D10 bootstrap 的 extension 模式（⏳ 未併入自動組） | 以 `--extension`／`-Extension` 執行 bootstrap 腳本，來源為 release 工件或 dev 部署包 | extension 解壓於 `<資料目錄>/jobfinder/extension/<版本字串>` 且含 `manifest.json`；Windows 上解出的檔案無 Mark of the Web；不建立任何服務、不寫入設定檔；印出的目錄可直接被 Chrome 載入。release 工件的 `manifest.json` `version` 與 `jobfinder version` 對得上且腳本印得出固定 ID；dev 部署包的 `key` 已移除，腳本改印出載入目錄 |
 
-自動組以 `--skip-verify` 安裝，隨後自行啟動 `serve` 補上 API 生效面檢查（帶 token 回 200、未帶回 401），涵蓋 `internal/install/smoke.go` 中不依賴服務管理器的那一半。服務層改以 transient 單元驗證，不寫入正式 unit 目錄、不註冊正式排程工作。每趟結束清除自己建立的 transient 單元與隔離根，中途失敗亦然。
+自動組以 `--skip-verify` 安裝，隨後自行啟動 `serve` 補上 API 生效面檢查（帶 token 回 200、未帶回 401），涵蓋 `internal/install/smoke.go` 中不依賴服務管理器的那一半。服務層改以 transient 單元驗證，不寫入正式 unit 目錄、不註冊正式排程工作。安裝器對 `systemctl` 的呼叫由 PATH 最前的 stub 吸收並記錄，D1、D5、D5A、D6 各自核對該趟有 `enable` 與 `restart` `jobfinder-run.timer`，且沒有對 `jobfinder-run.service` 下 `show` 以外的指令。每趟結束清除自己建立的 transient 單元與隔離根，中途失敗亦然。
 
 D10 尚未併入自動組，以人工執行 bootstrap 腳本驗證：release 工件那條需要匿名下載 GitHub 工件，dev 部署包那條在測試環境以本地來源模式驗。
 
@@ -256,10 +256,11 @@ D10 尚未併入自動組，以人工執行 bootstrap 腳本驗證：release 工
 | D7 PATH 與診斷（Windows） | 開新終端執行 `jobfinder paths` | 不需完整路徑即可執行；印出 `%LocalAppData%\jobfinder\` 下的位置，含 `jobfinderw.exe` 那列 |
 | D8 Agent CLI 可執行（Windows） | 讓一筆職缺實際走到評分 | npm 安裝的 `claude`／`codex` 可被叫起；失敗時錯誤指向 CLI 本身而非「不是有效的應用程式」；整段過程不彈出主控台視窗 |
 | D9 服務重啟不卡死（Windows） | 停止 api 工作，等 process 消失，再啟動 | 工作回到 `Running` 且 API 有回應。停止是直接終止行程，殘留的 worker 鎖檔不得阻擋下一次啟動 |
+| D11 重新部署重新武裝排程且不觸發抓取 | 停用每日抓取（Linux `systemctl --user disable --now jobfinder-run.timer`；Windows `Disable-ScheduledTask -TaskPath '\jobfinder\' -TaskName 'run'`）後重跑 bootstrap 腳本（走 `update`）；再停用一次後執行 `jobfinder rollback` | 兩次都印出 `fetch is armed` 並通過完整生效面驗證；Linux timer 為 `enabled` 且 `active`、有下一次觸發時間，Windows 工作為 `Ready` 且有 `NextRunTime`；前後 `runs` 筆數不變，Linux `jobfinder-run.service` 的 `ExecMainStartTimestamp` 不變，Windows 抓取工作的 `LastRunTime` 不變 |
 
 人工組不得使用 `--skip-verify`：未經完整生效面驗證的安裝不算通過。
 
-自動組不涵蓋兩件事，兩者都由單元測試補上。systemd unit 寫進 manager 搜尋路徑再 `enable --now` 這一串，受限於 manager 的搜尋路徑在啟動時就固定，同一個登入 session 內無法改指向隔離根；Windows 的 Task Scheduler 工作資料夾 `\jobfinder\` 是常數，不隨 `%LOCALAPPDATA%` 移動。掛載邏輯由 `internal/install/sequence_test.go` 的可注入 scheduler 守，真實掛載留在人工組。
+自動組不涵蓋兩件事，兩者都由單元測試補上。systemd unit 寫進 manager 搜尋路徑再 `enable --now` 這一串，受限於 manager 的搜尋路徑在啟動時就固定，同一個登入 session 內無法改指向隔離根；Windows 的 Task Scheduler 工作資料夾 `\jobfinder\` 是常數，不隨 `%LOCALAPPDATA%` 移動。掛載邏輯由 `internal/install/sequence_test.go` 的可注入 scheduler 守；各平台發出的排程指令由 `internal/install/scheduler_commands_test.go` 攔截比對，守住三條路徑都重新武裝排程、且沒有任何一條發出啟動抓取的指令。真實掛載留在人工組 D11。
 
 ## 7. 答案卷：報告如何對答案
 

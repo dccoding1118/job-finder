@@ -122,11 +122,11 @@ func (s systemdScheduler) start(ctx context.Context, layout paths.Layout, out io
 	if _, err := run(ctx, "systemctl", "--user", "restart", apiService); err != nil {
 		return err
 	}
-	if _, err := run(ctx, "systemctl", "--user", "start", runTimer); err != nil {
+	if err := armFetchTimer(ctx); err != nil {
 		return err
 	}
 	waitFor(ctx, 15*time.Second, func() bool { return apiResponding(layout) })
-	report(out, "started %s and %s", apiService, runTimer)
+	report(out, "started %s and armed %s", apiService, runTimer)
 	return nil
 }
 
@@ -139,9 +139,27 @@ func (s systemdScheduler) restart(ctx context.Context, layout paths.Layout, out 
 	if _, err := run(ctx, "systemctl", "--user", "restart", apiService); err != nil {
 		return err
 	}
+	if err := armFetchTimer(ctx); err != nil {
+		return err
+	}
 	waitFor(ctx, 15*time.Second, func() bool { return apiResponding(layout) })
-	report(out, "restarted %s", apiService)
+	report(out, "restarted %s and re-armed %s", apiService, runTimer)
 	return nil
+}
+
+// armFetchTimer schedules the next daily fetch and does nothing more. enable
+// only decides whether the manager brings the timer up on its next start and
+// leaves the current state alone, so a timer an operator stopped, or one that
+// rollback restored without enabling, stays inactive until restart brings it up.
+// restart also applies a replaced OnCalendar. The timer is Persistent=false, so
+// neither step makes up a missed trigger, and the fetch service itself is never
+// started here: a fetch runs only when the timer fires or an operator starts it.
+func armFetchTimer(ctx context.Context) error {
+	if _, err := run(ctx, "systemctl", "--user", "enable", runTimer); err != nil {
+		return err
+	}
+	_, err := run(ctx, "systemctl", "--user", "restart", runTimer)
+	return err
 }
 
 // diagnose reads back what the unit printed on its way down. journalctl is the
