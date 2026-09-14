@@ -44,8 +44,7 @@ require_mode() {
   fi
 }
 
-# Reporting and environment primitives shared by the mock runbooks and
-# verify-live.sh.
+# Reporting and environment primitives shared by the mock runbooks.
 # They read the caller's runbook globals (report, current_step, current_title,
 # pass_count); shellcheck cannot see those assignments when it analyses lib.sh in
 # isolation, so SC2154 is suppressed here rather than at every call site.

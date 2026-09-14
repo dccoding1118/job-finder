@@ -5,21 +5,99 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	goruntime "runtime"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/dccoding1118/job-finder/internal/liveverify"
+	"github.com/dccoding1118/job-finder/internal/paths"
+	"github.com/dccoding1118/job-finder/internal/pipeline"
 	"github.com/dccoding1118/job-finder/internal/store"
 	"github.com/spf13/cobra"
 )
 
-// newVerifyCmd provides deterministic local fixtures used only by the checked-in verifier.
+// newVerifyCmd groups the verification tools: the sandbox fixtures and snapshot
+// the checked-in verifier uses, and the live verification of a test
+// environment. None of them is for a production installation, so the group is
+// hidden.
 func newVerifyCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "verify", Hidden: true}
 	cmd.AddCommand(newMockSourceCmd())
 	cmd.AddCommand(newVerificationSnapshotCmd())
+	cmd.AddCommand(newLiveVerifyCmd())
 	return cmd
+}
+
+// newLiveVerifyCmd runs the live verification against this machine's installed
+// test environment (docs/verify.md §6). Its exit code is the verdict: 0 PASS,
+// 1 FAIL, 2 ENVIRONMENT_BLOCKED, 3 settings not fully restored.
+func newLiveVerifyCmd() *cobra.Command {
+	var recheck bool
+	cmd := &cobra.Command{
+		Use:   "live",
+		Short: "Verify the installed test environment against the real source and Agent CLIs",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			layout, err := paths.Resolve()
+			if err != nil {
+				return &ExitError{Code: 2, Err: err}
+			}
+			data, err := os.ReadFile(layout.Config)
+			if err != nil {
+				return &ExitError{Code: 2, Err: fmt.Errorf("no installed config: %w", err)}
+			}
+			cfg, err := parseFileConfig(data)
+			if err != nil {
+				return &ExitError{Code: 1, Err: fmt.Errorf("the installed config does not pass strict parsing: %w", err)}
+			}
+			settings, err := liveSettings(layout.Config, cfg)
+			if err != nil {
+				return &ExitError{Code: 1, Err: err}
+			}
+			result := liveverify.Run(cmd.Context(), liveverify.Options{
+				Layout: layout, Config: settings, RecheckLetter: recheck, GOOS: goruntime.GOOS, Out: cmd.OutOrStdout(),
+			})
+			if result.ExitCode == 0 {
+				return nil
+			}
+			return &ExitError{Code: result.ExitCode, Err: fmt.Errorf("live verification %s: %s", result.Verdict, result.Report)}
+		},
+	}
+	cmd.Flags().BoolVar(&recheck, "recheck-letter", false, "judge only the letter an earlier run left pending for lack of daily allowance")
+	return cmd
+}
+
+func liveSettings(configPath string, cfg fileConfig) (liveverify.Settings, error) {
+	scan := pipeline.DefaultScanInterval
+	if cfg.Worker.ScanInterval != "" {
+		parsed, err := time.ParseDuration(cfg.Worker.ScanInterval)
+		if err != nil {
+			return liveverify.Settings{}, fmt.Errorf("config: worker.scan_interval: %w", err)
+		}
+		scan = parsed
+	}
+	minInterval, err := time.ParseDuration(cfg.LLM.MinInterval)
+	if err != nil {
+		return liveverify.Settings{}, fmt.Errorf("config: llm.min_interval: %w", err)
+	}
+	settings := liveverify.Settings{
+		ConfigPath: configPath, APIAddr: cfg.API.Addr, Token: cfg.API.Token, DBPath: cfg.DB.Path,
+		ProfilePath: cfg.Profile.Path, DenylistPath: cfg.Profile.Denylist, YouratorBaseURL: cfg.Sources.Yourator.BaseURL,
+		ScanInterval: scan, MinInterval: minInterval,
+	}
+	roles := []struct {
+		name  string
+		route roleRoute
+	}{{"filter", cfg.LLM.Roles.Filter}, {"scorer", cfg.LLM.Roles.Scorer}, {"drafter", cfg.LLM.Roles.Drafter}, {"reviewer", cfg.LLM.Roles.Reviewer}}
+	for _, role := range roles {
+		settings.Endpoints = append(
+			settings.Endpoints,
+			liveverify.Endpoint{Name: role.name + ".primary", Agent: role.route.Primary.Agent, Model: role.route.Primary.Model},
+			liveverify.Endpoint{Name: role.name + ".fallback", Agent: role.route.Fallback.Agent, Model: role.route.Fallback.Model},
+		)
+	}
+	return settings, nil
 }
 
 func newMockSourceCmd() *cobra.Command {

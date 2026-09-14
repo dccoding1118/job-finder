@@ -62,14 +62,20 @@ jobfinder version          # 應印 dev (<commit>)
 jobfinder paths            # 確認落點都在使用者環境的標準位置
 ```
 
-**每日抓取的排程預設會被啟用。** 測試環境與正式環境若共用同一組 Agent 訂閱額度，測試這台要停用它，改為需要時手動觸發：
+**測試環境的常態是每日抓取停用、自動處理關閉。** 測試環境的每次 Agent 呼叫都花真實額度，常態下不讓它自行抓取與消化；只有測試特定情境時才打開，測完關回。
 
 ```bash
 systemctl --user disable --now jobfinder-run.timer
 systemctl --user start jobfinder-run.service    # 需要抓取時手動跑
 ```
 
-重新部署與回滾都會重新武裝排程，只排定下一次觸發、不會當場抓取；停用因此要在每次部署或回滾後重做一次。
+自動處理在 Side Panel 關閉，或直接打 API（token 取自 `config.yaml`）：
+
+```bash
+curl -X PUT -H "Authorization: Bearer <token>" -d '{"auto_processing":false}' http://127.0.0.1:8686/api/v1/settings
+```
+
+重新部署與回滾都會重新武裝排程，只排定下一次觸發、不會當場抓取；停用排程因此要在每次部署或回滾後重做一次。自動處理開關存在資料庫，部署與回滾不改變它，部署後確認仍為關閉即可。
 
 ## 5. 部署到 Windows 測試環境
 
@@ -80,14 +86,20 @@ cd $env:USERPROFILE\Downloads\test-deploy    # 換成該目錄實際傳到的位
 powershell -ExecutionPolicy Bypass -File .\install.ps1 -FromDirectory .
 ```
 
-裝完確認 `jobfinder version` 與 `jobfinder paths`，並確認 `bin\` 下同時有 `jobfinder.exe` 與 `jobfinderw.exe`。停用每日抓取：
+裝完確認 `jobfinder version` 與 `jobfinder paths`，並確認 `bin\` 下同時有 `jobfinder.exe` 與 `jobfinderw.exe`。常態與 Linux 相同，停用每日抓取並關閉自動處理：
 
 ```powershell
 Disable-ScheduledTask -TaskPath '\jobfinder\' -TaskName 'run'
 jobfinder run                                    # 需要抓取時手動跑
 ```
 
-工作停用後連手動啟動一併關閉，所以 Windows 這端的手動抓取走 CLI。Linux 那端停用的是 timer，one-shot unit 本身仍可手動觸發。與 Linux 相同，重新部署與回滾會重新啟用這個工作但不執行它，停用要重做一次。
+自動處理在 Side Panel 關閉，或直接打 API（token 取自 `config.yaml`）：
+
+```powershell
+Invoke-RestMethod -Method Put -Uri http://127.0.0.1:8686/api/v1/settings -Headers @{ Authorization = 'Bearer <token>' } -ContentType 'application/json' -Body '{"auto_processing":false}'
+```
+
+工作停用後連手動啟動一併關閉，所以 Windows 這端的手動抓取走 CLI。Linux 那端停用的是 timer，one-shot unit 本身仍可手動觸發。與 Linux 相同，重新部署與回滾會重新啟用這個工作但不執行它，停用要重做一次；自動處理開關不受部署影響。
 
 ## 6. dev extension 與正式 extension 並存
 
@@ -119,11 +131,18 @@ Options 的 endpoint 填測試後端的位址，token 取自該後端的 `config
 
 | 驗收 | 在哪跑 | 內容 |
 |---|---|---|
-| live 驗收 | Linux 測試環境（需與開發環境同機） | `mise run verify-live`：真來源抓取、真格式、真 Agent 的篩選評分與求職信、冪等與 Run 統計。判準見 [verify](../verify.md) §6 |
+| live 驗收 | Linux 與 Windows 測試環境 | `jobfinder verify live`：真來源抓取、真格式、抓取冪等、真 Agent 的單筆篩選評分與求職信、已安裝排程與執行中 API，跑完復原設定。判準見 [verify](../verify.md) §6 |
 | 部署驗收人工組 | 各平台測試環境 | D4 Side Panel 直連、D7 PATH 與診斷、D8 Agent CLI 可執行、D9 服務重啟不卡死、D11 重新部署重新武裝排程且不觸發抓取。判準見 [verify](../verify.md) §6.1 |
 | bootstrap 的 extension 模式 | 有 Chrome 的測試環境 | D10：解壓目錄、`manifest.json` 的版本、Windows 無 Mark of the Web、不建立任何服務 |
 
-`mise run verify-live` 需要 git clone，因此只有與開發環境同機的測試環境跑得動。其餘平台的驗收是人工的。
+live 驗收內建於已安裝的 binary，兩個平台同一條指令，不需要 git clone、mise 或 `node`：
+
+```bash
+jobfinder verify live                     # 完整模式
+jobfinder verify live --recheck-letter    # 前一趟求職信因當日額度不足未判定時，隔日補測
+```
+
+報告與復原紀錄落在安裝資料目錄下的 `verify/`。驗收自行把環境安排成可驗證的狀態（API 服務在跑、常駐 worker 啟用、自動處理關閉、抓取工作可觸發），跑完照原值復原，所以不必事先調整常態設定。驗收期間不要操作該測試後端。
 
 ## 9. 換版與停用
 

@@ -3,7 +3,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 
 const [mode, file, phase = "base"] = process.argv.slice(2);
-if (!mode || !file) throw new Error("usage: assert-positive.mjs <schema|source|snapshot|live-snapshot|api|api-filter|api-detail|capture-list|capture-job|list-marks|cake-detail|group|duplicates|no-alias|worker> <file> [phase]");
+if (!mode || !file) throw new Error("usage: assert-positive.mjs <schema|source|snapshot|api|api-filter|api-detail|capture-list|capture-job|list-marks|cake-detail|group|duplicates|no-alias|worker> <file> [phase]");
 
 const sha256 = (value) => crypto.createHash("sha256").update(value).digest("hex");
 const readJSON = () => JSON.parse(fs.readFileSync(file, "utf8"));
@@ -105,44 +105,6 @@ if (mode === "source") {
     assert.equal(list.referer, "");
   }
   assert.deepEqual(requests.filter(({ path }) => path.startsWith("/jobs/")).map(({ method, path }) => ({ method, path })), [1000, 1001, 1002, 1003, 1004].map((id) => ({ method: "GET", path: `/jobs/${id}` })));
-  process.exit(0);
-}
-
-if (mode === "live-snapshot") {
-  const data = readJSON();
-  assert.ok(data.jobs.length > 0, "live source returned zero jobs");
-  const ids = new Set();
-  for (const job of data.jobs) {
-    assert.equal(job.source, "yourator");
-    assert.ok(String(job.external_id).trim());
-    assert.ok(!ids.has(job.external_id), `duplicate external_id ${job.external_id}`);
-    ids.add(job.external_id);
-    const url = new URL(job.url);
-    assert.equal(url.protocol, "https:");
-    assert.equal(url.hostname, "www.yourator.co");
-    assert.ok(job.title.trim() && job.company_name.trim() && job.location.trim());
-    assert.ok(job.description_length > 0);
-    assert.match(job.description_sha256, /^[a-f0-9]{64}$/);
-    assert.match(job.content_hash, /^[a-f0-9]{64}$/);
-    assert.ok(["remote", "hybrid", "onsite"].includes(job.remote_type));
-    assert.equal(job.salary_min === null, job.salary_max === null);
-    if (job.salary_min !== null) assert.ok(job.salary_min >= 0 && job.salary_min <= job.salary_max);
-  }
-  const scored = data.jobs.filter(({ score }) => score !== null);
-  const lettered = data.jobs.filter(({ letter }) => letter !== null);
-  if (phase === "complete") {
-    assert.equal(scored.length, 1);
-    assert.equal(lettered.length, 1);
-    assert.ok(["approved", "finalized"].includes(lettered[0].letter.status));
-    assert.ok(data.agent_calls.some(({ role, ok }) => role === "scorer" && ok));
-    assert.ok(data.agent_calls.some(({ role, ok }) => role === "drafter" && ok));
-    // A finalized letter is the last round's version, kept without a final review,
-    // so only an approved letter proves the reviewer ran.
-    if (lettered[0].letter.status === "approved") {
-      assert.ok(data.agent_calls.some(({ role, ok }) => role === "reviewer" && ok));
-    }
-  }
-  process.stdout.write(JSON.stringify({ jobs: data.jobs.length, ids_sha256: sha256([...ids].sort().join("\n")), scored: scored.length, lettered: lettered.length }));
   process.exit(0);
 }
 
@@ -626,20 +588,6 @@ if (mode === "no-alias") {
     assert.notEqual(item.process_state, "merged");
     assert.notEqual(String(item.id), String(phase));
   }
-  process.exit(0);
-}
-
-// live-fingerprint reduces the stored jobs to what a repeated fetch of an
-// unchanged source must reproduce exactly: the identity, the content hash the
-// change detection keys on, and the processing state that hash decides. A live
-// source whose pages carry per-request state would otherwise reset every job to
-// `new` on each run and pay for the whole batch again.
-if (mode === "live-fingerprint") {
-  const data = readJSON();
-  const rows = data.jobs
-    .map((job) => [job.source, job.external_id, job.content_hash ?? "", job.process_state].join("|"))
-    .sort();
-  process.stdout.write(`${rows.length}:${sha256(rows.join("\n"))}`);
   process.exit(0);
 }
 

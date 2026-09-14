@@ -25,18 +25,18 @@
 | D3 | 復原的範圍是設定面：自動處理開關、`config.yaml`、API 服務與每日抓取工作的啟用／執行狀態。資料面的增量（新抓的職缺、該趟的判定、Agent 呼叫、求職信產製）保留，那是本趟的證據，也符合 `docs/verify.md` §6 的增量判準。 |
 | D4 | 成本上限以職缺計：Filter Agent 至多兩筆職缺、Scorer 一筆、求職信產製一筆（輪數依設定的 `llm.max_letter_rounds`）。腳本斷言本趟所有 Agent 呼叫的 `job_id` 都落在它挑中的職缺內，任何其他職缺被呼叫即 FAIL。 |
 | D5 | 抓取經已安裝的排程觸發（Linux `systemctl --user start jobfinder-run.service`、Windows `Start-ScheduledTask`），跑兩次：第一次驗真來源與資料格式，第二次驗冪等。兩次抓取都在自動處理關閉之後進行，新進職缺停在 `new`，不會被 worker 整批篩選。 |
-| D6 | 同一份情境設計產出兩支腳本：`verify-live.sh`（Linux，bash）與 `verify-live.ps1`（Windows，PowerShell 5.1）。兩支共用同一份 oracle `assert-live.mjs`，斷言只寫一次。 |
-| D7 | 腳本自足、隨 dev 部署包發送：原始碼放 `scripts/verify/live/`，`pack.sh` 在版本字串為 `dev` 時把三個檔案複製到工件目錄，與 `install.sh`／`install.ps1` 並列。執行不需要 git clone 與 mise，腳本不 source `lib.sh`。release 工件不帶。 |
-| D8 | 刪除 `mise run verify-live`。入口是工件目錄內的腳本，開發機與 Windows 用同一種方式執行。 |
-| D9 | 執行前提縮為四項：已安裝的 `jobfinder`、`node`、已授權的 `claude`／`codex` CLI、連得到正式 Yourator。`node` 在兩個平台都由 npm 安裝的 Agent CLI 帶進來。Linux 另需 `curl`。 |
+| D6 | 驗收做成 binary 內的隱藏子命令 `jobfinder verify live`，Linux 與 Windows 共用同一份 Go 實作；平台差異只剩 API 服務與抓取工作的操作（systemd／Task Scheduler），判準以 Go 寫一次並有單元測試。 |
+| D7 | 實作放 `internal/liveverify/`，隨 binary 發送，部署包不另帶腳本。執行不需要 git clone、mise、`node` 或 `curl`。只給測試環境使用：命令隱藏，版本不是 `dev (<commit>)` 時 FAIL；release binary 同樣帶著它，但正式環境不使用。 |
+| D8 | 刪除 `mise run verify-live`。入口是 `jobfinder verify live [--recheck-letter]`，兩個平台同一條指令。 |
+| D9 | 執行前提縮為三項：已安裝的 `jobfinder`、已授權的 `claude`／`codex` CLI、連得到正式 Yourator。Linux 另需 user systemd。產品本身不依賴 `node`，驗收也不引入它。 |
 | D10 | 判定維持三態，另加復原結果：驗證結果為 `PASS`（exit 0）／`FAIL`（exit 1）／`ENVIRONMENT_BLOCKED`（exit 2）；復原未完成時 exit 3 並壓過驗證結果，報告列出未復原的項目與手動復原指令。 |
-| D11 | 報告與復原紀錄落在工件目錄的 `evidence/`。重新打包只覆寫工件，不清除該目錄。 |
+| D11 | 報告、復原紀錄與求職信待補測紀錄落在安裝資料目錄下的 `verify/`（Linux `~/.local/share/jobfinder/verify/`、Windows `%LocalAppData%\jobfinder\data\verify\`），與執行時所在目錄無關，下一趟必定找得到上一趟的復原紀錄。 |
 | D12 | 測試環境的常態是每日抓取停用、自動處理關閉：每次部署或回滾後兩者都關回去，只有測試特定情境時才打開，測完關回。腳本不假設常態，一律讀原值、照原值復原。 |
 | D13 | 求職信照一般使用者的方式打 `POST /api/v1/jobs/{id}/letter`，受 `llm.max_letter_per_day` 限制。額度足夠就依結果判定；額度不足時該項為無結果（`ENVIRONMENT_BLOCKED`），留下待補測紀錄，隔日以補測模式 `--recheck-letter`／`-RecheckLetter` 判定同一筆的產製結果，不再送新的要求。 |
 
 D1 的理由不只是繞開鎖。`run --stage` 是 worker 停止時的人工重跑入口，使用者日常走的是常駐 worker；打在單筆入口上驗到的就是實際產品路徑，包括服務環境下的 PATH 與 Agent CLI 解析。單筆入口也不受每日預算與自動處理開關限制（`design-pipeline.md` §2.4），測試環境當天額度已被用掉時仍驗得動篩選與評分。
 
-D6 選 node 當 oracle 的執行環境，是因為兩支腳本若各自實作斷言，判準會漂移，而漂移的症狀是兩個平台的「PASS」不是同一件事。
+D6 選 binary 而非各平台一支腳本：兩支腳本即使共用斷言，流程、情境安排與復原仍各寫一份，會漂移，漂移的症狀是兩個平台的「PASS」不是同一件事；共用斷言還得替兩個平台都裝上產品本身不需要的執行環境。binary 是測試環境必定已有的東西，平台操作也已有 `internal/install` 的前例。
 
 ### 2.1 情境安排與復原
 
@@ -79,7 +79,7 @@ for candidate in 候選清單:
 | 要求後的觀察 | 判定 | 後續 |
 |---|---|---|
 | 轉為 `letter_ready`／`letter_failed` | 依步驟 07 的判準判定 | 無 |
-| 等待至少三個 `worker.scan_interval` 後仍停在 `letter_requested`，且 `in_flight` 無 letter 工作 | 無結果（`ENVIRONMENT_BLOCKED`），原因記為「求職信當日額度不足，未判定」 | 把職缺 ID 與要求時間寫入 `evidence/letter-pending.json` |
+| 等待三個 `worker.scan_interval` 加一個 `llm.min_interval` 後仍停在 `letter_requested`，且 `in_flight` 無 letter 工作 | 無結果（`ENVIRONMENT_BLOCKED`），原因記為「求職信當日額度不足，未判定」 | 把職缺 ID 與要求時間寫入 `evidence/letter-pending.json` |
 
 該筆要求不會消失：跨台北日界後 worker 自行取件產製。補測模式只讀 `letter-pending.json` 指向的那一筆——已產製者以要求時間之後的那次產製依步驟 07 判定並刪除紀錄；仍停在 `letter_requested` 者維持無結果。補測模式不做情境安排、不送任何要求、不花額度。
 
@@ -90,7 +90,7 @@ for candidate in 候選清單:
 | # | 步驟 | 動作 | 判準 |
 |---|---|---|---|
 | 00 | 環境預檢 | 檢查執行前提；有殘留復原紀錄時先復原 | 前提缺項為 `ENVIRONMENT_BLOCKED` |
-| 01 | 安裝身分與設定契約 | `jobfinder version`、`jobfinder paths`；讀已安裝的 `config.yaml` | 版本為 `dev (<commit>)`；執行中 API process 的執行檔是安裝放置的 binary；`api.addr` 為 loopback、有 token；`db.path` 指向回報的資料庫；Yourator `base_url` 缺省或為官方主機；四個 role 的 primary／fallback 共八個 endpoint 都明確指定 agent 與 model |
+| 01 | 安裝身分與設定契約 | 已安裝 binary 的版本、`paths.Resolve()`；strict 解析已安裝的 `config.yaml` | 版本為 `dev (<commit>)`；`api.addr` 為 loopback、有 token；`db.path` 指向回報的資料庫；Yourator `base_url` 缺省或為官方主機；四個 role 的 primary／fallback 共八個 endpoint 都明確指定 agent 與 model |
 | 02 | Profile、權限與 schema | `jobfinder profile lint`、`jobfinder verify snapshot` | lint 通過；Linux 上設定、Profile、denylist 為 `0600`（Windows 靠 `%LocalAppData%` 的 ACL，不驗權限位元）；schema 通過 oracle |
 | 03 | 情境安排 | §2.1 | 每項安排後重讀一次確認生效 |
 | 04 | 真來源抓取 | 經排程觸發一次抓取並等結束 | 該趟 `runs` 列 `trigger` 為 `timer`、無 errors、`fetched` ≥ 1；資料格式通過 oracle 的 source 斷言 |
@@ -98,23 +98,23 @@ for candidate in 候選清單:
 | 06 | 單筆篩選與評分 | §2.2 | 受驗職缺的逐條判定、彙總、四維分數、加權總分、reason 通過 oracle；Filter Agent 呼叫的職缺 ≤ 2 筆、Scorer 恰 1 筆 |
 | 07 | 單筆求職信 | `POST .../letter` 並輪詢到 `letter_ready`／`letter_failed`；額度不足時見 §2.2 | `letter-history` 最新一次產製有 drafter 呼叫；`approved` 者有 reviewer 呼叫；信件含兩個落款佔位；本趟 drafter／reviewer 呼叫只落在該筆 |
 | 08 | 已安裝排程定義 | Linux `systemd-analyze --user verify` 三個 unit；Windows 讀 `\jobfinder\` 的 api 與 run 工作 | Linux 三個 unit 通過驗證並指向安裝的 binary 與設定、timer 為每日 08:30 台北時間；Windows 兩個工作存在且 action 指向安裝的 `jobfinderw.exe` |
-| 09 | 執行中的 loopback API | 帶與不帶 token 讀 `/jobs`、`/runs` | 帶 token 回 200 且含 `items`；未帶回 401 |
+| 09 | 執行中的 loopback API | 帶與不帶 token 讀 `/jobs`、`/runs`；讀執行中 API process 的執行檔 | 帶 token 回 200 且含 `items`；未帶回 401；執行檔是安裝放置的服務 binary |
 | 10 | 復原 | §2.1 反序 | 每項重讀後等於原值；`config.yaml` SHA-256 等於原檔；刪除復原紀錄 |
 | 11 | evidence 安全性 | 掃描報告 | 不含 token、JD 內文、信件內容與落款佔位字面值 |
 
-步驟 04 至 07 的 Agent 呼叫歸屬以 `GET /api/v1/status` 的 `agent_calls`（含 `job_id` 與 `created_at`）判定：取本趟開始時間之後的呼叫，逐筆核對職缺與角色。`jobfinder verify snapshot` 的 `agent_calls` 是依角色彙總的計數，無法歸屬到單筆，只用於格式與指紋。
+步驟 04 至 07 的 Agent 呼叫歸屬以 `GET /api/v1/status` 的 `agent_calls`（含 `id`、`job_id`、`role`）判定：安排完成並等 `in_flight` 清空後記下最新一筆呼叫的 `id`，取其後的呼叫逐筆核對職缺與角色。基準當下已在 `letter_requested` 的職缺是本趟以前的使用者要求，其 drafter／reviewer 呼叫不計為本趟以外的呼叫。`jobfinder verify snapshot` 的 `agent_calls` 是依角色彙總的計數，無法歸屬到單筆，只用於格式與指紋。
 
-### 2.4 oracle
+### 2.4 判準
 
-`assert-live.mjs` 取代 `assert-positive.mjs` 的 `live-snapshot` 與 `live-fingerprint` 兩個 mode，後兩者一併刪除。
+判準是 `internal/liveverify` 內直接讀 `store.VerificationSnapshot` 的函式，取代 `assert-positive.mjs` 的 `live-snapshot` 與 `live-fingerprint` 兩個 mode，後兩者一併刪除。
 
-| mode | 輸入 | 斷言 |
-|---|---|---|
-| `schema` | snapshot | schema 版本、journal mode、foreign keys、必要資料表 |
-| `source` | snapshot | Yourator 職缺的 external ID 不重複、canonical HTTPS URL 在 `www.yourator.co`、標題／公司／地點非空、JD 長度 > 0、hash 格式、`remote_type` 列舉、薪資兩端同為 NULL 或 min ≤ max |
-| `fingerprint` | snapshot | 輸出 `筆數:sha256`，以 source、external ID、`content_hash`、`process_state` 組成 |
-| `job <id> screened` | snapshot | 該筆 `filter_outcome` 與逐條 `verdict` 在列舉內；評分終態者四維在合法區間、總分與 `reason_sha256` 存在 |
-| `job <id> lettered` | snapshot | 該筆 letter 狀態為 `approved`／`finalized`／`failed` 之一；非失敗者兩個落款佔位皆為真 |
+| 判準 | 斷言 |
+|---|---|
+| schema | schema 版本、journal mode、foreign keys、必要資料表 |
+| source | Yourator 職缺的 external ID 不重複、canonical HTTPS URL 在 `www.yourator.co`、標題／公司／地點非空、JD 長度 > 0、hash 格式、`remote_type` 列舉、薪資兩端同為 NULL 或 min ≤ max |
+| fingerprint | `筆數:sha256`，以 source、external ID、`content_hash`、`process_state` 組成 |
+| screened | 該筆 `filter_outcome` 與逐條 `verdict` 在列舉內；評分終態者四維在合法區間、總分與 `reason_sha256` 存在 |
+| lettered | 該次產製狀態為 `approved`／`finalized`／`failed` 之一；非失敗者該筆 letter 狀態與之相同且兩個落款佔位皆為真 |
 
 判準全部以單筆或增量表達，不對全庫的 score 或 letter 筆數下斷言。
 
@@ -127,40 +127,37 @@ for candidate in 候選清單:
 | 環境前提 | 假設環境剛好可驗證 | 腳本自行安排情境並復原 |
 | 判準 | oracle 斷言全庫恰一筆 score、一筆 letter | 單筆與增量 |
 | 抓取觸發 | `run --stage fetch` 直接執行，排程觸發另一步驗 | 兩次抓取都經已安裝排程觸發 |
-| 平台 | 只有 Linux，需要 git clone 與 mise | Linux 與 Windows 各一支，隨 dev 部署包發送 |
-| 入口 | `mise run verify-live` | 工件目錄內的 `verify-live.sh`／`verify-live.ps1` |
-| 報告位置 | checkout 內 `.local-dev/test-deploy/evidence/` | 工件目錄的 `evidence/` |
+| 平台 | 只有 Linux，需要 git clone 與 mise | Linux 與 Windows 共用 binary 內的同一份實作 |
+| 入口 | `mise run verify-live` | `jobfinder verify live` |
+| 報告位置 | checkout 內 `.local-dev/test-deploy/evidence/` | 安裝資料目錄下的 `verify/` |
 | 判定 | 三態 | 三態加復原結果（exit 3） |
 
 ## 4. 落點（canonical 最新狀態）
 
 | 文件 | 章節 | 內容 |
 |---|---|---|
-| `docs/verify.md` | §1 | 腳本位置改為 `scripts/verify/live/`；「跑到哪停」的 V3 改指工件目錄內的腳本，兩個平台 |
-| `docs/verify.md` | §6 | 全節改寫：執行前提、入口與兩個平台、情境安排與復原、受驗職缺的挑選、步驟與判準、成本上限、求職信額度不足時的無結果與補測模式、exit code 含復原結果 |
+| `docs/verify.md` | 頁首、§1 | 判準的機器真相源加入 `internal/liveverify`；V3 改指 `jobfinder verify live`，兩個平台 |
+| `docs/verify.md` | §6 | 全節改寫：執行前提、入口、情境安排與復原、受驗職缺的挑選、步驟與判準、成本上限、求職信額度不足時的無結果與補測模式、報告位置、exit code 含復原結果 |
 | `docs/verify.md` | §6.1 | 人工組 D8 註明「Agent CLI 可被服務叫起」已由 Windows 實機驗收覆蓋，人工只剩「不彈出主控台視窗」的觀察 |
 | `docs/verify.md` | §7、§8、§9 | live 報告的位置；「live 資料」列改為測試環境的 SQLite；§9 第 1 項改為兩個平台各跑通一次 |
-| `docs/guides/test-environment.md` | §3 | 工件目錄清單加入 `verify-live.sh`、`verify-live.ps1`、`assert-live.mjs` 與 `evidence/` |
 | `docs/guides/test-environment.md` | §4、§5 | 測試環境的常態：部署或回滾後停用每日抓取並關閉自動處理；測試特定情境才打開，測完關回 |
-| `docs/guides/test-environment.md` | §8 | live 驗收改為兩個平台都跑，各附完整模式與補測模式的執行指令；刪除「需與開發環境同機」「其餘平台人工」 |
-| `docs/deploy.md` | §7 | dev 部署包的內容加入實機驗收腳本與 oracle，release 工件不帶 |
-| `docs/design.md` | §8 | 測試策略的 Live 驗收列：兩個平台、單筆入口、跑完復原 |
-| `AGENTS.md` | §5 | 分層表的 Live 驗收列改為工件目錄內的腳本；腳本位置段落改為 `scripts/verify/live/`，刪除 `verify-live.sh` 與 `lib.sh` 同層的敘述 |
+| `docs/guides/test-environment.md` | §8 | live 驗收改為兩個平台都跑 `jobfinder verify live`，附完整模式與補測模式；刪除「需與開發環境同機」「其餘平台人工」 |
+| `docs/design.md` | §8 | 測試策略的 Live 驗收列：binary 內建、兩個平台、單筆入口、跑完復原 |
+| `AGENTS.md` | §3 | 維護索引加入「測試環境實機驗收」：先看 `docs/verify.md` §6，實作在 `internal/liveverify/` 與 `cmd/jobfinder/cli/verify.go` |
+| `AGENTS.md` | §5 | 分層表的 Live 驗收列改為 `jobfinder verify live`；刪除 `verify-live.sh` 與 `lib.sh` 同層的敘述 |
 | `docs/changes/change-test-environment.md` | §5 第 10 項、§6 | 第 10 項改指本文；刪除「`verify-live` 需要 git clone」與「`verify-live.sh` 在實機上跑不通」兩條殘留限制 |
 
 ## 5. 待實作進度
 
 | # | 項目 | 狀態 |
 |---|---|---|
-| 1 | 第 4 節落點的 canonical 文件就地更新 | ⏳ |
-| 2 | `scripts/verify/live/assert-live.mjs`；刪除 `assert-positive.mjs` 的 `live-snapshot`、`live-fingerprint` | ⏳ |
-| 3 | `scripts/verify/live/verify-live.sh`：§2.1 至 §2.3，自足不 source `lib.sh`；刪除 `scripts/verify/verify-live.sh` 與 `lib.sh` 內指向它的註解 | ⏳ |
-| 4 | `scripts/verify/live/verify-live.ps1`：與第 3 項同一份步驟與判準 | ⏳ |
-| 4A | 兩支腳本的補測模式與 `letter-pending.json` | ⏳ |
-| 5 | `scripts/release/pack.sh`：`dev` 版本複製三個檔案到工件目錄 | ⏳ |
-| 6 | `mise.toml`：刪除 `verify-live` 任務 | ⏳ |
-| 7 | Linux 測試環境實跑一次，含一趟中途 `kill -9` 後由下一趟復原 | ⏳ |
-| 8 | Windows 測試環境實跑一次，含一趟 `worker.paused: true` 起始的情境 | ⏳ |
+| 1 | 第 4 節落點的 canonical 文件就地更新 | ✅ |
+| 2 | `internal/liveverify`：判準、API client、情境安排與復原、受驗職缺挑選、求職信與補測模式、報告；判準與挑選邏輯的單元測試 | ✅ |
+| 3 | `internal/liveverify` 的平台操作：systemd 與 Task Scheduler 兩種實作 | ✅ Windows 端交叉編譯通過，實機見第 7 項 |
+| 4 | `cmd/jobfinder/cli/verify.go`：`verify live [--recheck-letter]`，結束碼 0／1／2／3 | ✅ |
+| 5 | 刪除 `scripts/verify/verify-live.sh`、`assert-positive.mjs` 的 `live-snapshot`／`live-fingerprint`、`lib.sh` 指向它的註解、`mise.toml` 的 `verify-live` 任務 | ✅ |
+| 6 | Linux 測試環境實跑一次，含一趟中途強制終止後由下一趟復原 | ✅ 完整模式 PASS；步驟 04 中 Ctrl+C 當場復原；`kill -9` 後由下一趟步驟 00 復原 |
+| 7 | Windows 測試環境實跑一次，含一趟 `worker.paused: true` 起始的情境 | ✅ 兩趟皆 PASS；`worker.paused: true` 那趟使用 Linux 測試環境的 Profile |
 
 ## 6. 已知殘留限制
 
@@ -169,4 +166,4 @@ for candidate in 候選清單:
 - **受驗職缺的狀態會被改寫。** 順位 1、2 的候選經 `reprocess` 重跑，新 score 成為現行分數，舊 score 保留為歷史。這是測試資料，且與 D3 的增量判準一致。
 - **資料庫從未通過篩選時可能驗不到評分。** 候選只剩 `new` 且前兩筆進入 Filter Agent 的都被判不適合，評分驗證為 `ENVIRONMENT_BLOCKED`。
 - **驗收期間不要操作該測試後端。** 在 Side Panel 切換自動處理或要求求職信，會被斷言視為本趟以外的呼叫，或在復原時被覆寫回原值。
-- **強制終止只能延後復原。** `kill -9`、關機或關閉 PowerShell 視窗時復原不會執行，環境停在安排後的狀態，直到下一趟開跑時依復原紀錄還原。
+- **強制終止只能延後復原。** `kill -9`、關機或關閉主控台視窗時復原不會執行（Windows 關閉視窗只給行程數秒），環境停在安排後的狀態，直到下一趟開跑時依復原紀錄還原。Ctrl+C 會先復原再結束。

@@ -104,6 +104,7 @@ Go 不保證在裸 PATH；以 `mise run <task>` 或 `mise exec -- go <args>` 執
 | 安裝／更新／回滾、排程掛載、生效面驗證 | `docs/deploy.md` §4 | `internal/install/`、`deploy/production/systemd/`、`deploy/production/windows/` |
 | 日誌出口與輪替 | `docs/deploy.md` §2 | `internal/logging/` |
 | 版號解析與注入 | `docs/deploy.md` §7 | `internal/version/` |
+| 測試環境實機驗收（情境安排與復原、單筆驗證、判準） | `docs/verify.md` §6 | `internal/liveverify/`、`cmd/jobfinder/cli/verify.go` |
 | CLI 命令樹 | 各模組的 CLI 介面節 | `cmd/jobfinder/cli/` |
 
 **頂層文件**：`docs/PRD.md`（需求與範圍）、`docs/design.md`（系統架構、關鍵技術決策與開發順序）、`docs/roadmap.md`（產品定位與階段規劃）、`docs/deploy.md`（部署契約）、`docs/verify.md`（累加式整合與驗收）、`docs/guides/getting-started.md`（上手與操作）、`docs/guides/test-environment.md`（官方建議的測試環境安排）、`docs/guides/runbook-upgrade.md`（發版後三條 lane 的換版步驟）。各模組實作契約在 `docs/designs/design-<module>.md`、單元測試規劃在 `docs/tests/test-<module>.md`。
@@ -170,14 +171,14 @@ mise run lint         # 執行 golangci-lint
 |---|---|---|
 | L1 單元 | 模組內邏輯與負向案例 | 同檔 `*_test.go`；store 使用暫存目錄中的真 SQLite；crawler 使用 `httptest`；agents 使用 fake Runner |
 | L2 整合 | pipeline 跨模組流程 | `mise run e2e-mock` 以合成來源、fake Runner 與 extension 模擬驗證；不代表真外部依賴 |
-| Live 驗收 | 真實來源與 CLI Runner | `mise run verify-live` 打在測試環境的實際安裝；至少抓回一筆真資料並驗證格式，不得退回 mock |
+| Live 驗收 | 真實來源與 CLI Runner 測試環境執行 binary 內建的 `jobfinder verify live`（Linux 與 Windows 同一份實作）打在實際安裝，跑完復原設定；至少抓回一筆真資料並驗證格式，不得退回 mock |
 | 人工 gate | 實際 Chrome 插件、各平台實機 | 在測試環境進行，判準見 `docs/verify.md` §6.1；自動隔離 Chromium 不得替代 |
 
 每個完成的模組都應先通過 `mise run fmt`、`mise run lint`、`mise run test`，再進入下一個模組。
 
 **前四層跑在開發階段驗收的沙盒內，Live 驗收與人工 gate 跑在測試環境**。三種環境的分界見 `docs/deploy.md` §1，測試環境怎麼架見 `docs/guides/test-environment.md`。
 
-開發批次完成後，先以 `scripts/verify/harness/deploy.sh` 把受測 binary 與驗收資源物化到 `.local-dev/dev-verify/`，再執行該批次的 `scripts/verify/run-*.sh` 與 `docs/verify.md` 案例。沙盒的入口 runbook（`run-*.sh`、`reset.sh`）、打在測試環境的 `verify-live.sh` 與共用 `lib.sh` 都在 `scripts/verify/`；建置 harness（`deploy.sh`、`fake-agent.sh`）在 `scripts/verify/harness/`、斷言 oracle 在 `scripts/verify/oracle/`、browser E2E 與 Playwright 設定在 `scripts/verify/browser/`；mock 的 SQLite 與證據位於 gitignored 的 `.local-dev/dev-verify/`。沙盒是可重建的產物，整個刪掉再跑一次即回到同一狀態。正式排程模板位於 `deploy/production/`，不由驗收腳本安裝。
+開發批次完成後，先以 `scripts/verify/harness/deploy.sh` 把受測 binary 與驗收資源物化到 `.local-dev/dev-verify/`，再執行該批次的 `scripts/verify/run-*.sh` 與 `docs/verify.md` 案例。沙盒的入口 runbook（`run-*.sh`、`reset.sh`）與共用 `lib.sh` 在 `scripts/verify/`；打在測試環境的實機驗收不是腳本，而是 binary 的隱藏子命令 `jobfinder verify live`（`internal/liveverify/`）；建置 harness（`deploy.sh`、`fake-agent.sh`）在 `scripts/verify/harness/`、斷言 oracle 在 `scripts/verify/oracle/`、browser E2E 與 Playwright 設定在 `scripts/verify/browser/`；mock 的 SQLite 與證據位於 gitignored 的 `.local-dev/dev-verify/`。沙盒是可重建的產物，整個刪掉再跑一次即回到同一狀態。正式排程模板位於 `deploy/production/`，不由驗收腳本安裝。
 
 ## 6. 怎麼部署
 

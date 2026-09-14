@@ -73,12 +73,10 @@ D7 之後 live 驗收需要 git clone 才跑得動，因此只適用與開發環
 | 7 | `.local-dev/` 目錄更名，同步 `lib.sh` 的沙盒根 | ✅ |
 | 8 | Linux 測試環境以 dev 部署包重裝，作為新安裝路徑的第一次實機驗證 | ✅ |
 | 9 | Windows 測試環境部署 dev 包、載入 dev extension、建立第二條通道 | ✅ |
-| 10 | 測試環境跑一次 live 驗收 | ⏸ 待實機自動驗收重新設計 |
+| 10 | 測試環境跑一次 live 驗收 | 見 `docs/changes/change-test-env-live-verify.md` |
 
 ## 6. 已知殘留限制
 
-- **`verify-live` 需要 git clone**，只適用與開發環境同機的 Linux 測試環境。Windows 測試環境的 D7／D8／D9 維持人工。
 - **dev 部署包沒有公開的下載來源**。它不進 GitHub Release，跨機部署靠檔案傳輸，完整性由包內的 `SHA256SUMS` 保證。
 - **dev extension 的 ID 由載入目錄決定**。目錄搬移即換 ID，測試後端的 `api.extension_origin` 必須跟著改。固定目錄是取得固定 ID 的唯一手段。
 - **部署包只保留一版**。回滾點由 `jobfinder update` 的 `jobfinder.prev` 提供，切換受測版本的手段是換 branch 重新打包。
-- **`verify-live.sh` 在實機上跑不通**。它對已安裝環境直接執行 `run --stage`，而測試環境的常駐 worker 持有 worker 鎖，第一個手動批次即被拒；filter 那一步又以每日額度為上限，實機上一趟會呼叫數十次 Agent。測試環境的實機自動驗收需要另立變更重新設計：先把環境暫時安排成可驗證的情境、每種驗證只跑一筆、跑完復原原設定，Linux 與 Windows 各一支。

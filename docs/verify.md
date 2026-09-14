@@ -4,7 +4,7 @@
 > **題目卷 ↔ 答案卷**：本檔是題目卷；`mise run e2e-mock` 每趟產生 `evidence/<timestamp>-mock.md` 答案卷（逐案例的實際觀察值與判定，案例 ID 與本檔 §4 對齊）。**人工驗收＝拿答案卷逐案例對本檔標準答案**（§7）。
 > **只驗真程式真的跑得出來的部分**。mock fixture（合成 Yourator／104 頁、fake CLI Agent、隔離 Chromium）**允許但明標「模擬，不等於真來源、真 CLI Agent 或實際 Chrome 已驗收」**；真依賴另走 V3 live（§6）與人工 Chrome gate（§9）。
 > **三態判定**：`PASS` ／ `ENVIRONMENT_BLOCKED`（exit 2，外部依賴不可用，未判定產品）／ `FAIL`（exit 1，產品行為不符），不得以「安全完成」當 PASS。
-> 標準答案的機器真相源是 `scripts/verify/oracle/assert-positive.mjs`；本檔為人重述並指向它，兩者不得分歧。對應 `docs/design.md` §8 測試策略。最後更新：2026-08-04。
+> 標準答案的機器真相源是 `scripts/verify/oracle/assert-positive.mjs`（mock）與 `internal/liveverify` 的判準（live）；本檔為人重述並指向它們，兩者不得分歧。對應 `docs/design.md` §8 測試策略。最後更新：2026-09-14。
 
 負向案例（N）目前僅保留骨架（§5），待正向流程穩定後，以相同的需求對照與 evidence 格式累加；不阻礙目前 V 的交付。
 
@@ -22,7 +22,7 @@ mise run e2e-deploy   # 在隔離根內生成無既有安裝的環境 → 跑部
 - **沙盒**：`.local-dev/dev-verify/`（gitignored 隔離根，0700，不碰日常 Profile/設定/SQLite）。
   `artifact/` 承載 product binary、extension 與 production unit templates；
   `harness/` 承載 mock fixture/fake Agent；`runtime/` 產生 config、SQLite、browser profile 與 rendered units；
-  `evidence/` 保留歷次答案卷。整個沙盒是可重建的產物，刪掉再跑一次即回到同一狀態。腳本位於 `scripts/verify/`（沙盒 runbook 於根層——一般 mock、Profile mock 與 worker mock 各一支；打在測試環境的 `verify-live.sh` 同層；browser E2E 於 `browser/`、Playwright 設定 `playwright.config.js`）。
+  `evidence/` 保留歷次答案卷。整個沙盒是可重建的產物，刪掉再跑一次即回到同一狀態。腳本位於 `scripts/verify/`（沙盒 runbook 於根層——一般 mock、Profile mock 與 worker mock 各一支；browser E2E 於 `browser/`、Playwright 設定 `playwright.config.js`）。打在測試環境的實機驗收內建於 binary（`jobfinder verify live`，實作在 `internal/liveverify/`），不在沙盒內執行。
 - **跑完要檢查哪些產物**（人工照著看一遍）：
 
   | 產物 | 位置 | 看什麼 |
@@ -33,7 +33,7 @@ mise run e2e-deploy   # 在隔離根內生成無既有安裝的環境 → 跑部
 
 - **`e2e-deploy` 的沙盒**：`.local-dev/dev-verify/deploy/`，每趟開始前重建、結束後刪除。它把 `HOME`（Linux）或 `LOCALAPPDATA`（Windows）指向該目錄，因此 `jobfinder install` 的每個落點都在隔離根內，日常使用的設定、Profile 與 SQLite 不受影響。判準與涵蓋範圍見 §6.1。
 
-- **跑到哪停**：`mise run e2e-mock` 一趟涵蓋 V1／V2／V4／V5、V6 全部步驟、V7 的 S30–S36 與 S39 系列，以及 V8 的 S46、S52（✅），依序產生一般 mock、Profile mock 與 worker mock 三份答案卷。V3 live 需真 Yourator＋已授權 `claude`/`codex` CLI，在測試環境跑 `mise run verify-live`（⏳，§6）。實際 Chrome 安裝與相容性一律人工 gate（👤，§9）。
+- **跑到哪停**：`mise run e2e-mock` 一趟涵蓋 V1／V2／V4／V5、V6 全部步驟、V7 的 S30–S36 與 S39 系列，以及 V8 的 S46、S52（✅），依序產生一般 mock、Profile mock 與 worker mock 三份答案卷。V3 live 需真 Yourator＋已授權 `claude`/`codex` CLI，在 Linux 與 Windows 測試環境各執行 `jobfinder verify live`（⏳，§6）。實際 Chrome 安裝與相容性一律人工 gate（👤，§9）。
 
 ## 2. 覆蓋度地圖（需求 ←→ 案例）
 
@@ -199,28 +199,128 @@ Cake 列表以 `__NEXT_DATA__` 與 DOM 收割兩種素材各擷取一次；內�
 
 ## 6. Live 驗收：V3（真來源與已授權 CLI Agent）
 
-跑在**測試環境**的實際安裝上。前置：該機器已依 [測試環境指南](guides/test-environment.md) 部署 dev 部署包，已安裝並授權 `claude`、`codex` CLI，且允許連線正式 Yourator。
+跑在**測試環境**的實際安裝上。驗收內建於 binary 的隱藏子命令，Linux 與 Windows 共用同一份實作，兩個平台同一條指令，在任何目錄執行皆可：
 
 ```bash
-mise run verify-live
+jobfinder verify live                     # 完整模式
+jobfinder verify live --recheck-letter    # 求職信補測模式
 ```
 
-設定與 SQLite 取自該機器的安裝（位置由 `jobfinder paths` 決定），不物化自己的 artifact、不渲染自己的 unit，也不讀 `harness/`、loopback `base_url`、fake Agent result 或 mock SQLite。Agent 成本上限為 score 一筆、letter 一筆；真實職缺、Agent 原文與信件只留在測試環境的 SQLite，不進 evidence。
+只給測試環境使用：正式環境不跑它，已安裝 binary 的版本不是 `dev (<commit>)` 時步驟 01 即 `FAIL`。
 
-這支腳本需要 git clone，因此只適用與開發環境同機的測試環境。其他平台的實機驗收走 §6.1 人工組。
+**執行前提**
 
-| 階段 | 動作 | 標準答案（字面預期） | 狀態 |
+| 項目 | 平台 | 說明 |
+|---|---|---|
+| 已安裝的 `jobfinder` | 兩者 | 依 [測試環境指南](guides/test-environment.md) 部署 dev 部署包；設定、Profile、SQLite 與排程的位置一律取自 `jobfinder paths` |
+| 已授權的 `claude`、`codex` CLI | 兩者 | 設定路由到的真 CLI；解析到 fake Agent 時為 `ENVIRONMENT_BLOCKED` |
+| 連得到正式 Yourator | 兩者 | 真來源抓取 |
+| user systemd | Linux | 操作已安裝的 unit |
+
+不需要 git clone、mise 或 `node`，不物化 artifact、不渲染 unit，也不讀 `harness/`、loopback `base_url`、fake Agent result 或 mock SQLite。
+
+### 情境安排與復原
+
+測試環境是長期使用的真實安裝，常駐 worker 在跑、開關與排程由使用者調整。每趟因此分三段：**情境安排** → **驗證** → **復原**。
+
+| 項目 | 驗證需要的狀態 | 讀原值 | 安排 | 復原 |
+|---|---|---|---|---|
+| API 服務 | 執行中 | Linux `systemctl --user is-active jobfinder-api.service`；Windows api 工作的 `State` | 未執行則啟動並等 API 回應 | 原本未執行則停止，Windows 等 process 消失 |
+| `worker.paused` | `false`（單筆入口在未帶常駐 worker 時回 `409 worker_not_resident`） | `GET /api/v1/settings` 的 `resident_worker` | `resident_worker` 為 `false` 時把 `config.yaml` 原檔備份到同目錄的 `config.yaml.verify-live.bak`，只改該鍵為 `false`，重啟 API 服務 | 以備份原檔覆蓋回去並比對 SHA-256，重啟 API 服務，刪除備份 |
+| 自動處理開關 | 關閉 | `GET /api/v1/settings` 的 `auto_processing` | `PUT /api/v1/settings` 設 `false` | `PUT` 原值 |
+| 每日抓取工作 | 可被手動觸發 | Windows run 工作的 `State` | Windows 為 `Disabled` 時 `Enable-ScheduledTask`；Linux 停用 timer 不影響手動啟動 one-shot，不安排 | Windows 原為 `Disabled` 則 `Disable-ScheduledTask`；Linux 無 |
+
+- **順序**：安排依表列順序，復原反序。`worker.paused` 排在自動處理開關之前：重啟後的服務才帶常駐 worker，開關要在這之後關。
+- **復原紀錄**：每項安排前先把原值寫進 `verify/restore.json`。復原在正常結束、驗證失敗、Ctrl+C 時都執行，完成後刪除該檔。上一趟被強制終止而留下該檔時，下一趟（含補測模式）開跑前先依它復原。
+- **復原範圍是設定面**：資料面的增量（新抓的職缺、該趟的判定、Agent 呼叫、求職信產製）保留，那是本趟的證據。
+- **Windows 改 `config.yaml`** 一律寫無 BOM 的 UTF-8，復原以複製檔案還原位元組。
+
+安排完成後等 `GET /api/v1/status` 的 `in_flight` 清空，記下當下最新一筆 Agent 呼叫的 `id` 作為本趟基準，並記下此刻處於 `letter_requested` 的職缺。
+
+### 受驗職缺的挑選
+
+篩選與評分落在同一筆職缺上，求職信盡量也是同一筆。候選依序：
+
+| 順位 | 來源狀態 | 送進驗證的方式 |
+|---|---|---|
+| 1 | `shortlisted` | `POST .../reprocess` 送回 `new`，再 `POST .../process` |
+| 2 | `scored` | 同上 |
+| 3 | `new`（含本趟新抓的） | 直接 `POST .../process` |
+
+```
+filter_agent_jobs = 0
+for candidate in 候選清單:
+    reprocess 回 409（有求職信歷史、merged）或送回 discovered → 下一筆
+    process 並輪詢到該筆離開 new／queued 且 in_flight 無該筆
+    本筆無 Filter Agent 呼叫（結構化條件 fail，零成本）→ 下一筆，此類跳過至多 10 筆
+    filter_agent_jobs += 1
+    本筆為評分終態（scored／shortlisted）→ 篩選與評分皆驗到，結束
+    filter_agent_jobs == 2 → 評分驗證 ENVIRONMENT_BLOCKED，結束
+求職信職缺 = 上面那筆若為 shortlisted，否則庫內任一 shortlisted／letter_failed／letter_ready
+    都沒有 → 求職信驗證 ENVIRONMENT_BLOCKED
+```
+
+篩選或評分呼叫失敗而該筆留在 `new`／`queued` 時，依 `agent_calls` 的 `failure_kind` 判定：`runner_error`（額度、認證、逾時）為 `ENVIRONMENT_BLOCKED`，其餘為 `FAIL`。
+
+### 求職信額度不足與補測模式
+
+求職信照一般使用者的方式打 `POST /api/v1/jobs/{id}/letter`，受 `llm.max_letter_per_day` 限制。API 讀不到求職信的剩餘額度，額度不足只能從結果辨認：
+
+| 要求後的觀察 | 判定 | 後續 |
+|---|---|---|
+| 轉為 `letter_ready`／`letter_failed` | 依步驟 07 的判準判定 | 無 |
+| 等待三個 `worker.scan_interval` 加一個 `llm.min_interval` 後仍停在 `letter_requested`，且 `in_flight` 無 letter 工作 | `ENVIRONMENT_BLOCKED`，原因記為「求職信當日額度不足，未判定」 | 把職缺 ID、要求時間與要求前最新一次產製的 ID 寫入 `verify/letter-pending.json` |
+
+該筆要求不會消失：跨台北日界後 worker 自行取件產製。
+
+- **補測模式**只讀 `letter-pending.json` 指向的那一筆：已產製者以要求之後的那次產製依步驟 07 判定並刪除紀錄；仍停在 `letter_requested` 者維持 `ENVIRONMENT_BLOCKED`。補測模式不做情境安排、不送任何要求、不花額度，需要 API 服務已在執行。
+- **完整模式**開跑時若 `letter-pending.json` 仍在，步驟 07 改為判定該筆，不另送新要求。
+
+### 步驟與判準
+
+| # | 步驟 | 動作 | 判準 |
 |---|---|---|---|
-| 環境 preflight | 確認測試環境已安裝且 API 服務在跑 | `jobfinder version` 印 `dev (<commit>)`；執行中 process 的執行檔就是該次安裝放置的 binary；設定的 `api.addr` 為 loopback | ⏳ |
-| 外部能力 preflight | 檢查來源工具、user systemd、browser runtime、設定路由 CLI；資料 request 前先查 robots.txt | 未授權／網路／來源不可達→`ENVIRONMENT_BLOCKED`；不得退回 fixture 或 fake Runner | ⏳ |
-| 真來源 fetch | 每方向 keywords 組一個正式 query（每來源最多三組），結果進同一池 | 本趟至少新增一筆真 Job；跨 query/page 依 external ID 去重；**本趟零筆新增且庫內無對應來源資料＝FAIL**；evidence 只記來源、筆數、external ID hash 與 request/format 摘要 | ⏳ |
-| 真資料格式 | 讀測試環境 SQLite 的安全 snapshot | external ID、canonical HTTPS URL、標題、公司、非空 JD、地點、remote enum、content hash 正確；salary 可 NULL，非 NULL 時 min≤max | ⏳ |
-| 真 Agent filter／score／letter | 對一筆結構化條件全過的 Job 跑語意篩選與評分；再對一筆推薦職缺**明確要求後**生成 | 逐條判定與彙總結論、四維、加權總分、reason、runner audit、信件終態合法；要求前零 Drafter/Reviewer 呼叫；score/letter 各最多一筆；executable 非 repo 內 fake | ⏳ |
-| 冪等與 Run | 再執行相同 live query | 同 source/external ID 不新增重複 Job；**未變更的職缺其 `content_hash` 與 `process_state` 逐筆不變**（否則整批會被重置回 `new` 並重付篩選與評分）；Run stats、Agent 上限、錯誤摘要正確 | ⏳ |
+| 00 | 環境預檢 | 檢查執行前提；有殘留復原紀錄時先復原 | 前提缺項為 `ENVIRONMENT_BLOCKED` |
+| 01 | 安裝身分與設定契約 | `jobfinder version`、`jobfinder paths`；讀已安裝的 `config.yaml` | 版本為 `dev (<commit>)`；`api.addr` 為 loopback、有 token；`db.path` 指向回報的資料庫；Yourator `base_url` 缺省或為官方主機；四個 role 的 primary／fallback 共八個 endpoint 都明確指定 agent 與 model |
+| 02 | Profile、權限與 schema | Profile lint、讀已安裝 SQLite 的 verification snapshot | lint 通過；Linux 上設定、Profile、denylist 為 `0600`（Windows 靠 `%LocalAppData%` 的 ACL，不驗權限位元）；schema 通過 oracle |
+| 03 | 情境安排 | 見「情境安排與復原」 | 每項安排後重讀一次確認生效 |
+| 04 | 真來源抓取 | 經已安裝排程觸發一次抓取並等結束（Linux `systemctl --user start jobfinder-run.service`、Windows `Start-ScheduledTask`） | 該趟 `runs` 列 `trigger` 為 `timer`、`state` 為 `done`、`errors` 為 0、`fetched` ≥ 1；Yourator 職缺通過 oracle 的 source 斷言 |
+| 05 | 抓取冪等 | 記指紋，再觸發一次抓取 | 該趟 `new` 為 0；每筆職缺的 `content_hash` 與 `process_state` 前後逐筆相同 |
+| 06 | 單筆篩選與評分 | 見「受驗職缺的挑選」 | 受驗職缺的逐條判定、彙總、四維分數、加權總分、reason 通過 oracle；Filter Agent 呼叫的職缺 ≤ 2 筆、Scorer 恰 1 筆 |
+| 07 | 單筆求職信 | `POST .../letter` 並輪詢到 `letter_ready`／`letter_failed`；額度不足時見「求職信額度不足與補測模式」 | 要求之後的那次產製有成功的 drafter 呼叫；`approved` 者有成功的 reviewer 呼叫；非失敗者信件含兩個落款佔位；產製失敗且沒有任何成功的 drafter 呼叫時依 `failure_kind` 判定 |
+| 08 | 已安裝排程定義 | Linux `systemd-analyze --user verify` 三個 unit；Windows 讀 `\jobfinder\` 的 api 與 run 工作 | Linux 三個 unit 通過驗證並指向安裝的 binary 與設定、timer 為每日 08:30 台北時間；Windows 兩個工作存在且 action 指向安裝的 `jobfinderw.exe` |
+| 09 | 執行中的 loopback API | 帶與不帶 token 讀 `/jobs`、`/runs`；讀執行中 API process 的執行檔 | 帶 token 回 200 且含 `items`；未帶回 401；執行檔是安裝放置的 binary（Windows 為 `jobfinderw.exe`） |
+| 10 | 復原 | 「情境安排與復原」反序 | 每項重讀後等於原值；`config.yaml` SHA-256 等於原檔；刪除復原紀錄 |
+| 11 | evidence 安全性 | 掃描報告 | 不含 token、JD 內文、信件內容與落款佔位字面值 |
 
-**判準以增量為準**，不要求從空的 SQLite 開始：測試環境的資料庫會累積歷次驗收的結果，每一趟比對的是本趟的新增與變動。
+**成本上限以職缺計**：Filter Agent 至多兩筆職缺、Scorer 一筆、求職信產製一次（輪數依設定的 `llm.max_letter_rounds`）。步驟 06、07 各自收尾時，以 `GET /api/v1/status` 的 `agent_calls`（含 `id`、`job_id`、`role`）核對本趟基準之後的每一筆呼叫：篩選與評分只落在受驗職缺，drafter／reviewer 只落在求職信職缺、`letter-pending.json` 指向的職缺與基準當下已在 `letter_requested` 的職缺，其他職缺被呼叫即 `FAIL`。本趟呼叫多於該欄位的 20 筆視窗時同樣 `FAIL`。verification snapshot 的 `agent_calls` 是依角色彙總的計數，無法歸屬到單筆，只用於格式與指紋。
+
+**判準以單筆與增量表達**，不對全庫的 score 或 letter 筆數下斷言。機器真相源是 `internal/liveverify` 的判準函式，直接讀 `store.VerificationSnapshot`：
+
+| 判準 | 斷言 |
+|---|---|
+| schema | schema 版本、journal mode、foreign keys、必要資料表 |
+| source | Yourator 職缺的 external ID 不重複、canonical HTTPS URL 在 `www.yourator.co`、標題／公司／地點非空、JD 長度 > 0、hash 格式、`remote_type` 列舉、薪資兩端同為 NULL 或 min ≤ max |
+| fingerprint | 輸出 `筆數:sha256`，以 source、external ID、`content_hash`、`process_state` 組成 |
+| screened | 該筆 `filter_outcome` 與逐條 `verdict` 在列舉內；評分終態者四維在合法區間、總分與 `reason_sha256` 存在 |
+| lettered | 該次產製狀態為 `approved`／`finalized`／`failed` 之一；非失敗者該筆 letter 狀態與之相同且兩個落款佔位皆為真 |
+
+### 判定與報告
+
+報告、復原紀錄與求職信待補測紀錄落在安裝資料目錄下的 `verify/`（Linux `~/.local/share/jobfinder/verify/`、Windows `%LocalAppData%\jobfinder\data\verify\`），報告檔名 `<timestamp>-live.md`（補測模式 `<timestamp>-live-recheck.md`）。位置與執行時所在目錄無關，下一趟必定找得到上一趟的復原紀錄。真實職缺、Agent 原文與信件只留在測試環境的 SQLite，不進 evidence。
+
+| exit code | 結果 |
+|---|---|
+| 0 | `PASS`：所有步驟通過且復原完成 |
+| 1 | `FAIL`：產品行為不符判準 |
+| 2 | `ENVIRONMENT_BLOCKED`：外部依賴不可用，或評分／求職信無從判定 |
+| 3 | 復原未完成：壓過驗證結果，報告列出未復原的項目與手動復原指令 |
+
+評分或求職信為 `ENVIRONMENT_BLOCKED` 時其餘步驟照常進行，全部通過者整趟結果為 `ENVIRONMENT_BLOCKED`。
 
 部署包來自打包當下的 working tree，未提交的變更同樣驗得到。追溯以 `jobfinder version` 印出的 commit 與部署包的 `SHA256SUMS` 為準。
+
+**驗收期間不要操作該測試後端**：在 Side Panel 切換自動處理或要求求職信，會被判為本趟以外的呼叫，或在復原時被覆寫回原值。強制終止（`kill -9`、關機、關閉主控台視窗）時復原不會執行，環境停在安排後的狀態，直到下一趟開跑時依復原紀錄還原。
 
 Side Panel 的實機讀寫不在本節，屬 §6.1 人工組的 D4。
 
@@ -254,7 +354,7 @@ D10 尚未併入自動組，以人工執行 bootstrap 腳本驗證：release 工
 |---|---|---|
 | D4 Side Panel 直連 | extension Options 填該測試後端的 loopback 位址與其設定中的 token，開啟 Side Panel | 後端與瀏覽器同機時無任何通道即可讀寫；未帶 token 的請求回 401 |
 | D7 PATH 與診斷（Windows） | 開新終端執行 `jobfinder paths` | 不需完整路徑即可執行；印出 `%LocalAppData%\jobfinder\` 下的位置，含 `jobfinderw.exe` 那列 |
-| D8 Agent CLI 可執行（Windows） | 讓一筆職缺實際走到評分 | npm 安裝的 `claude`／`codex` 可被叫起；失敗時錯誤指向 CLI 本身而非「不是有效的應用程式」；整段過程不彈出主控台視窗 |
+| D8 Agent CLI 可執行（Windows） | 讓一筆職缺實際走到評分 | 整段過程不彈出主控台視窗。npm 安裝的 `claude`／`codex` 能被服務叫起，由 Windows 的 live 驗收（§6 步驟 06、07）覆蓋，人工只觀察視窗 |
 | D9 服務重啟不卡死（Windows） | 停止 api 工作，等 process 消失，再啟動 | 工作回到 `Running` 且 API 有回應。停止是直接終止行程，殘留的 worker 鎖檔不得阻擋下一次啟動 |
 | D11 重新部署重新武裝排程且不觸發抓取 | 停用每日抓取（Linux `systemctl --user disable --now jobfinder-run.timer`；Windows `Disable-ScheduledTask -TaskPath '\jobfinder\' -TaskName 'run'`）後重跑 bootstrap 腳本（走 `update`）；再停用一次後執行 `jobfinder rollback` | 兩次都印出 `fetch is armed` 並通過完整生效面驗證；Linux timer 為 `enabled` 且 `active`、有下一次觸發時間，Windows 工作為 `Ready` 且有 `NextRunTime`；前後 `runs` 筆數不變，Linux `jobfinder-run.service` 的 `ExecMainStartTimestamp` 不變，Windows 抓取工作的 `LastRunTime` 不變 |
 
@@ -264,7 +364,7 @@ D10 尚未併入自動組，以人工執行 bootstrap 腳本驗證：release 工
 
 ## 7. 答案卷：報告如何對答案
 
-`mise run e2e-mock` 每趟逐案例即時 append 到 `evidence/<timestamp>-mock.md`（`tail -f` 友善、中途崩潰留部分結果）；V3 live 另出 live 報告。答案卷每條 4 欄：**案例 ID（對齊 §4）｜驗證項目｜實下的指令/動作｜判定＋觀察到的字面值｜變更/印記**，收尾補 **PASS/FAIL/SKIP 計數＋需求覆蓋 tally＋使用者故事重建**。
+`mise run e2e-mock` 每趟逐案例即時 append 到 `evidence/<timestamp>-mock.md`（`tail -f` 友善、中途崩潰留部分結果）；V3 live 另出 live 報告，落在測試環境安裝資料目錄的 `verify/<timestamp>-live.md`。答案卷每條 4 欄：**案例 ID（對齊 §4）｜驗證項目｜實下的指令/動作｜判定＋觀察到的字面值｜變更/印記**，收尾補 **PASS/FAIL/SKIP 計數＋需求覆蓋 tally＋使用者故事重建**。
 
 **人工驗收步驟**：
 1. **題目完整嗎**：§2 覆蓋度地圖的每項需求都有對應可執行案例，答案卷收尾 tally 顯示這趟驗到的需求集合＝預期。
@@ -278,14 +378,14 @@ D10 尚未併入自動組，以人工執行 bootstrap 腳本驗證：release 工
 | evidence | 每案例在同一份答案卷記錄 artifact revision/checksum、觀察值、狀態轉換、Run 摘要及 browser trace／截圖索引。 |
 | 禁止記錄 | Profile request／response body與 YAML、職缺全文、求職信、token、Agent 原始輸入輸出、日常 SQLite 資料。 |
 | mock fixture | 合成 Profile／Job／Agent 回覆；不將真實職缺或個資加入 repo、fixture 或 evidence。 |
-| live 資料 | 真職缺只留 gitignored live SQLite；evidence 僅存筆數、hash、狀態與格式摘要。 |
+| live 資料 | 真職缺只留測試環境的 SQLite；evidence 僅存筆數、hash、狀態與格式摘要。 |
 | `PASS` | 案例所有標準答案成立且答案卷可重建該判定。 |
 | `ENVIRONMENT_BLOCKED` | 外部來源、已授權 CLI Agent、browser 相依或 systemd user 環境不可用，未判定產品行為。 |
 | `FAIL` | artifact、流程、狀態、資料保護或可觀察結果不符標準答案。 |
 
 ## 9. 後續累加順序
 
-1. 在具備正式來源連線與已授權 CLI 的環境跑通 **V3**：真來源至少一筆、真 Agent score／letter 與安全格式 evidence 缺一不可。
+1. Linux 與 Windows 測試環境各跑通一次 **V3**：真來源至少一筆、真 Agent 的篩選評分與求職信、復原完成與安全格式 evidence 缺一不可。
 2. 依 §5 骨架累加負向案例 N，沿用相同需求對照與 evidence 格式。
 
 **人工 gate 是常態流程，不是待辦**：凡動到 extension、Side Panel、Profile editor 或任一 content script 的改動，交付前由驗收者把同一份 artifact 載入實機 Chrome 走一次（步驟見 `docs/guides/getting-started.md` §5），涵蓋 §4 標為 👤 的步驟與該次改動觸及的頁面。自動隔離 Chromium 不得替代人工結論；結論當場即知，不回寫本檔。

@@ -39,10 +39,6 @@ run = "scripts/verify/run-mock.sh && scripts/verify/run-profile-mock.sh && scrip
 description = "Run the automated deployment verification group in an isolated install root"
 run = "scripts/verify/run-deploy.sh"
 
-[tasks.verify-live]
-description = "Run opt-in live verification against the installed test environment (external source and LLMs)"
-run = "scripts/verify/verify-live.sh"
-
 [tasks.pack]
 description = "Build a dev deployment package for the test environments into .local-dev/test-deploy"
 run = "scripts/release/pack.sh --version dev --targets linux/amd64,windows/amd64 --out .local-dev/test-deploy"
