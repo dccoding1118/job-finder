@@ -1,6 +1,6 @@
 # STATUS — job-finder（MVP 開發）
 
-> 最後更新：2026-09-13。規劃文件見 `docs/PRD.md`、`docs/design.md`、`docs/roadmap.md`、`docs/deploy.md`、`docs/designs/`。
+> 最後更新：2026-09-14。規劃文件見 `docs/PRD.md`、`docs/design.md`、`docs/roadmap.md`、`docs/deploy.md`、`docs/designs/`。
 
 ## §1 未歸檔結論
 
@@ -14,14 +14,10 @@
 
 ## §2 未完成任務
 
-**測試環境獨立成第三套部署**
-
-- [ ] 測試環境的實機自動驗收：依 `docs/changes/change-test-env-live-verify.md` §4 就地更新 canonical 文件，再實作腳本，兩台測試環境實跑通過後上版（進度見該文件 §5）。
-
 **與公開無關（可獨立進行）**
 
 - [ ] 產品修正求職信每日額度（`llm.max_letter_per_day`）的兩個缺口，另立 change 文件，暫不排入：
-  - **查不到**：`GET /api/v1/status` 只回 `filter_budget`、`score_budget`，沒有求職信的剩餘額度，Side Panel 與驗收腳本都無從事先得知。
+  - **查不到**：`GET /api/v1/status` 只回 `filter_budget`、`score_budget`，沒有求職信的剩餘額度，Side Panel 與 `jobfinder verify live` 都無從事先得知。
   - **沒先擋**：額度用盡時 `POST /api/v1/jobs/{id}/letter` 仍受理並轉 `letter_requested`，要等 worker 取件落空才知道額度不夠。現行契約刻意如此（`docs/designs/design-pipeline.md` §5「未處理的 `letter_requested` 留待隔日」），該條與 `docs/designs/design-api.md` §4 的 letter route 要一併改寫。
   - 修正後回頭調整實機驗收的求職信步驟：額度不足的辨認改為預檢，並決定求職信驗證是否比照篩選與評分走不受每日上限的入口。
 
